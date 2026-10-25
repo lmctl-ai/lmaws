@@ -6,6 +6,7 @@ from types import SimpleNamespace
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'compare'));sys.path.insert(0,str(ROOT/'scripts'))
 import runtime
+import driver
 from decimal import Decimal
 from driver import check_comparison_budget
 manifest=json.loads((ROOT/'compare/manifest.json').read_text())['examples']
@@ -34,6 +35,11 @@ except RuntimeError:pass
 else:raise AssertionError('read-only comparison accepted cloud mutations')
 with tempfile.TemporaryDirectory(prefix='lmaws-compare-tests-') as tmp:
  tmp=pathlib.Path(tmp);fake=tmp/'bin';fake.mkdir();emitter=fake/'emit.py'
+ # A loopback test seam must never silently become a real cloud comparison.
+ with patch.dict(os.environ,{'LMAWS_LIVE':'1','AWS_PROFILE':'lmaws','AWS_REGION':'us-east-1','LMAWS_ENDPOINT':'http://127.0.0.1:9','CI':'false','GITHUB_ACTIONS':'false'}),patch.object(sys,'argv',['driver','bucket_objects','--native-evidence','missing']),patch.object(driver,'ROOT',tmp),patch('driver.subprocess.run',side_effect=AssertionError('unexpected subprocess')):
+  try:driver.main()
+  except RuntimeError as exc:assert 'LMAWS_ENDPOINT' in str(exc)
+  else:raise AssertionError('test endpoint override was silently discarded')
  emitter.write_text('import pathlib\nprint(pathlib.Path('+repr(str(ROOT/'compare/lmcloud.dsl.json'))+').read_text())\n')
  if os.name=='nt':pass # Node spawnSync does not execute .cmd; bind the native Python executable below.
  else:

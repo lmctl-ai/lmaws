@@ -70,6 +70,7 @@ def main():
         assert 'hashicorp/aws' in (script.parent/'main.tf').read_text()
         print(name+': offline fixture contract verified');return 0
     if os.getenv('CI','').lower() in ('true','1','yes') or os.getenv('GITHUB_ACTIONS')=='true':raise RuntimeError('live comparisons forbidden in CI')
+    if os.getenv('LMAWS_ENDPOINT'):raise RuntimeError('live comparison forbids LMAWS_ENDPOINT overrides')
     if os.getenv('LMAWS_LIVE')!='1':raise RuntimeError('set LMAWS_LIVE=1 explicitly for a real comparison')
     expected='lmaws' if meta['write'] else 'default'
     if (os.getenv('AWS_PROFILE') or os.getenv('AWS_DEFAULT_PROFILE') or 'default')!=expected:raise RuntimeError('example requires AWS_PROFILE='+expected)
