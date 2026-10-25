@@ -74,6 +74,7 @@ class Fake(http.server.BaseHTTPRequestHandler):
         if op=="DescribeParameters":self.json({"Parameters":[{"Name":"lmaws_fixture_parameter","Type":"String"}]})
         elif op=="ListTagsForResource":self.json({"TagList":[{"Key":k,"Value":v} for k,v in self.created.get(("parameter",name),{}).items()]})
         elif op=="PutParameter":
+            assert x.get("Tier")=="Standard", "parameter tier must be explicitly free-tier Standard"
             if not x.get("Overwrite"):
                 assert name.startswith("lmaws_")
                 self.remember("parameter",name,{t["Key"]:t["Value"] for t in x.get("Tags",[])})

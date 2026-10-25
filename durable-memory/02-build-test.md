@@ -43,3 +43,11 @@ x64 prototype size is 55,511,304 bytes, with only libc.so.6 dynamically needed.
 macOS Intel pins GraalVM CE 25.0.1, the final upstream Intel build; 25.0.2
 has no macOS x64 asset. Other release lanes pin 25.0.2. Windows Python tests
 explicitly decode UTF-8 so embedded upstream license typography is byte-correct.
+
+The host explicitly uses UTF-8 stdout/stderr. Windows JDK console defaults may
+otherwise encode help typography in a legacy code page even though notices are
+raw UTF-8 bytes; both protocol and diagnostics must use a single encoding.
+
+The Linux address-space test identifies the executable by its ELF header. It must
+not run against the JVM shell wrapper in the native stage: GraalVM HotSpot may
+reserve a separate libjvmci isolate before the host can enforce its own budget.

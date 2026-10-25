@@ -28,13 +28,16 @@ The native release targets five platforms and uses a 4096 MB memory budget. Linu
 | Expression | Result |
 |---|---|
 | `aws.demo()` | Offline deterministic Cloud |
-| `aws.region("us-east-1")` | Live Cloud using the AWS standard profile/region chain |
+| `aws.region("us-east-1")`, `aws.region("")` | Live Cloud with an explicit region, or the default region chain |
 | `cloud.buckets()`, `instances()`, `vpcs()`, `security_groups()` | Resource Rows |
 | `cloud.tables()`, `queues()`, `topics()`, `functions()` | Data, messaging and function metadata Rows |
 | `cloud.log_groups()`, `alarms()`, `zones()`, `secrets()`, `parameters()` | Operations and metadata Rows |
 | `rows.len()`, `rows.at(i)`, `rows.count(key,value)`, `rows.filter(key,value)` | Inspect and aggregate Rows |
 | `rows.csv(path)`, `rows.json()` | Masked tabular or JSON output |
 | `cloud.run(runId, existingLedgerDir)` | Owned writes with an automatically named ledger, tags and cleanup |
+| `run.bucket(name)`, `queue(name)`, `topic(name)` | Create owned storage/messaging resources |
+| `run.parameter(name,value)`, `table(name)`, `log_group(name)` | Create owned standard parameters, on-demand tables and log groups |
+| `run.put(resource,key,value)`, `cleanup()`, `remaining()` | Update owned resources, tear down, inspect outstanding resources |
 
 ```lmscript
 mkdir("data");
@@ -50,6 +53,8 @@ assert(r.code == 0);
 ```
 
 `--dry-run` uses demo data and makes no AWS requests, while still writing local reports and ledgers. `lmaws --sweep LEDGER_DIR --older-than-hours 24` is always a dry-run: it lists stale `lmaws-*.jsonl` ledger candidates and never deletes account resources. Create the ledger directory before opening a run; explicit ledger filenames should also use that prefix and extension. Errors use exit 2 for configuration and 3 for runtime failures.
+
+v0.1.0 writes are limited to those six resource kinds. Compute, networking, IAM, ECS, Lambda, DNS and Secrets Manager are metadata-only.
 
 ## Resource limits and build
 

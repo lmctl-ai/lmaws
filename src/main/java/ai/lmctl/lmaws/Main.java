@@ -72,6 +72,9 @@ public final class Main {
         } finally {try{Runtime.getRuntime().removeShutdownHook(shutdown);}catch(IllegalStateException ignored){}}
     }
     public static void main(String[] args) {
+        // Windows console defaults may be legacy code pages; the host protocol is UTF-8.
+        System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out),true,java.nio.charset.StandardCharsets.UTF_8));
+        System.setErr(new PrintStream(new FileOutputStream(FileDescriptor.err),true,java.nio.charset.StandardCharsets.UTF_8));
         int status;
         try{status=run(args);}catch(OutOfMemoryError e){String text="LMAWS_MAX_MEMORY_MB memory budget exceeded";System.err.println(text);status=Reports.error("run",VmException.run(text));}
         catch(Exception e){String text=safeError(e);if(text.contains("memory budget"))text="LMAWS_MAX_MEMORY_MB: "+text;System.err.println(text);VmException error=e instanceof VmException v?new VmException(v.code,text):VmException.host(text);if(e instanceof VmException v){error.line=v.line;error.column=v.column;}status=Reports.error("run",error);}

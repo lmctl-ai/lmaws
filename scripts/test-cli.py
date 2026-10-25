@@ -2,12 +2,14 @@
 """CLI, schema parity, failure codes and managed memory enforcement."""
 import json,os,pathlib,subprocess,sys,tempfile,shutil
 root=pathlib.Path(__file__).resolve().parents[1];host=pathlib.Path(sys.argv[1]).resolve();env=dict(os.environ);env.pop('LMAWS_LIVE',None)
+with host.open('rb') as binary: is_elf=binary.read(4)==b'\x7fELF'
 def run(args,code=0,extra=None):
  p=subprocess.run(([str(host)] if host.suffix!='.cmd' else ['cmd.exe','/c',str(host)])+args,env=dict(env,**(extra or {})),text=True,encoding="utf-8",capture_output=True,timeout=120)
  assert p.returncode==code,(args,p.returncode,p.stdout[-1200:],p.stderr[-1200:]);return p
 assert run(['--version']).stdout=='lmaws 0.1.0\n'
 assert run(['--notices']).stdout==(root/'THIRD_PARTY_NOTICES').read_text(encoding="utf-8")
 assert 'LMAWS_MAX_MEMORY_MB' in run(['--help']).stdout
+assert '\u2014 AWS SDK' in run(['--help'],extra={'JAVA_TOOL_OPTIONS':'-Dstdout.encoding=windows-1252 -Dstderr.encoding=windows-1252'}).stdout
 schema=run(['--dsl-schema','--json']).stdout;assert schema==(root/'schema/lmaws.dsl.json').read_text(encoding="utf-8");json.loads(schema)
 p=subprocess.run([shutil.which('lmscript'),'--dsl-signatures',str(root/'schema/lmaws.dsl.json')],text=True,encoding="utf-8",capture_output=True,timeout=45);assert p.returncode==0,p.stderr
 assert p.stdout==run(['--dsl-signatures']).stdout,'schema/registry signature mismatch'
@@ -25,7 +27,7 @@ with tempfile.TemporaryDirectory(prefix='lmaws-cli-') as d:
  compiled=subprocess.run([shutil.which('lmscript'),str(dry)],text=True,encoding="utf-8",capture_output=True,timeout=60);assert compiled.returncode==0,compiled.stderr
  run(['--dry-run','--dsl',str(dry_out)],extra={'LMAWS_MAX_MEMORY_MB':'64','LMAWS_ENDPOINT':'http://127.0.0.1:9','AWS_PROFILE':'lmaws-no-such-profile','AWS_EC2_METADATA_DISABLED':'true'})
  small=run(['--dsl',str(out)],3,{'LMAWS_MAX_MEMORY_MB':'64'});assert 'LMAWS_MAX_MEMORY_MB' in small.stderr and 'memory budget' in small.stdout
- if sys.platform=='linux' and host.suffix!='.sh' and os.environ.get('LMAWS_NATIVE')=='1':
+ if sys.platform=='linux' and is_elf:
   import resource
   def limit():resource.setrlimit(resource.RLIMIT_AS,(6*1024**3,6*1024**3))
   p=subprocess.run([str(host),'--dsl',str(out)],env=env,text=True,encoding="utf-8",capture_output=True,timeout=180,preexec_fn=limit)

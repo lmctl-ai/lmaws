@@ -24,3 +24,8 @@ lmaws_r170f2785352f4d76_queue and standard String parameter
 lmaws_r170f2785352f4d76_parameter. Both were deleted by the host after the deliberate
 assertion failure, without outer recovery, and independently verified absent.
 See live-v010.json. No real resource remains from this run.
+
+A read-only GetServiceSetting check confirmed the test account default parameter
+tier was Standard. The shipped backend also explicitly requests Tier=Standard on
+creation and overwrite, so a different account default cannot silently select
+Advanced parameters. The fake transport asserts this request field.
