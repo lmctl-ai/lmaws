@@ -6,3 +6,5 @@
 /.omx/
 /live-ledger/
 *.log
+__pycache__/
+*.dslb
