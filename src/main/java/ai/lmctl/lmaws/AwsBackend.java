@@ -292,7 +292,7 @@ public final class AwsBackend implements AutoCloseable {
     private SecretsManagerClient secrets() { return secrets == null ? secrets = register(base(SecretsManagerClient.builder()).build()) : secrets; }
     private EcsClient ecs() { return ecs == null ? ecs = register(base(EcsClient.builder()).build()) : ecs; }
     private IamClient iam() { return iam == null ? iam = register(base(IamClient.builder()).build()) : iam; }
-    private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { b.region(region).overrideConfiguration(config); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))); else b.credentialsProvider(ProfileCredentialsProvider.builder().profileName(System.getenv().getOrDefault("AWS_PROFILE", "default")).build()); return b; }
+    private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { b.region(region).overrideConfiguration(config); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))); else b.credentialsProvider(ProfileCredentialsProvider.builder().profileName(activeProfile()).build()); return b; }
 
     private static final class CostInterceptor implements ExecutionInterceptor {
         private final CostLedger ledger;
@@ -338,7 +338,21 @@ public final class AwsBackend implements AutoCloseable {
     private void waitTableGone(String id) { long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos(); while (System.nanoTime() < deadline) { try { ddb().describeTable(x -> x.tableName(id)); } catch (software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException e) { return; } sleepReady(); } throw new IllegalStateException("table deletion did not complete within 30 seconds"); }
     private static URI checkedEndpoint(String x) { URI u = URI.create(x); String h = u.getHost(); if (!"http".equalsIgnoreCase(u.getScheme()) || u.getUserInfo() != null || u.getQuery() != null || u.getFragment() != null || (u.getPath() != null && !u.getPath().isEmpty() && !"/".equals(u.getPath())) || !("127.0.0.1".equals(h) || "::1".equals(h) || "[::1]".equals(h))) throw new IllegalArgumentException("LMAWS_ENDPOINT must be http://127.0.0.1 or http://[::1]"); return u; }
 
-    private void requireWriteEnabled() { if (!demo && endpoint == null && !"1".equals(System.getenv("LMAWS_LIVE"))) throw new IllegalStateException("live writes require LMAWS_LIVE=1"); }
+    /** Real mutations require the explicitly provisioned lmaws profile. */
+    private void requireWriteEnabled() {
+        if (demo || endpoint != null) return;
+        if (!"1".equals(System.getenv("LMAWS_LIVE")))
+            throw new IllegalStateException("live writes require LMAWS_LIVE=1");
+        String profile = activeProfile();
+        if (!"lmaws".equals(profile))
+            throw new IllegalStateException("live mutations require AWS_PROFILE=lmaws (active profile: " + profile + ")");
+    }
+
+    public static String activeProfile() {
+        String profile = System.getenv("AWS_PROFILE");
+        if (profile == null || profile.isBlank()) profile = System.getenv("AWS_DEFAULT_PROFILE");
+        return profile == null || profile.isBlank() ? "default" : profile;
+    }
     private static boolean ciEnvironment() {
         String value = System.getenv("CI");
         return value != null && (value.equalsIgnoreCase("true") || value.equals("1") || value.equalsIgnoreCase("yes"));
