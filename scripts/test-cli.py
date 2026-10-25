@@ -45,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix='lmaws-cli-') as d:
  guard=d/'profile-guard.lms';guard_out=d/'profile-guard.dslb'
  guard.write_text('p = _dsl_ schema='+json.dumps(str(root/'schema/lmaws.dsl.json'))+';\nlet cloud=aws.example("profile_guard"); let run=cloud.example_run(); let q=run.queue("guard");\nend _dsl_\nsavedsl(p,'+json.dumps(str(guard_out))+');\n')
  compiled=subprocess.run([shutil.which('lmscript'),str(guard)],text=True,encoding='utf-8',capture_output=True,timeout=60);assert compiled.returncode==0,compiled.stderr
- denied=run(['--dsl',str(guard_out)],3,{'LMAWS_LIVE':'1','AWS_PROFILE':'default','AWS_DEFAULT_PROFILE':'default','AWS_REGION':'us-east-1','AWS_EC2_METADATA_DISABLED':'true','LMAWS_LEDGER_DIR':str(d/'profile-ledgers')})
+ denied=run(['--dsl',str(guard_out)],3,{'LMAWS_LIVE':'1','AWS_PROFILE':'default','AWS_DEFAULT_PROFILE':'default','AWS_REGION':'us-east-1','AWS_EC2_METADATA_DISABLED':'true','LMAWS_LEDGER_DIR':str(d/'profile-ledgers'),'LMAWS_EVIDENCE_DIR':str(d/'profile-evidence'),'CI':'false','LMAWS_ENDPOINT':''})
  assert 'AWS_PROFILE=lmaws' in denied.stdout and 'active profile: default' in denied.stdout,denied.stdout
  small=run(['--dsl',str(out)],3,{'LMAWS_MAX_MEMORY_MB':'64'});assert 'LMAWS_MAX_MEMORY_MB' in small.stderr and 'memory budget' in small.stdout
  if sys.platform=='linux' and is_elf:
