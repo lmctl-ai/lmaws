@@ -1,4 +1,4 @@
-# Local user AWS-agent test procedure (candidate v0.1.1)
+# Local user AWS-agent test procedure (v0.1.1)
 
 Status: READY FOR USER TEST after fake-only five-platform CI and the v0.1.1 release.
 Nineteen read-only examples have measured $0.00 evidence. The remaining examples
@@ -43,23 +43,40 @@ lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/swe
 The live write examples need least-privilege permissions restricted to the run's
 `lmaws_` names (S3 uses `lmaws-`) and `lmaws_test=<run-id>` tag:
 
-* S3 `CreateBucket`, `PutObject`, `GetObject`, `HeadObject`, `ListBucket`,
-  `DeleteObject`, `DeleteBucket`.
-* SQS `CreateQueue`, `GetQueueUrl`, `GetQueueAttributes`, `SendMessage`,
-  `ReceiveMessage`, `DeleteMessage`, `DeleteQueue`.
-* SSM `PutParameter`, `GetParameter`, `DescribeParameters`, `DeleteParameter`
-  (Standard String only).
-* DynamoDB `CreateTable`, `DescribeTable`, `PutItem`, `Scan`, `DeleteTable`.
-* SNS `CreateTopic`, `GetTopicAttributes`, `Publish`, `DeleteTopic`.
-* CloudWatch Logs `CreateLogGroup`, `DescribeLogGroups`, `PutRetentionPolicy`,
-  `DeleteLogGroup`.
+| Service | Required IAM actions | Resource scope |
+| --- | --- | --- |
+| S3 | `s3:CreateBucket`, `s3:PutBucketTagging`, `s3:GetBucketTagging`, `s3:ListBucket`, `s3:DeleteBucket`; `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` | `arn:aws:s3:::lmaws-*`; object actions on `arn:aws:s3:::lmaws-*/*` |
+| SQS | `sqs:CreateQueue`, `sqs:TagQueue`, `sqs:GetQueueUrl`, `sqs:ListQueueTags`, `sqs:SendMessage`, `sqs:DeleteQueue` | `arn:aws:sqs:us-east-1:<account>:lmaws_*` |
+| SSM | `ssm:PutParameter`, `ssm:AddTagsToResource`, `ssm:ListTagsForResource`, `ssm:DeleteParameter` | `arn:aws:ssm:us-east-1:<account>:parameter/lmaws_*` (Standard String only; no value reads needed) |
+| DynamoDB | `dynamodb:CreateTable`, `dynamodb:TagResource`, `dynamodb:DescribeTable`, `dynamodb:ListTagsOfResource`, `dynamodb:PutItem`, `dynamodb:DeleteTable` | `arn:aws:dynamodb:us-east-1:<account>:table/lmaws_*` |
+| SNS | `sns:CreateTopic`, `sns:TagResource`, `sns:ListTagsForResource`, `sns:GetTopicAttributes`, `sns:Publish`, `sns:DeleteTopic` | `arn:aws:sns:us-east-1:<account>:lmaws_*` |
+| CloudWatch Logs | `logs:CreateLogGroup`, `logs:TagResource`, `logs:TagLogGroup`, `logs:ListTagsLogGroup`, `logs:PutRetentionPolicy`, `logs:DeleteLogGroup` | `arn:aws:logs:us-east-1:<account>:log-group:lmaws_*` and its `:*` form where required by the action |
 
-The roles, identity, read_only_audit and service_matrix examples need read-only
-IAM inventory calls including `iam:ListRoles` and the `Get*`/`List*` calls shown by
-their errors. IAM list operations cannot be resource-scoped; grant no user, key,
-trust-policy, or policy-write actions. `InvalidClientTokenId` is a federated-session
-authentication problem, so repair `awsspot-local-default` outside lmaws rather than
-switching identity.
+Use your account in `<account>`. Where supported, require the creation request tag
+`aws:RequestTag/lmaws_test` and restrict tag keys to `lmaws_test`; authorize later
+mutations only for the matching `aws:ResourceTag/lmaws_test`. Consult each service's
+condition support rather than applying one blanket tag condition: S3 tags are
+applied after CreateBucket, so initial create/tag and rollback must work on the
+name scope before a tag exists. Host-side ownership checks additionally require
+the exact run ID, prefix and ledger. Do not grant writes outside these prefixes.
+
+Inventory/preflight calls that cannot use a resource ARN need `Resource: "*"`:
+`s3:ListAllMyBuckets`, `sqs:ListQueues`, `sns:ListTopics`, `dynamodb:ListTables`,
+`ssm:DescribeParameters`, `logs:DescribeLogGroups`, `ec2:DescribeInstances`,
+`ec2:DescribeVpcs`, `ec2:DescribeSecurityGroups`, `lambda:ListFunctions`,
+`cloudwatch:DescribeAlarms`, `route53:ListHostedZones`, `secretsmanager:ListSecrets`,
+`ecs:ListClusters`, and `iam:ListRoles`. These are metadata-only; no secret-value
+reads, IAM writes, EC2 creates, or Lambda creates are needed by this release.
+`sts:GetCallerIdentity` supplies masked identity metadata. The four IAM-dependent
+examples (`roles`, `identity`, `read_only_audit`, `service_matrix`) need
+`iam:ListRoles`; no wildcard `iam:Get*`/`iam:List*` grant is necessary.
+`InvalidClientTokenId` is an authentication issue, not a missing IAM allow: the
+owner must repair/refresh the existing `awsspot-local-default` federated session
+behind profile `default`, without switching identity. lmaws does not do this.
+
+AWS references: [SQS actions and tag conditions](https://docs.aws.amazon.com/service-authorization/latest/reference/list_sqs.html),
+[S3 operation permissions](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-with-s3-policy-actions.html)
+(`HeadObject` uses `s3:GetObject`; `HeadBucket` uses `s3:ListBucket`).
 
 The sweeper example scans the directory in `LMAWS_LEDGER_DIR`, asserts zero ledger
 leftovers, prints `$0.00`, and never deletes account resources. With the native
@@ -86,3 +103,44 @@ Check both `leftover_count` and `sweeper_leftover_count` are zero, every provide
 verification says `absent:true`, the PNG exists, and the process exits successfully.
 An AccessDenied or invalid-token run is failed evidence even if it left no resource.
 Never interpret an authorization/network error as proof that a resource is absent.
+
+## All 30 local autoruns
+
+Expected cost: the 19 measured read-only examples print `$0.00`; four IAM-dependent read-only examples are estimated at `$0.00`, not yet measured live. The five S3/DynamoDB/SQS/SNS write examples have a `$0.0001` planning allowance each, and SSM/log retention are estimated at `$0.00`, not yet measured live. Prices and assumptions are in README. No credentials are supplied to CI.
+
+Run from a new directory with `lmctl`/`lmscript` 0.2.420 or newer installed; do not put an old `lmaws` on PATH. The environment above opts into live calls; omit `LMAWS_LIVE=1` for the offline demo. A single live batch should use the aggregate-cap harness below rather than 30 independent runs (each independent autorun has its own $0.05 cap).
+
+```sh
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/alarms.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/before_after.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/bucket_objects.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/buckets.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/clusters.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/functions.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/identity.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/instances.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_groups.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_retention.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/parameters.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queues.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/read_only_audit.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/regional_posture.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/resource_graph.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/roles.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sandbox_lifecycle.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/secrets.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/security_groups.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/service_matrix.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/table_items.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tables.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tag_compliance.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topic_publish.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topics.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/vpcs.lms
+timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/zones.lms
+```
+
+For aggregate $0.25 enforcement across the batch, clone the repo, download the matching v0.1.1 executable from the release to `target/lmaws` (Windows: `target/lmaws.exe`), verify SHA256SUMS, and pass its absolute path to `scripts/test-live-examples.py --host`. The harness runs all 30 with the default profile and deducts existing campaign evidence from the budget. Inspect failures before rerunning.
