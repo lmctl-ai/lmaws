@@ -28,7 +28,7 @@ else:raise AssertionError('read-only comparison accepted cloud mutations')
 with tempfile.TemporaryDirectory(prefix='lmaws-compare-tests-') as tmp:
  tmp=pathlib.Path(tmp);fake=tmp/'bin';fake.mkdir();emitter=fake/'emit.py'
  emitter.write_text('import pathlib\nprint(pathlib.Path('+repr(str(ROOT/'compare/lmcloud.dsl.json'))+').read_text())\n')
- if os.name=='nt':(fake/'lmcloud.cmd').write_text('@echo off\r\n"'+sys.executable+'" "'+str(emitter)+'" %*\r\n')
+ if os.name=='nt':pass # Node spawnSync does not execute .cmd; bind the native Python executable below.
  else:
   shim=fake/'lmcloud';shim.write_text('#!/usr/bin/env python3\n'+emitter.read_text());shim.chmod(0o755)
  env=dict(os.environ,PATH=str(fake)+os.pathsep+os.environ['PATH'],LMAWS_LIVE='0')
@@ -36,7 +36,11 @@ with tempfile.TemporaryDirectory(prefix='lmaws-compare-tests-') as tmp:
   script=ROOT/'compare'/name/(name+'.lms');source=script.read_text()
   assert 'read_file("compare/' not in source
   assert 'tofu.destroy' in source and 'tofu.last_error' in source
-  p=subprocess.run([shutil.which('lmscript'),'--check','--no-preflight',str(script)],env=env,text=True,capture_output=True,timeout=45)
+  check_script=script
+  if os.name=='nt':
+   check_script=fake/(name+'.lms')
+   check_script.write_text(source.replace('cli="lmcloud" install="github:lmctl-ai/lmcloud@latest"','cli="python emit.py"'),encoding='utf-8')
+  p=subprocess.run([shutil.which('lmscript'),'--check','--no-preflight',str(check_script)],cwd=fake,env=env,text=True,capture_output=True,timeout=45)
   assert p.returncode==0,(name,p.stderr[-2000:])
  # A provider apply error must still destroy and independently verify absence.
  original=pathlib.Path.cwd();work=tmp/'failure';work.mkdir();os.chdir(work)
