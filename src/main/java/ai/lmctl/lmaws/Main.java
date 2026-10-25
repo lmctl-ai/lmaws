@@ -10,7 +10,7 @@ public final class Main {
     public static final String VERSION="0.1.0";
     private static final String HELP="""
         lmaws 0.1.0 — AWS SDK for Java v2 scripting host
-        usage: lmaws [--dry-run] --dsl FILE | --dsl-schema [--json] | --dsl-signatures
+        usage: lmaws [--dry-run] --dsl FILE | --dsl-schema [--json] | --dsl-signatures [--without-std]
                lmaws --version | --notices | --help | --self-test
                lmaws --sweep LEDGER_DIR --older-than-hours N
         DSL context: aws.demo() (offline) or aws.region(\"\") (default profile/region).
@@ -28,7 +28,7 @@ public final class Main {
     }
     static byte[] schema(Registry registry) {
         Map<String,Object> functions=new TreeMap<>(),types=new TreeMap<>(),context=new TreeMap<>();
-        for(String sig:registry.signatures()) {
+        for(String sig:registry.hostSignatures()) {
             if(sig.startsWith("context ")){String[] fields=sig.substring(8).split(": ",2);context.put(fields[0],fields[1]);continue;}
             Registry.Binding b=registry.resolve(sig);Map<String,Object> spec=new LinkedHashMap<>();spec.put("params",b.parameters);spec.put("returns",b.returns);
             Map<String,Object> target=functions;
@@ -59,6 +59,7 @@ public final class Main {
         try(host) {
             Registry registry=host.registry();byte[] schema=schema(registry);
             if(args.length>=1&&args[0].equals("--dsl-schema")&&(args.length==1||args.length==2&&args[1].equals("--json"))){System.out.write(schema);return 0;}
+            if(Arrays.equals(args,new String[]{"--dsl-signatures","--without-std"})){registry.hostSignatures().forEach(System.out::println);return 0;}
             if(Arrays.equals(args,new String[]{"--dsl-signatures"})){registry.signatures().forEach(System.out::println);return 0;}
             if(args.length==4&&args[0].equals("--sweep")&&args[2].equals("--older-than-hours")){System.out.println(Jsons.encode(Sandbox.leftovers(Path.of(args[1]),Long.parseLong(args[3]))));return 0;}
             if(Arrays.equals(args,new String[]{"--self-test"})){SafetyChecks.run();SelfTest.main(new String[0]);return 0;}

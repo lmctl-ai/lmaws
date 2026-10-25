@@ -52,7 +52,7 @@ jobs:
         with:
           node-version: 24
       - name: Pinned script compiler
-        run: npm install -g @lmctl-ai/lmctl@0.2.369
+        run: npm install -g @lmctl-ai/lmctl@0.2.420
       - name: JVM, fake endpoints and examples
         timeout-minutes: 15
         run: bash test.sh

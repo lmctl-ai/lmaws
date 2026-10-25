@@ -7,7 +7,7 @@ archive SHA-256 in sdk.lock. All runtime Maven JARs are content-pinned in deps.l
 No third-party implementation sources are committed.
 
 CloudHost registers the typed API and generates schema bytes from exactly that
-registry, including the 72 canonical standard functions. The aws context opens
+registry’s host-only signatures; compiler >=0.2.420 resolves the 72 standard signatures implicitly while the pinned SDK registers them by default. The aws context opens
 an offline demo session or a single-region live session. Inventories are projected
 metadata Rows/Row objects with CSV and JSON exports. Secret-value, password and
 IAM user/key operations are absent. Output masks twelve-digit account IDs.

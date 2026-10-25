@@ -104,3 +104,5 @@ Each example writes its image to `images/<name>.png` in the current directory an
 
 The gallery contains 22 lmplot charts and 3 lmdraw diagrams generated from each example's host output. `scripts/test-gallery.py` checks the gallery links, image magic bytes and the 25-example inventory; `python3 scripts/test-gallery.py --run` executes all examples in isolated temporary directories. The default CI uses in-process fakes and never needs AWS credentials. Live testing is opt-in: read-only calls may inspect the configured account, and writes are limited to resources created by that run with the `lmaws_` prefix, ledger ownership and teardown.
 
+
+Compiler minimum: lmscript 0.2.420. Host schema bytes omit built-in std; `--dsl-signatures` includes it and `--without-std` selects host declarations.

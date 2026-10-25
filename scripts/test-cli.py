@@ -13,6 +13,10 @@ assert '\u2014 AWS SDK' in run(['--help'],extra={'JAVA_TOOL_OPTIONS':'-Dstdout.e
 schema=run(['--dsl-schema','--json']).stdout;assert schema==(root/'schema/lmaws.dsl.json').read_text(encoding="utf-8");json.loads(schema)
 p=subprocess.run([shutil.which('lmscript'),'--dsl-signatures',str(root/'schema/lmaws.dsl.json')],text=True,encoding="utf-8",capture_output=True,timeout=45);assert p.returncode==0,p.stderr
 assert p.stdout==run(['--dsl-signatures']).stdout,'schema/registry signature mismatch'
+p=subprocess.run([shutil.which('lmscript'),'--dsl-signatures',str(root/'schema/lmaws.dsl.json'),'--without-std'],text=True,encoding="utf-8",capture_output=True,timeout=45);assert p.returncode==0,p.stderr
+assert p.stdout==run(['--dsl-signatures','--without-std']).stdout,'host-only schema/registry signature mismatch'
+assert 'str_len' not in json.loads(schema)['functions'],'schema must omit built-in std'
+
 run([],2);run(['--nonesuch'],2);run(['--dsl','missing-bytecode.dslb'],3)
 for raw in ['0','-1','wat','1.5','99999999999999999999999999']:
  assert 'positive whole' in run(['--version'],2,{'LMAWS_MAX_MEMORY_MB':raw}).stderr

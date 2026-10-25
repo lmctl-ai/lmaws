@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
+scripts/select-compiler.sh >/dev/null
 if ! command -v timeout >/dev/null && command -v gtimeout >/dev/null; then timeout() { gtimeout "$@"; }; export -f timeout; fi
 timeout 120 python3 scripts/sync-sdk.py --ensure
 timeout 180 mvn -q verify
