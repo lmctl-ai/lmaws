@@ -50,3 +50,11 @@ Do not merge into main or tag v0.1.1 until the owner corrects default-profile ac
 and all 30 live examples pass. The currently published v0.1.0 and its main examples
 remain intact. The candidate native artifacts can be downloaded from the green CI
 run and tested locally; public CI must never receive AWS credentials or OIDC.
+
+Concurrent workspace change observed at handoff: origin/main advanced separately
+to 50ab570 (implicit standard imports), and a worktree-only compiler pin edit
+changes lmctl 0.2.369 to 0.2.420 in .github/workflows/ci.yml. This edit was not made
+by the cost lane and is intentionally left untouched/uncommitted. The five green
+checks certify the dispatched cost candidate 98cdc8a, not that pending compiler
+change. Integrate the newer main/SDK work and rerun checks when resuming; do not
+overwrite the concurrent edit or claim the cost branch is merged/released.
