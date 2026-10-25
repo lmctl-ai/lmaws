@@ -40,3 +40,17 @@ original emitted display text and exact unrounded request estimates.
 
 Source was pushed early as d5c14c5; test isolation fix 294bb8d passed all five CI jobs
 40198710670. Final comparison/cost formatting changes require final CI and release.
+
+Resume details after final source push:
+- Current source commit 7788ed7, main CI 40201692943. All five JVM/fake/comparison
+  stages passed; native builds running. Wait for five green jobs before tagging v0.1.2.
+- Windows schema-emitter test must use native Python with fixed emitter argument;
+  Node cannot spawn .cmd. Tests are credential-free and mock provider phases.
+- Fresh-cache @latest lmcloud 0.1.9 install fails because --version includes both
+  0.1.9 and OpenTofu 1.13.2. Comparison scripts pin v0.1.9; checksum verification remains.
+  This second upstream finding is in compare/PROVIDER_TEST.md and compare-latest-finding-v012.json.
+- Native final candidate rebuilt with the denied-request display fix; local CLI and
+  16-inventory/six-lifecycle fake suites pass. No live write was repeated.
+- New comparison budget regression combines native + verification + provider allowance
+  before launching the next resource; partial declarative message/update coverage never
+  counts as full parity. Private state/logs remain ignored. Native and comparison sweepers zero.

@@ -1,0 +1,80 @@
+{
+  "release": "https://github.com/lmctl-ai/lmaws/releases/tag/v0.1.2",
+  "tag": "v0.1.2",
+  "source_commit": "df5fea07de756b3e13114573792a99e086ebc838",
+  "main_ci": "https://github.com/lmctl-ai/lmaws/actions/runs/40202485432",
+  "tag_ci": "https://github.com/lmctl-ai/lmaws/actions/runs/40203293427",
+  "compiler": "0.2.420",
+  "platforms": [
+    {
+      "name": "linux-arm64",
+      "conclusion": "success"
+    },
+    {
+      "name": "macos-x64",
+      "conclusion": "success"
+    },
+    {
+      "name": "macos-arm64",
+      "conclusion": "success"
+    },
+    {
+      "name": "windows-x64",
+      "conclusion": "success"
+    },
+    {
+      "name": "linux-x64",
+      "conclusion": "success"
+    },
+    {
+      "name": "release",
+      "conclusion": "success"
+    }
+  ],
+  "assets": [
+    {
+      "name": "lmaws-linux-arm64",
+      "size": 73861240,
+      "digest": "sha256:f951356554d296ea885845a8a68d9687a5a4649a627ccea0d0df6af800f8c935"
+    },
+    {
+      "name": "lmaws-linux-x64",
+      "size": 76286216,
+      "digest": "sha256:a7bdc08ebd68618faa90112db8f8f830ab06a3ff08c0d4d901a7a4bb5c0380a5"
+    },
+    {
+      "name": "lmaws-macos-arm64",
+      "size": 70417224,
+      "digest": "sha256:b0215b377f5113b36c685d8781ebdc93cfcadc5e42d37bca2f0868ffabd95ec5"
+    },
+    {
+      "name": "lmaws-macos-x64",
+      "size": 72271456,
+      "digest": "sha256:8bfde0837e027a620b487b3313cd1ee27cb3f1a76e3c6fd4e578ef1e41d880f3"
+    },
+    {
+      "name": "lmaws-windows-x64.exe",
+      "size": 73949184,
+      "digest": "sha256:1d4262d47c7a10c93c1054996bd9225006c375b04d469f7793822b6b770f733c"
+    },
+    {
+      "name": "SHA256SUMS",
+      "size": 420,
+      "digest": "sha256:7b20db7c58b7f2816434b24f99610ed838e8bcec79e7ba97bb5ff7d25e917e5d"
+    }
+  ],
+  "all_downloaded_checksums_verified": true,
+  "linux_linkage_verified": true,
+  "autorun_urls_verified": 30,
+  "autorun_initial_cache_empty": true,
+  "cloud_credentials_in_ci": false,
+  "oidc": false,
+  "native_passed_live": 20,
+  "native_creation_denied": 6,
+  "iam_estimated_only": 4,
+  "lmcloud_init_failures": 26,
+  "lmcloud_applies": 0,
+  "estimated_campaign_usd": "0.000046400000000731612",
+  "leftover_count": 0,
+  "ready_for_user_test": true
+}

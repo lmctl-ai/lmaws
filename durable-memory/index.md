@@ -27,3 +27,7 @@ v0.1.1 released:
 - [autorun-v011.json](autorun-v011.json): all 30 empty-directory v0.1.1 autoruns.
 
 - [09-profiles-comparisons-v012.md](09-profiles-comparisons-v012.md): lmaws-only mutation guard, once-only live writes, 30 OpenTofu comparisons and provider-resolution finding.
+
+- [10-release-v012.md](10-release-v012.md): released v0.1.2, five green platforms, native fresh-cache proof and known live/comparison limitations.
+- [release-v012.json](release-v012.json), [autorun-v012.json](autorun-v012.json): final release assets and all 30 native URL checks.
+- [compare-autorun-v012.json](compare-autorun-v012.json), [compare-init-results-v012.json](compare-init-results-v012.json): real comparator bootstrap and 26 checked init failures.

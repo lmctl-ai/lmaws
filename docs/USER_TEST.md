@@ -155,3 +155,5 @@ Estimated campaign total: $0.00004640 (native SDK calls/storage plus independent
 checks). Prices vary by region and time; no Cost Explorer request was made.
 
 Comparison scripts pin lmcloud v0.1.9 to work around its ambiguous two-version `--version` line, which the @latest installer rejects. Checksums remain verified. The separate provider-resolution finding still blocks plan/apply; see compare/PROVIDER_TEST.md (or PROVIDER_TEST.md within compare).
+
+The compiler uses an existing PATH binary before its tool cache. Remove an older `lmaws` from PATH or replace it with v0.1.2 before testing; a fresh cache alone does not override PATH. The checkout comparison harness accepts `--lmcloud /absolute/path/to/a/fixed/lmcloud` when the other project publishes a fix, while preserving the same profiles, ledgers, caps and teardown.
