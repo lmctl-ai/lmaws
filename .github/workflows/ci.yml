@@ -1,0 +1,97 @@
+name: ci
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths-ignore: ['durable-memory/**', '**.md']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+jobs:
+  native:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-22.04, name: linux-x64}
+          - {os: ubuntu-22.04-arm, name: linux-arm64}
+          - {os: macos-15-intel, name: macos-x64}
+          - {os: macos-15, name: macos-arm64}
+          - {os: windows-2022, name: windows-x64}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: graalvm/setup-graalvm@27b360dbb857524eaf0b4c4cef364d38e5b4f173
+        with:
+          java-version: '25'
+          distribution: graalvm-community
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: maven
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: timeout 180 sudo apt-get update -qq && timeout 180 sudo apt-get install -y -qq build-essential zlib1g-dev
+      - name: macOS timeout
+        if: runner.os == 'macOS'
+        run: brew install coreutils && echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        if: runner.os == 'Windows'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Pinned script compiler
+        run: npm install -g @lmctl-ai/lmctl@0.2.369
+      - name: JVM, fake endpoints and examples
+        timeout-minutes: 15
+        run: bash test.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Native image
+        timeout-minutes: 30
+        run: bash scripts/build-native.sh
+      - name: Native, fake endpoints and examples
+        timeout-minutes: 15
+        run: LMAWS_NATIVE=1 bash test.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Package tested executable
+        run: |
+          mkdir -p dist
+          suffix=''
+          if [[ "$RUNNER_OS" == Windows ]]; then suffix=.exe; fi
+          cp "target/lmaws$suffix" "dist/lmaws-${{ matrix.name }}$suffix"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lmaws-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: native
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish five tested binaries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd dist
+          test "$(find . -maxdepth 1 -type f -name 'lmaws-*' | wc -l)" -eq 5
+          sha256sum lmaws-* > SHA256SUMS
+          timeout 180 gh release create "$GITHUB_REF_NAME" lmaws-* SHA256SUMS --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes 'AWS SDK for Java v2 scripting host. Five native executables; no Java installation required. Linux: glibc >= 2.35. Windows: Microsoft VC++ runtime. Offline examples and fake-endpoint CI; live writes require opt-in and a run-owned ledger.'

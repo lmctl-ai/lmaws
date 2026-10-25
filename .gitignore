@@ -1,0 +1,8 @@
+/target/
+/third_party/
+/bin/
+/images/
+/data/
+/.omx/
+/live-ledger/
+*.log
