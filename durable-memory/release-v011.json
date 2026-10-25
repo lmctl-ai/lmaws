@@ -1,0 +1,78 @@
+{
+  "release": "https://github.com/lmctl-ai/lmaws/releases/tag/v0.1.1",
+  "tag": "v0.1.1",
+  "source_commit": "507c5451849c31ab1a11a283e99e2a05cdc320e0",
+  "main_ci": "https://github.com/lmctl-ai/lmaws/actions/runs/40197519194",
+  "tag_ci": "https://github.com/lmctl-ai/lmaws/actions/runs/40197523188",
+  "compiler": "0.2.420",
+  "platforms": [
+    {
+      "name": "linux-arm64",
+      "conclusion": "success"
+    },
+    {
+      "name": "macos-x64",
+      "conclusion": "success"
+    },
+    {
+      "name": "windows-x64",
+      "conclusion": "success"
+    },
+    {
+      "name": "linux-x64",
+      "conclusion": "success"
+    },
+    {
+      "name": "macos-arm64",
+      "conclusion": "success"
+    },
+    {
+      "name": "release",
+      "conclusion": "success"
+    }
+  ],
+  "assets": [
+    {
+      "name": "lmaws-linux-arm64",
+      "size": 73861240,
+      "digest": "sha256:05d0d2d7a44883b2e89563ae2cdf6352e24e8160a62823de7b6ecc3e0b000e14"
+    },
+    {
+      "name": "lmaws-linux-x64",
+      "size": 76286216,
+      "digest": "sha256:22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65"
+    },
+    {
+      "name": "lmaws-macos-arm64",
+      "size": 70400712,
+      "digest": "sha256:5f82f42d9ffa0c837f0ca0b4580dc562c2c2e7f14f9581604069e8f34630eeeb"
+    },
+    {
+      "name": "lmaws-macos-x64",
+      "size": 72271456,
+      "digest": "sha256:2a5b05ec9491759c6f0bb2b6b4cd9c7b710aed584b13b023ec226cdb1dc7b314"
+    },
+    {
+      "name": "lmaws-windows-x64.exe",
+      "size": 73949184,
+      "digest": "sha256:7ebeedc04163a04655d2fd71c4d38b60f22558a04740e4873d48877c0f478d5b"
+    },
+    {
+      "name": "SHA256SUMS",
+      "size": 420,
+      "digest": "sha256:7b6ba877ce54293b74016d0feeca97f416e221fd36d4b958f492afd4b3b8e36e"
+    }
+  ],
+  "all_downloaded_checksums_verified": true,
+  "linux_linkage_verified": true,
+  "autorun_urls_verified": 30,
+  "autorun_initial_cache_empty": true,
+  "cloud_credentials_in_ci": false,
+  "oidc_in_ci": false,
+  "live_tests_run_this_resume": false,
+  "measured_readonly_examples": 19,
+  "unmeasured_examples": 11,
+  "resources_created_cost_patch": 0,
+  "leftover_count": 0,
+  "ready_for_user_test": true
+}

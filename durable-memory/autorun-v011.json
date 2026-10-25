@@ -1,0 +1,401 @@
+{
+  "release": "https://github.com/lmctl-ai/lmaws/releases/tag/v0.1.1",
+  "compiler": "lmscript 0.2.420",
+  "live": false,
+  "no_host_on_path": true,
+  "initial_cache_empty": true,
+  "cases": [
+    {
+      "example": "alarms",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/alarms.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 22263,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "before_after",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/before_after.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 22883,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "bucket_objects",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/bucket_objects.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 21905,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "buckets",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/buckets.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 22844,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "clusters",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/clusters.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 22077,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "functions",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/functions.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 22944,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "identity",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/identity.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 21693,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "instances",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/instances.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 19249,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "inventory",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 25146,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "log_groups",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_groups.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 22312,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "log_retention",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_retention.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 20133,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "parameters",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/parameters.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 22750,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "queue_pipeline",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 21305,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "queues",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queues.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 21381,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "read_only_audit",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/read_only_audit.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 38536,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "regional_posture",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/regional_posture.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 22243,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "resource_graph",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/resource_graph.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 39511,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "roles",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/roles.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 21627,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "sandbox_lifecycle",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sandbox_lifecycle.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 21819,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "secrets",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/secrets.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 20548,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "security_groups",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/security_groups.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 17823,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "service_matrix",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/service_matrix.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 34436,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "sweeper",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 20643,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "table_items",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/table_items.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 20917,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "tables",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tables.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 20359,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "tag_compliance",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tag_compliance.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 18308,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "topic_publish",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topic_publish.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 21745,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "topics",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topics.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 21269,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "vpcs",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/vpcs.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 21657,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "zones",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/zones.lms",
+      "exit_code": 0,
+      "started_empty": true,
+      "version": "lmaws 0.1.1",
+      "sha256": "22748ca20ad4111e9a6d9b13d67f4fd4a5d1fd11a5082e7a8de4326ab7be7f65",
+      "png_bytes": 20066,
+      "dimensions": [
+        900,
+        560
+      ]
+    }
+  ],
+  "passed": 30,
+  "workdir": "/tmp/lmaws-v011-autorun-6jtzyk1i"
+}

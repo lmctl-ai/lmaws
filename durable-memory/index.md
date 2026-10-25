@@ -15,9 +15,13 @@ Release evidence:
 - [live-v010.json](live-v010.json): two approved live resources, both deleted.
 - [ci-linux-readonly-v010.json](ci-linux-readonly-v010.json): actual CI binary credential/TLS reads.
 
-v0.1.1 candidate:
+v0.1.1 released:
 - [07-example-costs.md](07-example-costs.md): cost policy and live authorization blocker.
 - [cost-ci-v011.json](cost-ci-v011.json): five green fake-only platform jobs.
 - [gallery-v011.json](gallery-v011.json): 30 offline examples and image checks.
 - [validation-status-v011.json](../evidence/validation-status-v011.json): per-example live state and zero leftovers.
-- [USER_TEST.md](../docs/USER_TEST.md): exact local environment, test and sweeper instructions; not ready while blocked.
+- [USER_TEST.md](../docs/USER_TEST.md): exact local environment, scoped permissions, 30 autoruns and sweeper; READY FOR USER TEST.
+
+- [08-release-v011.md](08-release-v011.md): final release, green compiler/main/tag validation and handoff.
+- [release-v011.json](release-v011.json): five assets, checksum and CI proof.
+- [autorun-v011.json](autorun-v011.json): all 30 empty-directory v0.1.1 autoruns.
