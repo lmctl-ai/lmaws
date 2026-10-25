@@ -1,47 +1,35 @@
-# Local user AWS-agent test procedure (v0.1.1)
+# Local AWS-agent test procedure (v0.1.2)
 
-Status: READY FOR USER TEST after fake-only five-platform CI and the v0.1.1 release.
-Nineteen read-only examples have measured $0.00 evidence. The remaining examples
-are labelled in README as “estimated from price table, not yet measured live” because
-the federated session `awsspot-local-default` denied SQS CreateQueue and
-`ssm:PutParameter`, while IAM ListRoles returned InvalidClientTokenId. The host
-never edits IAM users/keys or changes profiles.
+READY FOR USER TEST, with known authorization and lmcloud provider-resolution findings.
+Twenty examples have passed live (19 read-only plus S3 bucket/object); six native
+write/lifecycle creations were denied. The four IAM-dependent examples are
+**estimated, not measured live**, and must be skipped with these federated profiles.
+The 26 attempted lmcloud comparisons could not initialize AWS provider 5.100.0
+with lmcloud 0.1.9; no OpenTofu apply ran. See [per-example results](../compare/RESULTS.md)
+and [the provider finding](../compare/PROVIDER_TEST.md). No lmcloud source was edited.
 
-Run locally, never in GitHub Actions or another CI service. No OIDC setup, cloud
-credentials in GitHub, trust policy or Cost Explorer request is needed.
+Use lmctl/lmscript >=0.2.420. Native autoruns need no Java. Comparison autoruns also
+need Python 3, curl and AWS CLI for ledgers and independent metadata-only checks.
+No OIDC or AWS credentials belong in CI. Never use agentcore-poc or admin.
+
+From a new local directory, with the user's existing profiles:
 
 ```sh
-export AWS_PROFILE=default
-export AWS_DEFAULT_PROFILE=default
-export AWS_REGION=us-east-1
-export AWS_DEFAULT_REGION=us-east-1
-export AWS_EC2_METADATA_DISABLED=true
-export LMAWS_LIVE=1
+export AWS_DEFAULT_PROFILE=default AWS_PROFILE=default
+export AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1
+export AWS_EC2_METADATA_DISABLED=true LMAWS_LIVE=1
 export LMAWS_MAX_COST_USD=0.05
 export LMAWS_LEDGER_DIR="$PWD/ledgers"
 export LMAWS_EVIDENCE_DIR="$PWD/evidence"
-export LMSCRIPT_TOOL_CACHE="$PWD/.tools-lmaws-v011"
+export LMSCRIPT_TOOL_CACHE="$PWD/.tools-lmaws-v012"
 ```
 
-Use the configured default profile. It must allow metadata inventories and scoped
-create/tag/use/delete operations for the example's `lmaws_` resources (S3 names use
-`lmaws-`), with `lmaws_test=<run-id>`. It must allow ownership-tag reads and deletion
-so cleanup can finish. Fix the local profile outside this host if authentication
-or authorization fails; do not add cloud credentials or OIDC to public CI.
-
-After v0.1.1 is published, use a fresh tool cache and ensure an older `lmaws` is not
-on PATH. From an empty directory, run each of the 30 `lmctl autorun` URLs listed in
-README. Read-only examples print `estimated cost: $0.00`; README gives the
-price-table estimate for each blocked example. Each run writes its PNG, a private
-ledger, sanitized `evidence/live-cost-<example>-<run-id>.json`, and its estimate.
-
-```sh
-lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms
-lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms
-```
-
-The live write examples need least-privilege permissions restricted to the run's
-`lmaws_` names (S3 uses `lmaws-`) and `lmaws_test=<run-id>` tag:
+`default` is READ-ONLY and is used for all inventories and independent deletion
+checks. Only `lmaws` may create/update/delete; the native host and comparison
+runtime reject other profiles for writes. Both configured profiles were verified
+to target the same account without printing its ID. The host never edits IAM,
+credentials or profiles. The owner's agent may grant the following scoped actions
+to the existing lmaws role; no IAM write permissions are needed by these examples.
 
 | Service | Required IAM actions | Resource scope |
 | --- | --- | --- |
@@ -65,82 +53,103 @@ Inventory/preflight calls that cannot use a resource ARN need `Resource: "*"`:
 `ssm:DescribeParameters`, `logs:DescribeLogGroups`, `ec2:DescribeInstances`,
 `ec2:DescribeVpcs`, `ec2:DescribeSecurityGroups`, `lambda:ListFunctions`,
 `cloudwatch:DescribeAlarms`, `route53:ListHostedZones`, `secretsmanager:ListSecrets`,
-`ecs:ListClusters`, and `iam:ListRoles`. These are metadata-only; no secret-value
+`ecs:ListClusters`. These are metadata-only; no secret-value
 reads, IAM writes, EC2 creates, or Lambda creates are needed by this release.
-`sts:GetCallerIdentity` supplies masked identity metadata. The four IAM-dependent
-examples (`roles`, `identity`, `read_only_audit`, `service_matrix`) need
-`iam:ListRoles`; no wildcard `iam:Get*`/`iam:List*` grant is necessary.
-`InvalidClientTokenId` is an authentication issue, not a missing IAM allow: the
-owner must repair/refresh the existing `awsspot-local-default` federated session
-behind profile `default`, without switching identity. lmaws does not do this.
+`sts:GetCallerIdentity` supplies masked identity metadata. Skip `roles`, `identity`, `read_only_audit` and `service_matrix` live: federated profiles cannot call IAM. No IAM grants, profile repair or identity switching are part of this test.
 
 AWS references: [SQS actions and tag conditions](https://docs.aws.amazon.com/service-authorization/latest/reference/list_sqs.html),
 [S3 operation permissions](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-with-s3-policy-actions.html)
 (`HeadObject` uses `s3:GetObject`; `HeadBucket` uses `s3:ListBucket`).
 
-The sweeper example scans the directory in `LMAWS_LEDGER_DIR`, asserts zero ledger
-leftovers, prints `$0.00`, and never deletes account resources. With the native
-binary installed on PATH, its equivalent CLI is:
+
+## Native autoruns: exact profile for each example
+
+S3 `bucket_objects`: measured estimated cost $0.00001781, independently absent after
+cleanup. Read-only examples print $0.00. The six denied lifecycle examples remain
+price-table estimates: SQS/DynamoDB/SNS $0.0001 planning allowance; Standard SSM and
+empty Logs $0.00. Actual request/lifetime estimates are written in each ledger,
+including denied attempts. Default per-example cap $0.05; hard run ceiling $0.25.
+
+Each command below has its own cap. For one aggregate capped batch use the checkout
+harness described below, not independent commands. Do not rerun writes merely to
+refresh screenshots. IAM commands are listed only as offline demos, without live mode.
 
 ```sh
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/alarms.lms
+AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/before_after.lms
+AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/bucket_objects.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/buckets.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/clusters.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/functions.lms
+LMAWS_LIVE=0 AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/identity.lms # IAM: offline only
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/instances.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_groups.lms
+AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_retention.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/parameters.lms
+AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queues.lms
+LMAWS_LIVE=0 AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/read_only_audit.lms # IAM: offline only
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/regional_posture.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/resource_graph.lms
+LMAWS_LIVE=0 AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/roles.lms # IAM: offline only
+AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sandbox_lifecycle.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/secrets.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/security_groups.lms
+LMAWS_LIVE=0 AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/service_matrix.lms # IAM: offline only
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms
+AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/table_items.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tables.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tag_compliance.lms
+AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topic_publish.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topics.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/vpcs.lms
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/zones.lms
+```
+
+A repository checkout can enforce the aggregate campaign budget and skip IAM:
+
+```sh
+# Install/download the v0.1.2 platform executable into target/lmaws, verify SHA256SUMS.
+LMAWS_LIVE=1 python3 scripts/test-live-examples.py --host target/lmaws --write-only
+# Run exactly one native/lmcloud comparison; reuse native evidence to avoid a second creation:
+LMAWS_LIVE=1 AWS_PROFILE=lmaws AWS_REGION=us-east-1 timeout 900 compare/run.sh bucket_objects \
+  --native-evidence evidence/live-cost-bucket_objects-<run-id>.json
+LMAWS_LIVE=1 AWS_PROFILE=default AWS_REGION=us-east-1 timeout 900 compare/run.sh inventory
+```
+
+All 30 direct comparison URLs are beside their native examples in README. Example:
+
+```sh
+LMAWS_LIVE=1 AWS_PROFILE=lmaws timeout 900 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/bucket_objects/bucket_objects.lms
+```
+
+Comparison scripts embed their HCL and download this repo's small Python runtime
+and fail-closed metadata verifier. Without LMAWS_LIVE=1 they only initialize and
+validate; they never apply. With live mode, they check every phase return value,
+preflight absence, prefix/tag ownership and cost reservation before apply, retain
+private state, always attempt destroy after apply (including failure), and verify
+absence using default. OpenTofu's request counts are not exposed by lmcloud; its
+cost ledger therefore reserves a conservative 500-request upper allowance ($0.0025),
+including tiny storage. This is explicitly an allowance, not measured SDK traffic.
+The current resolver failure occurs before apply, so its estimate and creations are zero.
+
+## Sweep and evidence
+
+```sh
+AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms
+# With the downloaded host on PATH:
 lmaws --sweep "$LMAWS_LEDGER_DIR" --older-than-hours 0
+# For a direct comparison autorun directory (downloaded helper), dry-run only:
+python3 compare-runtime.py --sweep
+# Repository comparison state, dry-run only; no AWS calls or deletion:
+python3 compare/sweep.py --older-than-hours 0
 ```
 
-Default per-example cap: $0.05. Hard whole-run cap: $0.25. The host refuses the next
-resource before its projected estimate exceeds the cap, reserves cleanup headroom,
-and never blocks teardown because a cap was reached. The local batch harness
-shares a $0.25 campaign estimate across evidence files.
-
-Candidate development test (repository checkout, local compiler and built host):
-
-```sh
-LMAWS_LIVE=1 python3 scripts/test-live-examples.py --host target/lmaws
-# To retry one example after fixing the local default profile:
-LMAWS_LIVE=1 python3 scripts/test-live-examples.py --host target/lmaws --example queue_pipeline
-```
-
-Check both `leftover_count` and `sweeper_leftover_count` are zero, every provider
-verification says `absent:true`, the PNG exists, and the process exits successfully.
-An AccessDenied or invalid-token run is failed evidence even if it left no resource.
-Never interpret an authorization/network error as proof that a resource is absent.
-
-## All 30 local autoruns
-
-Expected cost: the 19 measured read-only examples print `$0.00`; four IAM-dependent read-only examples are estimated at `$0.00`, not yet measured live. The five S3/DynamoDB/SQS/SNS write examples have a `$0.0001` planning allowance each, and SSM/log retention are estimated at `$0.00`, not yet measured live. Prices and assumptions are in README. No credentials are supplied to CI.
-
-Run from a new directory with `lmctl`/`lmscript` 0.2.420 or newer installed; do not put an old `lmaws` on PATH. The environment above opts into live calls; omit `LMAWS_LIVE=1` for the offline demo. A single live batch should use the aggregate-cap harness below rather than 30 independent runs (each independent autorun has its own $0.05 cap).
-
-```sh
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/alarms.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/before_after.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/bucket_objects.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/buckets.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/clusters.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/functions.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/identity.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/instances.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_groups.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_retention.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/parameters.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queues.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/read_only_audit.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/regional_posture.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/resource_graph.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/roles.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sandbox_lifecycle.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/secrets.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/security_groups.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/service_matrix.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/table_items.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tables.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tag_compliance.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topic_publish.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topics.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/vpcs.lms
-timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/zones.lms
-```
-
-For aggregate $0.25 enforcement across the batch, clone the repo, download the matching v0.1.1 executable from the release to `target/lmaws` (Windows: `target/lmaws.exe`), verify SHA256SUMS, and pass its absolute path to `scripts/test-live-examples.py --host`. The harness runs all 30 with the default profile and deducts existing campaign evidence from the budget. Inspect failures before rerunning.
+Require `leftover_count=0`, `sweeper_leftover_count=0`, and `absent:true` in independent
+default-profile checks. A denied/unknown/network response is never absence. Preserve
+failed comparison state under ignored `compare/runs/`; do not delete it before resolving
+cleanup. No automated sweeper deletes resources. The completed v0.1.2 campaign
+created one bucket and a tiny object, deleted both, and found zero leftovers.
+Estimated campaign total: $0.00004640 (native SDK calls/storage plus independent
+checks). Prices vary by region and time; no Cost Explorer request was made.

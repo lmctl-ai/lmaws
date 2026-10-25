@@ -8,6 +8,7 @@ timeout 180 mvn -q verify
 timeout 90 mvn -q dependency:build-classpath -Dmdep.outputFile=target/dependency-classpath.txt
 timeout 30 python3 scripts/lock-deps.py
 timeout 30 python3 scripts/test-verify-absence.py
+timeout 180 python3 scripts/test-compare.py
 mkdir -p target/jvm-bin
 cat > target/jvm-bin/lmaws <<'WRAPPER'
 #!/usr/bin/env bash

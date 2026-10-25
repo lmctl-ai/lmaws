@@ -1,0 +1,280 @@
+{
+  "provider": "hashicorp/aws",
+  "provider_version": "5.100.0",
+  "region": "us-east-1",
+  "run_id": "Fresh r<8 hex>x<8 hex>, generated and ledgered before apply",
+  "examples": {
+    "alarms": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_cloudwatch_log_groups",
+      "notes": "AWS provider has no generic alarm inventory data source; explicit difference. Unsupported list APIs in AWS provider 5.100.0: alarms.",
+      "supported_outputs": [
+        "log_groups"
+      ],
+      "unsupported_outputs": [
+        "alarms"
+      ]
+    },
+    "before_after": {
+      "write": true,
+      "iam": false,
+      "kind": "aws_sqs_queue",
+      "notes": "Terraform creates queue; before/after inventory is harness-owned."
+    },
+    "bucket_objects": {
+      "write": true,
+      "iam": false,
+      "kind": "aws_s3_bucket+aws_s3_object",
+      "notes": "Tiny object content matches native."
+    },
+    "buckets": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_s3_buckets+aws_dynamodb_tables+aws_ssm_parameters",
+      "notes": "aws_dynamodb_tables only; provider 5.100.0 has no aws_s3_buckets or SSM list data source Unsupported list APIs in AWS provider 5.100.0: buckets, parameters.",
+      "supported_outputs": [
+        "tables"
+      ],
+      "unsupported_outputs": [
+        "buckets",
+        "parameters"
+      ]
+    },
+    "clusters": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_ecs_clusters+aws_instances",
+      "notes": "Matches native clusters() and instances().",
+      "supported_outputs": [
+        "clusters",
+        "instances"
+      ],
+      "unsupported_outputs": []
+    },
+    "functions": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_lambda_functions+aws_cloudwatch_log_groups",
+      "notes": "Matches native functions() and log_groups().",
+      "supported_outputs": [
+        "functions",
+        "log_groups"
+      ],
+      "unsupported_outputs": []
+    },
+    "identity": {
+      "write": false,
+      "iam": true,
+      "kind": "aws_caller_identity+aws_iam_roles",
+      "notes": "Skipped live for federated IAM."
+    },
+    "instances": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_instances",
+      "notes": "Matches native instances().",
+      "supported_outputs": [
+        "instances"
+      ],
+      "unsupported_outputs": []
+    },
+    "inventory": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_s3_buckets+aws_instances+aws_vpcs+aws_security_groups",
+      "notes": "aws_instances+aws_vpcs+aws_security_groups; S3 inventory unsupported because aws_s3_buckets data source does not exist Unsupported list APIs in AWS provider 5.100.0: buckets.",
+      "supported_outputs": [
+        "instances",
+        "security_groups",
+        "vpcs"
+      ],
+      "unsupported_outputs": [
+        "buckets"
+      ]
+    },
+    "log_groups": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_cloudwatch_log_groups",
+      "notes": "Native also queries alarms; provider alarm inventory unsupported. Unsupported list APIs in AWS provider 5.100.0: alarms.",
+      "supported_outputs": [
+        "log_groups"
+      ],
+      "unsupported_outputs": [
+        "alarms"
+      ]
+    },
+    "log_retention": {
+      "write": true,
+      "iam": false,
+      "kind": "aws_cloudwatch_log_group",
+      "notes": "Retention 7 days; no message API needed."
+    },
+    "parameters": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_ssm_parameters+aws_secretsmanager_secrets",
+      "notes": "aws_secretsmanager_secrets only; no SSM parameter-list data source Unsupported list APIs in AWS provider 5.100.0: parameters.",
+      "supported_outputs": [
+        "secrets"
+      ],
+      "unsupported_outputs": [
+        "parameters"
+      ]
+    },
+    "queue_pipeline": {
+      "write": true,
+      "iam": false,
+      "kind": "aws_sqs_queue",
+      "notes": "Queue lifecycle; SendMessage is not declaratively represented."
+    },
+    "queues": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_sqs_queues",
+      "notes": "aws_sqs_queues only; no generic SNS topic-list data source Unsupported list APIs in AWS provider 5.100.0: topics.",
+      "supported_outputs": [
+        "queues"
+      ],
+      "unsupported_outputs": [
+        "topics"
+      ]
+    },
+    "read_only_audit": {
+      "write": false,
+      "iam": true,
+      "kind": "aws_caller_identity+aws_iam_roles",
+      "notes": "Skipped live for federated IAM."
+    },
+    "regional_posture": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_ecs_clusters+aws_vpcs+aws_route53_zones",
+      "notes": "Matches clusters(), vpcs(), zones().",
+      "supported_outputs": [
+        "clusters",
+        "vpcs",
+        "zones"
+      ],
+      "unsupported_outputs": []
+    },
+    "resource_graph": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_s3_buckets+aws_lambda_functions+aws_sqs_queues",
+      "notes": "aws_lambda_functions+aws_sqs_queues; S3 inventory unsupported Unsupported list APIs in AWS provider 5.100.0: buckets.",
+      "supported_outputs": [
+        "functions",
+        "queues"
+      ],
+      "unsupported_outputs": [
+        "buckets"
+      ]
+    },
+    "roles": {
+      "write": false,
+      "iam": true,
+      "kind": "aws_iam_roles",
+      "notes": "Skipped live for federated IAM."
+    },
+    "sandbox_lifecycle": {
+      "write": true,
+      "iam": false,
+      "kind": "aws_ssm_parameter",
+      "notes": "Same final Standard String value; native creates then overwrites, while Terraform sets the final value declaratively."
+    },
+    "secrets": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_secretsmanager_secrets",
+      "notes": "Metadata only; no secret values.",
+      "supported_outputs": [
+        "secrets"
+      ],
+      "unsupported_outputs": []
+    },
+    "security_groups": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_security_groups",
+      "notes": "Same EC2 metadata classification; OpenTofu additionally describes each resource individually."
+    },
+    "service_matrix": {
+      "write": false,
+      "iam": true,
+      "kind": "multi-service data sources",
+      "notes": "S3/SSM/SNS inventory unsupported; IAM skipped; alarm inventory unsupported"
+    },
+    "sweeper": {
+      "write": false,
+      "iam": false,
+      "kind": "local state outputs (no managed resources)",
+      "notes": "Both audit local cleanup state without AWS mutations; native scans SDK ledgers, Terraform has its own state.",
+      "supported_outputs": [],
+      "unsupported_outputs": []
+    },
+    "table_items": {
+      "write": true,
+      "iam": false,
+      "kind": "aws_dynamodb_table+aws_dynamodb_table_item",
+      "notes": "pk/example-item payload matches native."
+    },
+    "tables": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_dynamodb_tables",
+      "notes": "Matches native tables().",
+      "supported_outputs": [
+        "tables"
+      ],
+      "unsupported_outputs": []
+    },
+    "tag_compliance": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_instances",
+      "notes": "Same EC2 metadata classification; OpenTofu additionally describes each resource individually."
+    },
+    "topic_publish": {
+      "write": true,
+      "iam": false,
+      "kind": "aws_sns_topic",
+      "notes": "Topic lifecycle matches; Publish is imperative and not represented by Terraform resource."
+    },
+    "topics": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_sns_topics+aws_sqs_queues",
+      "notes": "SNS topic inventory unsupported; no generic SNS topic-list data source Unsupported list APIs in AWS provider 5.100.0: topics.",
+      "supported_outputs": [
+        "queues"
+      ],
+      "unsupported_outputs": [
+        "topics"
+      ]
+    },
+    "vpcs": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_vpcs",
+      "notes": "Matches native vpcs().",
+      "supported_outputs": [
+        "vpcs"
+      ],
+      "unsupported_outputs": []
+    },
+    "zones": {
+      "write": false,
+      "iam": false,
+      "kind": "aws_vpcs+aws_route53_zones",
+      "notes": "Matches native vpcs() and zones(). Unsupported list APIs in AWS provider 5.100.0: vpcs.",
+      "supported_outputs": [
+        "zones"
+      ],
+      "unsupported_outputs": [
+        "vpcs"
+      ]
+    }
+  }
+}

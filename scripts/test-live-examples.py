@@ -3,7 +3,7 @@
 import argparse,json,os,pathlib,shutil,subprocess,tempfile,decimal,time
 from verify_absence import verify
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-p=argparse.ArgumentParser();p.add_argument('--host',default='target/lmaws');p.add_argument('--example');p.add_argument('--read-only',action='store_true');p.add_argument('--write-only',action='store_true');p.add_argument('--continue-on-error',action='store_true');args=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--host',default='target/lmaws');p.add_argument('--example');p.add_argument('--skip-example',action='append',default=[]);p.add_argument('--read-only',action='store_true');p.add_argument('--write-only',action='store_true');p.add_argument('--continue-on-error',action='store_true');args=p.parse_args()
 if os.environ.get('LMAWS_LIVE')!='1':raise SystemExit('Set LMAWS_LIVE=1 explicitly on your own local machine')
 if os.environ.get('CI','').lower() in ('1','true','yes') or os.environ.get('GITHUB_ACTIONS')=='true':raise SystemExit('Live examples are forbidden in CI')
 host=pathlib.Path(args.host).resolve();assert host.is_file(),host
@@ -13,6 +13,7 @@ iam={'roles','identity','read_only_audit','service_matrix'}
 examples=[n for n in examples if n not in iam]
 if args.read_only:examples=[n for n in examples if n not in writes]
 if args.write_only:examples=[n for n in examples if n in writes]
+examples=[n for n in examples if n not in args.skip_example]
 if args.example:
  assert args.example in examples,'unknown example';examples=[args.example]
 env=dict(os.environ,AWS_REGION='us-east-1',AWS_DEFAULT_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_LIVE='1',LMAWS_LEDGER_DIR=str(ROOT/'ledgers'),LMAWS_EVIDENCE_DIR=str(ROOT/'evidence'))
@@ -40,6 +41,9 @@ for name in examples:
  if record['leftover_count']!=0 or record['sweeper_leftover_count']!=0:
   raise RuntimeError(name+': leftovers remain; inspect '+str(evidence_path)+' and private run ledger')
  if result.returncode:
+  attempted=record.get('resources',[])+[{'kind':v['kind'],'name':v['name']} for v in record.get('rejected_creations',[])]
+  record['independent_readonly_verification']=verify(attempted)
+  record['wall_seconds']=round(time.monotonic()-started,6)
   record.update(example_exit_code=result.returncode,validation_status='blocked_or_failed')
   evidence_path.write_text(json.dumps(record,indent=2)+'\n',encoding='utf-8')
   total+=decimal.Decimal(str(record['total_estimated_usd']));failed_cases.append(dict(example=name,evidence=str(evidence_path.relative_to(ROOT)),exit_code=result.returncode,leftover_count=0))

@@ -59,6 +59,10 @@ public final class CostChecks {
         var requests=(Map<?,?>)micro.report(0).get("service_requests");
         check(((Number)((Map<?,?>)requests.get("sqs.ListQueues")).get("requests")).longValue()==2,"refused request not counted as sent");
         check(micro.displayCost().equals("$0.00"),"readonly display convention");
+        CostLedger rejected=new CostLedger("reject01","rejected","us-east-1",dir.resolve("rejected.jsonl"),CostLedger.DEFAULT_CAP,true);
+        rejected.reserveCreate("queue");rejected.request("sqs","CreateQueue");
+        rejected.creationRejected("queue","lmaws_reject01_queue","AccessDenied",403);
+        check(rejected.displayCost().equals("$0.00000040"),"rejected creation still displays charged request estimate");
         try(AutoCloseable ignored=micro.cleanupScope()){micro.request("Amazon SQS","DeleteQueue");}
         check(micro.total().compareTo(micro.cap())>0,"cleanup may use reserved safety headroom");
         System.out.println("PASS cost caps, exact request units, fractional storage, durable prices and unrestricted teardown");

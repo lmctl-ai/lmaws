@@ -1,0 +1,17 @@
+terraform {
+  required_version = ">= 1.6.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "= 5.100.0"
+    }
+  }
+}
+provider "aws" { region = "us-east-1" }
+data "aws_ecs_clusters" "all" {}
+data "aws_instances" "all" {}
+output "example_id" { value = "clusters" }
+output "estimated_cost" { value = "$0.00" }
+output "resource_count" { value = length(data.aws_ecs_clusters.all.arns) + length(data.aws_instances.all.ids) }
+
+output "comparison" { value = { clusters = length(data.aws_ecs_clusters.all.arns), instances = length(data.aws_instances.all.ids) } }

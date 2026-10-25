@@ -1,0 +1,131 @@
+{
+  "example": "queue_pipeline",
+  "run_id": "rd027dd3fx1abc6986",
+  "profile": "lmaws",
+  "region": "us-east-1",
+  "native": {
+    "schema": "lmaws-cost-v2",
+    "run_id": "rce9f92f3x380f4c5b",
+    "example": "queue_pipeline",
+    "region": "us-east-1",
+    "live": true,
+    "cap_usd": 0.05,
+    "hard_ceiling_usd": 0.25,
+    "total_estimated_usd": 8e-07,
+    "reserved_future_usd": 0,
+    "price_table": {
+      "sqs.request_64kib": 4e-07,
+      "dynamodb.write_1kib": 6.25e-07,
+      "s3.write_or_list_request": 5e-06,
+      "sns.request_64kib": 5e-07,
+      "dynamodb.storage_gb_month": 0.25,
+      "s3.get_or_head_request": 4e-07,
+      "secretsmanager.api_request": 5e-06,
+      "conservative_unknown_api_request": 5e-06,
+      "s3.storage_gb_month": 0.023
+    },
+    "price_metadata": {
+      "sources": [
+        "https://aws.amazon.com/s3/pricing/",
+        "https://aws.amazon.com/sqs/pricing/",
+        "https://aws.amazon.com/sns/pricing/",
+        "https://aws.amazon.com/dynamodb/pricing/",
+        "https://aws.amazon.com/systems-manager/pricing/",
+        "https://aws.amazon.com/secrets-manager/pricing/"
+      ],
+      "price_region": "us-east-1",
+      "free_tier_credits_applied": false,
+      "month_minutes": 43200,
+      "currency": "USD",
+      "unknown_calls": "conservative $5 per million attempts",
+      "estimate_only": true,
+      "as_of": "2026-10-25"
+    },
+    "resources": [],
+    "rejected_creations": [
+      {
+        "error_code": "AWS_CREATE_REJECTED",
+        "confirmed_created": false,
+        "name": "lmaws_rce9f92f3x380f4c5b_pipeline",
+        "http_status": 403,
+        "kind": "queue"
+      }
+    ],
+    "service_requests": {
+      "sqs.GetQueueUrl": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 4e-07,
+        "estimated_usd": 4e-07
+      },
+      "sqs.CreateQueue": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 4e-07,
+        "estimated_usd": 4e-07
+      }
+    },
+    "cap_refusals": 0,
+    "leftover_count": 0,
+    "provider_verification": [],
+    "sweeper_leftover_count": 0,
+    "profile": "lmaws",
+    "estimated_cost_display": "$0.00",
+    "run_error": "AWS AccessDenied (HTTP 403)",
+    "denied_action": "sqs:createqueue",
+    "finished_at": "2026-10-25T13:44:06.122780007Z",
+    "independent_readonly_verification": [
+      {
+        "kind": "queue",
+        "name": "lmaws_rce9f92f3x380f4c5b_pipeline",
+        "absent": true,
+        "profile": "default",
+        "region": "us-east-1",
+        "requests": 1,
+        "unit_price_usd": "4E-7",
+        "estimated_usd": "4E-7"
+      }
+    ],
+    "wall_seconds": 4.277408,
+    "example_exit_code": 1,
+    "validation_status": "blocked_or_failed",
+    "status": "blocked"
+  },
+  "lmcloud": {
+    "schema": "lmaws-tofu-ledger-v2",
+    "example": "queue_pipeline",
+    "run_id": "rd027dd3fx1abc6986",
+    "profile": "lmaws",
+    "region": "us-east-1",
+    "live": true,
+    "resources": [],
+    "price_table": {
+      "s3.request_upper_bound": "0.000005",
+      "sqs.request": "4E-7",
+      "sns.request": "5E-7",
+      "dynamodb.write_1kib": "6.25E-7",
+      "ssm.standard": "0",
+      "logs.empty_group": "0"
+    },
+    "price_method": "Conservative allowance of 500 requests at the maximum table price, not observed SDK request counts or an invoice measurement; tiny storage included in allowance",
+    "cap_usd": "0.05",
+    "request_allowance": 500,
+    "request_unit_price_usd": "0.000005",
+    "total_estimated_usd": "0",
+    "leftover_count": 0,
+    "status": "failed",
+    "run_error": "provider_download_failed",
+    "cleanup_error": "",
+    "wall_seconds": 0.027723,
+    "outputs": {},
+    "engine_version": "lmcloud 0.1.9 (opentofu 1.13.2)"
+  },
+  "leftover_count": 0,
+  "comparison": {
+    "resources": "not comparable: a run was blocked",
+    "outputs": "not comparable: provider initialization was blocked",
+    "why": "Queue lifecycle; SendMessage is not declaratively represented. blocked vs provider resolution failed.",
+    "estimated_cost_delta_usd": "-8E-7",
+    "wall_delta_seconds": -4.249685
+  }
+}

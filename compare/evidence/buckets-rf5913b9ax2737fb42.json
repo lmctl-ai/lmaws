@@ -1,0 +1,115 @@
+{
+  "example": "buckets",
+  "run_id": "rf5913b9ax2737fb42",
+  "profile": "default",
+  "region": "us-east-1",
+  "native": {
+    "schema": "lmaws-cost-v2",
+    "run_id": "r2a3306a2x265f49bf",
+    "example": "buckets",
+    "region": "us-east-1",
+    "live": true,
+    "cap_usd": 0.05,
+    "hard_ceiling_usd": 0.25,
+    "total_estimated_usd": 0,
+    "reserved_future_usd": 0,
+    "price_table": {
+      "sqs.request_64kib": 4e-07,
+      "dynamodb.write_1kib": 6.25e-07,
+      "s3.write_or_list_request": 5e-06,
+      "sns.request_64kib": 5e-07,
+      "dynamodb.storage_gb_month": 0.25,
+      "s3.get_or_head_request": 4e-07,
+      "secretsmanager.api_request": 5e-06,
+      "conservative_unknown_api_request": 5e-06,
+      "s3.storage_gb_month": 0.023
+    },
+    "price_metadata": {
+      "sources": [
+        "https://aws.amazon.com/s3/pricing/",
+        "https://aws.amazon.com/sqs/pricing/",
+        "https://aws.amazon.com/sns/pricing/",
+        "https://aws.amazon.com/dynamodb/pricing/",
+        "https://aws.amazon.com/systems-manager/pricing/",
+        "https://aws.amazon.com/secrets-manager/pricing/"
+      ],
+      "price_region": "us-east-1",
+      "free_tier_credits_applied": false,
+      "month_minutes": 43200,
+      "currency": "USD",
+      "unknown_calls": "conservative $5 per million attempts",
+      "estimate_only": true,
+      "as_of": "2026-10-25"
+    },
+    "resources": [],
+    "rejected_creations": [],
+    "service_requests": {
+      "s3.ListBuckets": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      },
+      "dynamodb.ListTables": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      },
+      "ssm.DescribeParameters": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      }
+    },
+    "cap_refusals": 0,
+    "leftover_count": 0,
+    "provider_verification": [],
+    "sweeper_leftover_count": 0,
+    "profile": "default",
+    "estimated_cost_display": "$0.00",
+    "finished_at": "2026-10-25T13:54:09.589868403Z",
+    "status": "passed",
+    "wall_seconds": 3.581514,
+    "outputs_csv": "service,count\nbuckets,88\ntables,42\nparameters,2\n",
+    "independent_readonly_verification": []
+  },
+  "lmcloud": {
+    "schema": "lmaws-tofu-ledger-v2",
+    "example": "buckets",
+    "run_id": "rf5913b9ax2737fb42",
+    "profile": "default",
+    "region": "us-east-1",
+    "live": true,
+    "resources": [],
+    "price_table": {
+      "s3.request_upper_bound": "0.000005",
+      "sqs.request": "4E-7",
+      "sns.request": "5E-7",
+      "dynamodb.write_1kib": "6.25E-7",
+      "ssm.standard": "0",
+      "logs.empty_group": "0"
+    },
+    "price_method": "Conservative allowance of 500 requests at the maximum table price, not observed SDK request counts or an invoice measurement; tiny storage included in allowance",
+    "cap_usd": "0.05",
+    "request_allowance": 500,
+    "request_unit_price_usd": "0.000005",
+    "total_estimated_usd": "0",
+    "leftover_count": 0,
+    "status": "failed",
+    "run_error": "provider_download_failed",
+    "cleanup_error": "",
+    "wall_seconds": 0.036239,
+    "outputs": {},
+    "engine_version": "lmcloud 0.1.9 (opentofu 1.13.2)"
+  },
+  "leftover_count": 0,
+  "comparison": {
+    "resources": "not comparable: a run was blocked",
+    "outputs": "not comparable: provider initialization was blocked",
+    "why": "aws_dynamodb_tables only; provider 5.100.0 has no aws_s3_buckets or SSM list data source Unsupported list APIs in AWS provider 5.100.0: buckets, parameters. passed vs provider resolution failed.",
+    "estimated_cost_delta_usd": "0",
+    "wall_delta_seconds": -3.545275
+  }
+}

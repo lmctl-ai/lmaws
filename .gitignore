@@ -10,3 +10,26 @@ __pycache__/
 *.dslb
 
 /ledgers/
+
+# Private provider state, operation logs and credentials-derived account metadata.
+compare/runs/
+compare/private/
+compare/**/.terraform/
+compare/**/terraform.tfstate*
+compare/**/.terraform.lock.hcl
+
+# Direct comparison autorun artifacts in a repository working directory.
+/infrastructure/
+/.provider-cache/
+/comparison-ledgers/
+/comparison-main.tf
+/compare-runtime.py
+/verify_absence.py
+/phase-*.dslb
+/phase-*.ok
+/phase-*.error
+/snapshot*.json
+/cloud-result.json
+/ledger.json
+/campaign.json
+/private-*.log

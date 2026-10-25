@@ -1,0 +1,170 @@
+{
+  "dsl.schema": 2,
+  "name": "lmcloud",
+  "types": {
+    "Tofu": {
+      "methods": {
+        "apply": [
+          {
+            "params": [
+              "string"
+            ],
+            "returns": "bool"
+          }
+        ],
+        "destroy": [
+          {
+            "params": [
+              "string"
+            ],
+            "returns": "bool"
+          }
+        ],
+        "fmt": [
+          {
+            "params": [
+              "string"
+            ],
+            "returns": "string"
+          }
+        ],
+        "fmt_check": [
+          {
+            "params": [
+              "string"
+            ],
+            "returns": "bool"
+          }
+        ],
+        "import": [
+          {
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "returns": "bool"
+          }
+        ],
+        "init": [
+          {
+            "params": [
+              "string"
+            ],
+            "returns": "bool"
+          }
+        ],
+        "last_error": [
+          {
+            "params": [],
+            "returns": "string"
+          }
+        ],
+        "output": [
+          {
+            "params": [
+              "string",
+              "string"
+            ],
+            "returns": "string"
+          }
+        ],
+        "plan": [
+          {
+            "params": [
+              "string"
+            ],
+            "returns": "Plan"
+          }
+        ],
+        "plan_json": [
+          {
+            "params": [
+              "string"
+            ],
+            "returns": "string"
+          }
+        ],
+        "show_state": [
+          {
+            "params": [
+              "string"
+            ],
+            "returns": "string"
+          }
+        ],
+        "state_list": [
+          {
+            "params": [
+              "string"
+            ],
+            "returns": "string"
+          }
+        ],
+        "validate": [
+          {
+            "params": [
+              "string"
+            ],
+            "returns": "bool"
+          }
+        ],
+        "var": [
+          {
+            "params": [
+              "string",
+              "string"
+            ],
+            "returns": "void"
+          }
+        ]
+      }
+    },
+    "Plan": {
+      "methods": {
+        "add": [
+          {
+            "params": [],
+            "returns": "int"
+          }
+        ],
+        "change": [
+          {
+            "params": [],
+            "returns": "int"
+          }
+        ],
+        "destroy": [
+          {
+            "params": [],
+            "returns": "int"
+          }
+        ],
+        "json": [
+          {
+            "params": [],
+            "returns": "string"
+          }
+        ],
+        "save": [
+          {
+            "params": [
+              "string"
+            ],
+            "returns": "bool"
+          }
+        ],
+        "summary": [
+          {
+            "params": [],
+            "returns": "string"
+          }
+        ]
+      }
+    }
+  },
+  "functions": {},
+  "context": {
+    "tofu": "Tofu"
+  }
+}

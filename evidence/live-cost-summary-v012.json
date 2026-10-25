@@ -1,0 +1,66 @@
+{
+  "profile": "per-example",
+  "region": "us-east-1",
+  "local_only": true,
+  "oidc": false,
+  "cloud_credentials_in_ci": false,
+  "total_estimated_usd": "0.000067100000000731612",
+  "write_profile": "lmaws",
+  "read_profile": "default",
+  "iam_live_skipped": [
+    "identity",
+    "read_only_audit",
+    "roles",
+    "service_matrix"
+  ],
+  "whole_run_cap_usd": "0.25",
+  "example_default_cap_usd": "0.05",
+  "examples": [
+    {
+      "example": "bucket_objects",
+      "estimated_usd": "0.000017800000000731612",
+      "display": "$0.00001781",
+      "evidence": "evidence/live-cost-bucket_objects-raaa7c272xd3864f73.json",
+      "resource_kinds": [
+        "bucket"
+      ],
+      "resource_names": [
+        "lmaws-raaa7c272xd3864f73-sample"
+      ],
+      "leftover_count": 0
+    }
+  ],
+  "failed_examples": [
+    {
+      "example": "log_retention",
+      "evidence": "evidence/live-cost-log_retention-rec0ae345x879b4c7e.json",
+      "exit_code": 1,
+      "leftover_count": 0
+    },
+    {
+      "example": "queue_pipeline",
+      "evidence": "evidence/live-cost-queue_pipeline-rce9f92f3x380f4c5b.json",
+      "exit_code": 1,
+      "leftover_count": 0
+    },
+    {
+      "example": "sandbox_lifecycle",
+      "evidence": "evidence/live-cost-sandbox_lifecycle-rffb90e63xfdae4c4f.json",
+      "exit_code": 1,
+      "leftover_count": 0
+    },
+    {
+      "example": "table_items",
+      "evidence": "evidence/live-cost-table_items-r17e966f5x266c49b8.json",
+      "exit_code": 1,
+      "leftover_count": 0
+    },
+    {
+      "example": "topic_publish",
+      "evidence": "evidence/live-cost-topic_publish-r029fc100xaf7547ef.json",
+      "exit_code": 1,
+      "leftover_count": 0
+    }
+  ],
+  "leftover_count": 0
+}

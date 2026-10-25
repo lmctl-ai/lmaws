@@ -25,3 +25,5 @@ v0.1.1 released:
 - [08-release-v011.md](08-release-v011.md): final release, green compiler/main/tag validation and handoff.
 - [release-v011.json](release-v011.json): five assets, checksum and CI proof.
 - [autorun-v011.json](autorun-v011.json): all 30 empty-directory v0.1.1 autoruns.
+
+- [09-profiles-comparisons-v012.md](09-profiles-comparisons-v012.md): lmaws-only mutation guard, once-only live writes, 30 OpenTofu comparisons and provider-resolution finding.
