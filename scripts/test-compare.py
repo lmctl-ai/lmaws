@@ -45,6 +45,18 @@ with tempfile.TemporaryDirectory(prefix='lmaws-compare-tests-') as tmp:
  else:
   shim=fake/'lmcloud';shim.write_text('#!/usr/bin/env python3\n'+emitter.read_text());shim.chmod(0o755)
  env=dict(os.environ,PATH=str(fake)+os.pathsep+os.environ['PATH'],LMAWS_LIVE='0')
+ # Exercise the actual generated bootstrap with unset env variables, replacing
+ # only HTTP transport with a harmless Python response. No provider is launched.
+ bootstrap=(ROOT/'compare/bucket_objects/bucket_objects.lms').read_text().split('phase_init = _dsl_')[0]
+ response='download = system('+json.dumps([sys.executable,'-c','print("mock-helper")'])+', 60000);'
+ bootstrap=re.sub(r'download = system\(\[[^\n]+\], 60000\);',lambda match:response,bootstrap)
+ bootstrap_file=tmp/'bootstrap.lms';bootstrap_file.write_text(bootstrap,encoding='utf-8')
+ bootstrap_env=dict(env);bootstrap_env.pop('LMAWS_COMPARE_RUNTIME',None);bootstrap_env.pop('LMAWS_COMPARE_VERIFIER',None)
+ boot=subprocess.run([shutil.which('lmscript'),'--no-preflight',str(bootstrap_file)],cwd=tmp,env=bootstrap_env,text=True,capture_output=True,timeout=45)
+ assert boot.returncode==0,boot.stderr
+ assert (tmp/'compare-runtime.py').read_text().strip()=='mock-helper'
+ assert (tmp/'verify_absence.py').read_text().strip()=='mock-helper'
+
  for name in manifest:
   script=ROOT/'compare'/name/(name+'.lms');source=script.read_text()
   assert 'read_file("compare/' not in source
