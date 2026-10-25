@@ -34,3 +34,19 @@ Do not claim READY FOR USER TEST or successful live coverage for denied examples
 
 The cost/evidence candidate is isolated on cost-evidence-v011 so the public v0.1.0
 README examples stay compatible with their released binary until the patch is ready.
+
+Five-platform candidate CI is green:
+https://github.com/lmctl-ai/lmaws/actions/runs/40164020948 .
+Source commit 98cdc8af818cfb50ab9f40ce02c1b534b7d0e9ca. All 30 offline examples
+pass on JVM/native packaging checks with live mode forced off. See cost-ci-v011.json.
+
+Live validation: 19/30 unique examples passed, all read-only and displaying $0.00.
+Four IAM-dependent examples failed; seven write examples are failed or not yet
+validated. No actual resources were created in this candidate run, and every
+evidence file has zero leftovers. Conservative campaign estimate: $0.00004630.
+See evidence/validation-status-v011.json for the complete per-example state.
+
+Do not merge into main or tag v0.1.1 until the owner corrects default-profile access
+and all 30 live examples pass. The currently published v0.1.0 and its main examples
+remain intact. The candidate native artifacts can be downloaded from the green CI
+run and tested locally; public CI must never receive AWS credentials or OIDC.

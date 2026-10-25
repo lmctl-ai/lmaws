@@ -1,0 +1,33 @@
+{
+  "ci": "https://github.com/lmctl-ai/lmaws/actions/runs/40164020948",
+  "source_commit": "98cdc8af818cfb50ab9f40ce02c1b534b7d0e9ca",
+  "platforms": [
+    {
+      "name": "macos-arm64",
+      "conclusion": "success"
+    },
+    {
+      "name": "windows-x64",
+      "conclusion": "success"
+    },
+    {
+      "name": "macos-x64",
+      "conclusion": "success"
+    },
+    {
+      "name": "linux-x64",
+      "conclusion": "success"
+    },
+    {
+      "name": "linux-arm64",
+      "conclusion": "success"
+    }
+  ],
+  "cloud_credentials": false,
+  "oidc": false,
+  "live_mode_forced_off": true,
+  "offline_examples": 30,
+  "sdk_inventories": 16,
+  "tagged_lifecycle_flows": 6,
+  "cost_guards": true
+}

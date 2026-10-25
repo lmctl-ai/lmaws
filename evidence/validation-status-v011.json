@@ -1,0 +1,286 @@
+{
+  "ready_for_user_test": false,
+  "reason": "default-profile access denied for writes; IAM token invalid",
+  "profile": "default",
+  "region": "us-east-1",
+  "ci": "https://github.com/lmctl-ai/lmaws/actions/runs/40164020948",
+  "candidate_branch": "cost-evidence-v011",
+  "examples": [
+    {
+      "example": "alarms",
+      "status": "passed",
+      "evidence": "evidence/live-cost-alarms-r2f6f55b6x5be54f83.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "before_after",
+      "status": "blocked_or_failed",
+      "evidence": "evidence/live-cost-before_after-r65e21ef0x202244c6.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "bucket_objects",
+      "status": "not_run",
+      "evidence": null,
+      "display": null,
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "buckets",
+      "status": "passed",
+      "evidence": "evidence/live-cost-buckets-r957ab3d1xc5e247e7.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "clusters",
+      "status": "passed",
+      "evidence": "evidence/live-cost-clusters-rc6e3bf8bx64b54aaf.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "functions",
+      "status": "passed",
+      "evidence": "evidence/live-cost-functions-r8b53f0abx71fc40db.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "identity",
+      "status": "blocked_or_failed",
+      "evidence": "evidence/live-cost-identity-rd42fa5eaxa1ab44a5.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "instances",
+      "status": "passed",
+      "evidence": "evidence/live-cost-instances-ra4a54d9fxb3054905.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "inventory",
+      "status": "passed",
+      "evidence": "evidence/live-cost-inventory-r71d606a0xcaf04f53.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "log_groups",
+      "status": "passed",
+      "evidence": "evidence/live-cost-log_groups-r87934eb2x848e4203.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "log_retention",
+      "status": "not_run",
+      "evidence": null,
+      "display": null,
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "parameters",
+      "status": "passed",
+      "evidence": "evidence/live-cost-parameters-r61d3586dx74ab4fa6.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "queue_pipeline",
+      "status": "not_run",
+      "evidence": null,
+      "display": null,
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "queues",
+      "status": "passed",
+      "evidence": "evidence/live-cost-queues-rad2e44b3x2dcc4dd7.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "read_only_audit",
+      "status": "blocked_or_failed",
+      "evidence": "evidence/live-cost-read_only_audit-r2eb0dad7x8cd3462d.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "regional_posture",
+      "status": "passed",
+      "evidence": "evidence/live-cost-regional_posture-r8c324e7dx1c334aa2.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "resource_graph",
+      "status": "passed",
+      "evidence": "evidence/live-cost-resource_graph-r2511a45fxb4544623.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "roles",
+      "status": "blocked_or_failed",
+      "evidence": "evidence/live-cost-roles-r919d59b7x78ed4841.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "sandbox_lifecycle",
+      "status": "blocked_or_failed",
+      "evidence": "evidence/live-cost-sandbox_lifecycle-r472eb1aex8b624da3.json",
+      "display": "$0.00",
+      "error": "AWS AccessDeniedException (HTTP 400)",
+      "denied_action": "ssm:PutParameter",
+      "leftovers": 0
+    },
+    {
+      "example": "secrets",
+      "status": "passed",
+      "evidence": "evidence/live-cost-secrets-r320f386bx9cea4ec7.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "security_groups",
+      "status": "passed",
+      "evidence": "evidence/live-cost-security_groups-r978c99a4x285a43fa.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "service_matrix",
+      "status": "blocked_or_failed",
+      "evidence": "evidence/live-cost-service_matrix-r8adc38a5xd8944464.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "sweeper",
+      "status": "passed",
+      "evidence": "evidence/live-cost-sweeper-rb06fb78dx83ba4d51.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "table_items",
+      "status": "not_run",
+      "evidence": null,
+      "display": null,
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "tables",
+      "status": "passed",
+      "evidence": "evidence/live-cost-tables-r0a638e82x6bb64168.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "tag_compliance",
+      "status": "passed",
+      "evidence": "evidence/live-cost-tag_compliance-r7cb07155x9d6941ad.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "topic_publish",
+      "status": "not_run",
+      "evidence": null,
+      "display": null,
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "topics",
+      "status": "passed",
+      "evidence": "evidence/live-cost-topics-r3f3a6389xd6084890.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "vpcs",
+      "status": "passed",
+      "evidence": "evidence/live-cost-vpcs-r62eeb5c9x53334996.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    },
+    {
+      "example": "zones",
+      "status": "passed",
+      "evidence": "evidence/live-cost-zones-r38602169x68ff4e86.json",
+      "display": "$0.00",
+      "error": null,
+      "denied_action": null,
+      "leftovers": 0
+    }
+  ],
+  "successful_examples": 19,
+  "resources_created": 0,
+  "leftover_count": 0,
+  "estimated_campaign_usd": "0.0000463",
+  "ci_status": "five-platform-success",
+  "patch_release": "not published: required live coverage blocked"
+}

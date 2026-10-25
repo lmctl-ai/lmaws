@@ -14,3 +14,10 @@ Release evidence:
 - [fake-jvm-v010.json](fake-jvm-v010.json), [fake-native-v010.json](fake-native-v010.json): SDK HTTP fixture coverage.
 - [live-v010.json](live-v010.json): two approved live resources, both deleted.
 - [ci-linux-readonly-v010.json](ci-linux-readonly-v010.json): actual CI binary credential/TLS reads.
+
+v0.1.1 candidate:
+- [07-example-costs.md](07-example-costs.md): cost policy and live authorization blocker.
+- [cost-ci-v011.json](cost-ci-v011.json): five green fake-only platform jobs.
+- [gallery-v011.json](gallery-v011.json): 30 offline examples and image checks.
+- [validation-status-v011.json](../evidence/validation-status-v011.json): per-example live state and zero leftovers.
+- [USER_TEST.md](../docs/USER_TEST.md): exact local environment, test and sweeper instructions; not ready while blocked.
