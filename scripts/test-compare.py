@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Compile all comparison scripts against a fake schema endpoint and test safety gates."""
-import json,os,pathlib,shutil,subprocess,sys,tempfile
+import json,os,pathlib,re,shutil,subprocess,sys,tempfile
 from unittest.mock import patch
 from types import SimpleNamespace
 ROOT=pathlib.Path(__file__).resolve().parents[1]
@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='lmaws-compare-tests-') as tmp:
   check_script=script
   if os.name=='nt':
    check_script=fake/(name+'.lms')
-   check_script.write_text(source.replace('cli="lmcloud" install="github:lmctl-ai/lmcloud@latest"','cli="python emit.py"'),encoding='utf-8')
+   check_script.write_text(re.sub(r'cli="lmcloud" install="github:lmctl-ai/lmcloud@[^"]+"', 'cli="python emit.py"', source),encoding='utf-8')
   p=subprocess.run([shutil.which('lmscript'),'--check','--no-preflight',str(check_script)],cwd=fake,env=env,text=True,capture_output=True,timeout=45)
   assert p.returncode==0,(name,p.stderr[-2000:])
  # A provider apply error must still destroy and independently verify absence.

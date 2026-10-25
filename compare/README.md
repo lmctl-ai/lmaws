@@ -51,3 +51,5 @@ with `python3 compare/generate.py`; private logs/state must never be committed.
 
 AWS provider 5.100.0 is an external OpenTofu plugin (MPL-2.0), not linked or bundled
 into lmaws. [Official source](https://github.com/hashicorp/terraform-provider-aws/tree/v5.100.0).
+
+Comparison scripts pin lmcloud v0.1.9 to work around its ambiguous two-version `--version` line, which the @latest installer rejects. Checksums remain verified. The separate provider-resolution finding still blocks plan/apply; see compare/PROVIDER_TEST.md (or PROVIDER_TEST.md within compare).

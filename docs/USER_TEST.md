@@ -153,3 +153,5 @@ cleanup. No automated sweeper deletes resources. The completed v0.1.2 campaign
 created one bucket and a tiny object, deleted both, and found zero leftovers.
 Estimated campaign total: $0.00004640 (native SDK calls/storage plus independent
 checks). Prices vary by region and time; no Cost Explorer request was made.
+
+Comparison scripts pin lmcloud v0.1.9 to work around its ambiguous two-version `--version` line, which the @latest installer rejects. Checksums remain verified. The separate provider-resolution finding still blocks plan/apply; see compare/PROVIDER_TEST.md (or PROVIDER_TEST.md within compare).

@@ -31,3 +31,21 @@ resolution, before AWS credentials or API calls are relevant. A direct registry
 version listing contains 5.100.0, so the exact registry-resolution mismatch
 remains an lmcloud/OpenTofu provider-installation finding rather than an AWS
 permission failure.
+
+## Fresh-cache latest-install finding
+
+An empty-directory autorun with an empty LMSCRIPT_TOOL_CACHE and lmctl/lmscript
+0.2.420 downloaded the published v0.1.9 asset, then rejected its version line:
+
+```text
+lmcloud --version printed "lmcloud 0.1.9 (opentofu 1.13.2)", which has no single version number
+```
+
+The installer requires one MAJOR.MINOR.PATCH version for @latest. This is distinct
+from the provider-resolution failure and occurs before any script effect or AWS
+call. Comparison scripts therefore pin `github:lmctl-ai/lmcloud@v0.1.9`, whose
+release checksum is still verified. They do not alter or wrap lmcloud's version
+output. To reproduce the @latest failure, autorun the comparison at commit
+9bacb7dbf8a75894db0004d88d8f02a42a6f7c6f with a fresh cache; that snapshot used
+@latest. Private bootstrap log: `/tmp/lmaws-compare-autorun-v012-07ej9fu1/private-run.log`.
+No lmcloud source was edited for either finding.
