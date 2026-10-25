@@ -1,8 +1,8 @@
 # Owned queue lifecycle: every mutation is scoped to this demo sandbox.
 mkdir("images"); mkdir("data");
 aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
-let cloud = aws.demo();
-let run = cloud.run("queue01", "data");
+let cloud = aws.example("queue_pipeline");
+let run = cloud.example_run();
 let q = run.queue("pipeline");
 run.put(q, "purpose", "demo");
 check(run.remaining() == 1);
@@ -18,8 +18,14 @@ plot.close();
 end _dsl_
 savedsl(aws, "queue_pipeline-aws.dslb");
 r = system ${dsl_cli(aws)} --dsl "queue_pipeline-aws.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
+let cost_line = "";
+for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
+assert(starts_with(cost_line, "estimated cost: $"));
 savedsl(plot, "queue_pipeline-plot.dslb");
 r = system ${dsl_cli(plot)} --dsl "queue_pipeline-plot.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/queue_pipeline.png");
+println(cost_line);

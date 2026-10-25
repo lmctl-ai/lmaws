@@ -2,15 +2,15 @@
 mkdir("images");
 mkdir("data");
 aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
-let cloud = aws.demo();
+let cloud = aws.example("parameters");
 let csv = "service,count\n";
 let parameters_rows = cloud.parameters();
 let parameters_count = parameters_rows.len();
-check(parameters_count == 3);
+if (cloud.is_demo()) { check(parameters_count == 3); }
 csv = csv + "parameters," + str(parameters_count) + "\n";
 let secrets_rows = cloud.secrets();
 let secrets_count = secrets_rows.len();
-check(secrets_count == 3);
+if (cloud.is_demo()) { check(secrets_count == 3); }
 csv = csv + "secrets," + str(secrets_count) + "\n";
 file_write("data/parameters.csv", csv);
 end _dsl_
@@ -22,8 +22,14 @@ plot.close();
 end _dsl_
 savedsl(aws, "parameters-aws.dslb");
 r = system ${dsl_cli(aws)} --dsl "parameters-aws.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
+let cost_line = "";
+for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
+assert(starts_with(cost_line, "estimated cost: $"));
 savedsl(plot, "parameters-plot.dslb");
 r = system ${dsl_cli(plot)} --dsl "parameters-plot.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/parameters.png");
+println(cost_line);

@@ -1,0 +1,62 @@
+{
+  "schema": "lmaws-cost-v2",
+  "run_id": "ra4a54d9fxb3054905",
+  "example": "instances",
+  "region": "us-east-1",
+  "live": true,
+  "cap_usd": 0.05,
+  "hard_ceiling_usd": 0.25,
+  "total_estimated_usd": 0,
+  "reserved_future_usd": 0,
+  "price_table": {
+    "s3.storage_gb_month": 0.023,
+    "conservative_unknown_api_request": 5e-06,
+    "secretsmanager.api_request": 5e-06,
+    "s3.get_or_head_request": 4e-07,
+    "dynamodb.storage_gb_month": 0.25,
+    "sns.request_64kib": 5e-07,
+    "s3.write_or_list_request": 5e-06,
+    "dynamodb.write_1kib": 6.25e-07,
+    "sqs.request_64kib": 4e-07
+  },
+  "price_metadata": {
+    "as_of": "2026-10-25",
+    "estimate_only": true,
+    "unknown_calls": "conservative $5 per million attempts",
+    "currency": "USD",
+    "month_minutes": 43200,
+    "free_tier_credits_applied": false,
+    "price_region": "us-east-1",
+    "sources": [
+      "https://aws.amazon.com/s3/pricing/",
+      "https://aws.amazon.com/sqs/pricing/",
+      "https://aws.amazon.com/sns/pricing/",
+      "https://aws.amazon.com/dynamodb/pricing/",
+      "https://aws.amazon.com/systems-manager/pricing/",
+      "https://aws.amazon.com/secrets-manager/pricing/"
+    ]
+  },
+  "resources": [],
+  "rejected_creations": [],
+  "service_requests": {
+    "free_metadata.DescribeInstances": {
+      "estimated_usd": 0,
+      "unit_price_usd": 0,
+      "requests": 1,
+      "billing_units": 1
+    }
+  },
+  "cap_refusals": 0,
+  "leftover_count": 0,
+  "provider_verification": [],
+  "sweeper_leftover_count": 0,
+  "profile": "default",
+  "ledger": "/home/mma/repos/dsl/lmaws/ledgers/lmaws-ra4a54d9fxb3054905.jsonl",
+  "estimated_cost_display": "$0.00",
+  "finished_at": "2026-10-25T04:40:06.295154035Z",
+  "example_exit_code": 0,
+  "png_generated": true,
+  "ledger_updates": [],
+  "whole_batch_estimated_so_far_usd": "0.0000032",
+  "user_test_command": "lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/instances.lms"
+}

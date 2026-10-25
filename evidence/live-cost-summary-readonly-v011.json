@@ -1,0 +1,201 @@
+{
+  "profile": "default",
+  "region": "us-east-1",
+  "local_only": true,
+  "oidc": false,
+  "cloud_credentials_in_ci": false,
+  "total_estimated_usd": "0.0000463",
+  "whole_run_cap_usd": "0.25",
+  "example_default_cap_usd": "0.05",
+  "examples": [
+    {
+      "example": "alarms",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-alarms-r2f6f55b6x5be54f83.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "buckets",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-buckets-r957ab3d1xc5e247e7.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "clusters",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-clusters-rc6e3bf8bx64b54aaf.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "functions",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-functions-r8b53f0abx71fc40db.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "instances",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-instances-ra4a54d9fxb3054905.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "inventory",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-inventory-r71d606a0xcaf04f53.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "log_groups",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-log_groups-r87934eb2x848e4203.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "parameters",
+      "estimated_usd": "0.00001",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-parameters-r61d3586dx74ab4fa6.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "queues",
+      "estimated_usd": "9E-7",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-queues-rad2e44b3x2dcc4dd7.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "regional_posture",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-regional_posture-r8c324e7dx1c334aa2.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "resource_graph",
+      "estimated_usd": "4E-7",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-resource_graph-r2511a45fxb4544623.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "secrets",
+      "estimated_usd": "0.00001",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-secrets-r320f386bx9cea4ec7.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "security_groups",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-security_groups-r978c99a4x285a43fa.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "tables",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-tables-r0a638e82x6bb64168.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "tag_compliance",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-tag_compliance-r7cb07155x9d6941ad.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "topics",
+      "estimated_usd": "9E-7",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-topics-r3f3a6389xd6084890.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "vpcs",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-vpcs-r62eeb5c9x53334996.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    },
+    {
+      "example": "zones",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-zones-r38602169x68ff4e86.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    }
+  ],
+  "failed_examples": [
+    {
+      "example": "identity",
+      "evidence": "evidence/live-cost-identity-rd42fa5eaxa1ab44a5.json",
+      "exit_code": 1,
+      "leftover_count": 0
+    },
+    {
+      "example": "read_only_audit",
+      "evidence": "evidence/live-cost-read_only_audit-r2eb0dad7x8cd3462d.json",
+      "exit_code": 1,
+      "leftover_count": 0
+    },
+    {
+      "example": "roles",
+      "evidence": "evidence/live-cost-roles-r919d59b7x78ed4841.json",
+      "exit_code": 1,
+      "leftover_count": 0
+    },
+    {
+      "example": "service_matrix",
+      "evidence": "evidence/live-cost-service_matrix-r8adc38a5xd8944464.json",
+      "exit_code": 1,
+      "leftover_count": 0
+    }
+  ],
+  "leftover_count": 0
+}

@@ -19,10 +19,14 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.ProfileCredentialsProvider;
 import software.amazon.awssdk.regions.providers.DefaultAwsRegionProviderChain;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
+import software.amazon.awssdk.core.interceptor.Context;
+import software.amazon.awssdk.core.interceptor.ExecutionAttributes;
+import software.amazon.awssdk.core.interceptor.ExecutionInterceptor;
+import software.amazon.awssdk.core.interceptor.SdkExecutionAttribute;
 import software.amazon.awssdk.core.retry.RetryPolicy;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
@@ -68,6 +72,7 @@ import software.amazon.awssdk.services.sns.model.PublishRequest;
 import software.amazon.awssdk.services.ssm.SsmClient;
 import software.amazon.awssdk.services.ssm.model.DeleteParameterRequest;
 import software.amazon.awssdk.services.ssm.model.PutParameterRequest;
+import software.amazon.awssdk.services.ssm.model.DescribeParametersRequest;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.CreateQueueRequest;
 import software.amazon.awssdk.services.sqs.model.DeleteQueueRequest;
@@ -89,30 +94,79 @@ public final class AwsBackend implements AutoCloseable {
     private final Region region;
     private final boolean demo;
     private final URI endpoint;
+    private final CostLedger cost;
     private final Map<String, Map<String, String>> demoResources = new LinkedHashMap<>();
     private final Map<String, java.util.Set<String>> bucketObjects = new LinkedHashMap<>();
     private final List<AutoCloseable> clients = new ArrayList<>();
-    private final ClientOverrideConfiguration config = ClientOverrideConfiguration.builder()
-            .apiCallTimeout(Duration.ofSeconds(25)).apiCallAttemptTimeout(Duration.ofSeconds(10))
-            .retryPolicy(RetryPolicy.builder().numRetries(2).build()).build();
+    private final ClientOverrideConfiguration config;
 
     private S3Client s3; private SqsClient sqs; private SnsClient sns; private SsmClient ssm; private DynamoDbClient ddb;
     private CloudWatchLogsClient logs; private CloudWatchClient cloudwatch; private Ec2Client ec2; private LambdaClient lambda;
     private Route53Client route53; private SecretsManagerClient secrets; private EcsClient ecs; private IamClient iam; private StsClient sts;
 
     public AwsBackend(String region, boolean demo) {
+        this(region, demo, null);
+    }
+
+    public AwsBackend(String region, boolean demo, CostLedger cost) {
         String selected = region == null || region.isBlank()
                 ? (demo ? "us-east-1" : Objects.requireNonNull(DefaultAwsRegionProviderChain.builder().build().getRegion(), "AWS region is not configured").id())
                 : region;
         this.regionName = selected;
         this.region = Region.of(selected);
         this.demo = demo;
+        this.cost = cost;
+        ClientOverrideConfiguration.Builder configBuilder = ClientOverrideConfiguration.builder()
+                .apiCallTimeout(Duration.ofSeconds(25)).apiCallAttemptTimeout(Duration.ofSeconds(10))
+                .retryPolicy(RetryPolicy.builder().numRetries(2).build());
+        if (cost != null) configBuilder.addExecutionInterceptor(new CostInterceptor(cost));
+        this.config = configBuilder.build();
         String endpointText = System.getenv("LMAWS_ENDPOINT");
         this.endpoint = endpointText == null || endpointText.isBlank() ? null : checkedEndpoint(endpointText);
+        if (!demo && endpoint == null && ciEnvironment())
+            throw new IllegalStateException("live AWS credentials are disabled in CI; use a loopback fake endpoint");
         if (demo) seedDemo();
     }
 
     public String region() { return regionName; }
+    public boolean isDemo() { return demo; }
+
+    /** Strict, read-only provider absence check used after teardown. */
+    public boolean exists(String kind, String id) {
+        String k = createKind(kind);
+        requireText(id, "id");
+        if (demo) return demoResources.containsKey(demoKey(k, id));
+        return switch (k) {
+            case "bucket" -> {
+                try { s3().headBucket(x -> x.bucket(id)); yield true; }
+                catch (S3Exception e) { if (e.statusCode() == 404) yield false; throw e; }
+            }
+            case "queue" -> {
+                try { sqs().getQueueUrl(x -> x.queueName(last(id))).queueUrl(); yield true; }
+                catch (QueueDoesNotExistException e) { yield false; }
+            }
+            case "topic" -> {
+                try { sns().getTopicAttributes(x -> x.topicArn(id)); yield true; }
+                catch (NotFoundException e) { yield false; }
+            }
+            case "parameter" -> {
+                var request = DescribeParametersRequest.builder().parameterFilters(
+                        software.amazon.awssdk.services.ssm.model.ParameterStringFilter.builder()
+                                .key("Name").option("Equals").values(id).build()).build();
+                try { yield !ssm().describeParameters(request).parameters().isEmpty(); }
+                catch (software.amazon.awssdk.services.ssm.model.InvalidFilterKeyException e) { throw e; }
+            }
+            case "table" -> {
+                try { ddb().describeTable(x -> x.tableName(id)); yield true; }
+                catch (software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException e) { yield false; }
+            }
+            case "log_group" -> {
+                var pages = logs().describeLogGroupsPaginator(x -> x.logGroupNamePrefix(id));
+                yield pages.stream().flatMap(p -> p.logGroups().stream()).anyMatch(g -> id.equals(g.logGroupName()));
+            }
+            default -> throw new IllegalArgumentException("unsupported resource kind: " + k);
+        };
+    }
 
     public List<Map<String, String>> inventory(String kind) {
         String k = normalizeKind(kind);
@@ -238,7 +292,17 @@ public final class AwsBackend implements AutoCloseable {
     private SecretsManagerClient secrets() { return secrets == null ? secrets = register(base(SecretsManagerClient.builder()).build()) : secrets; }
     private EcsClient ecs() { return ecs == null ? ecs = register(base(EcsClient.builder()).build()) : ecs; }
     private IamClient iam() { return iam == null ? iam = register(base(IamClient.builder()).build()) : iam; }
-    private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { b.region(region).overrideConfiguration(config); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))); else b.credentialsProvider(DefaultCredentialsProvider.create()); return b; }
+    private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { b.region(region).overrideConfiguration(config); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))); else b.credentialsProvider(ProfileCredentialsProvider.builder().profileName(System.getenv().getOrDefault("AWS_PROFILE", "default")).build()); return b; }
+
+    private static final class CostInterceptor implements ExecutionInterceptor {
+        private final CostLedger ledger;
+        CostInterceptor(CostLedger ledger) { this.ledger = ledger; }
+        @Override public void beforeTransmission(Context.BeforeTransmission context, ExecutionAttributes attributes) {
+            String service = attributes.getOptionalAttribute(SdkExecutionAttribute.SERVICE_NAME).orElse("aws");
+            String operation = attributes.getOptionalAttribute(SdkExecutionAttribute.OPERATION_NAME).orElse("request");
+            ledger.request(service, operation);
+        }
+    }
     private <T extends AutoCloseable> T register(T c) { clients.add(c); return c; }
 
     private Map<String, String> identity() { var i = sts().getCallerIdentity(GetCallerIdentityRequest.builder().build()); return row("kind", "identity", "id", safeId(i.account()), "name", safeId(i.arn())); }
@@ -275,6 +339,10 @@ public final class AwsBackend implements AutoCloseable {
     private static URI checkedEndpoint(String x) { URI u = URI.create(x); String h = u.getHost(); if (!"http".equalsIgnoreCase(u.getScheme()) || u.getUserInfo() != null || u.getQuery() != null || u.getFragment() != null || (u.getPath() != null && !u.getPath().isEmpty() && !"/".equals(u.getPath())) || !("127.0.0.1".equals(h) || "::1".equals(h) || "[::1]".equals(h))) throw new IllegalArgumentException("LMAWS_ENDPOINT must be http://127.0.0.1 or http://[::1]"); return u; }
 
     private void requireWriteEnabled() { if (!demo && endpoint == null && !"1".equals(System.getenv("LMAWS_LIVE"))) throw new IllegalStateException("live writes require LMAWS_LIVE=1"); }
+    private static boolean ciEnvironment() {
+        String value = System.getenv("CI");
+        return value != null && (value.equalsIgnoreCase("true") || value.equals("1") || value.equalsIgnoreCase("yes"));
+    }
     private void preflightBucket(String name) { try { s3().headBucket(x -> x.bucket(name)); throw new IllegalStateException("bucket already exists: " + name); } catch (S3Exception e) { if (e.statusCode() != 404) throw e; } }
     private void preflightQueue(String name) { try { sqs().getQueueUrl(x -> x.queueName(name)); throw new IllegalStateException("queue already exists: " + name); } catch (QueueDoesNotExistException e) { } }
     private void preflightTopic(String name) { if (pages(sns().listTopicsPaginator(ListTopicsRequest.builder().build())).flatMap(p -> p.topics().stream()).anyMatch(topic -> name.equals(last(topic.topicArn())))) throw new IllegalStateException("topic already exists: " + name); }

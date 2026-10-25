@@ -23,21 +23,31 @@ public final class Sandbox implements AutoCloseable {
     private final AwsBackend backend;
     private final String runId;
     private final Path ledger;
+    private final CostLedger cost;
     private final Map<String, Entry> resources = new LinkedHashMap<>();
     private boolean closed;
 
     public Sandbox(AwsBackend backend, String runId, Path ledger) {
+        this(backend, runId, ledger, null);
+    }
+
+    public Sandbox(AwsBackend backend, String runId, Path ledger, CostLedger cost) {
         this.backend = Objects.requireNonNull(backend, "backend");
         if (runId == null || !RUN.matcher(runId).matches())
             throw new IllegalArgumentException("runId must be 1-24 lowercase letters or digits");
         this.runId = runId;
-        this.ledger = openLedger(Objects.requireNonNull(ledger, "ledger"), runId);
+        this.cost = cost;
+        Path requested = Objects.requireNonNull(ledger, "ledger");
+        if (cost == null) this.ledger = openLedger(requested, runId);
+        else if (requested.toAbsolutePath().normalize().equals(cost.path().toAbsolutePath().normalize())) this.ledger = cost.path();
+        else { this.ledger = openLedger(requested, runId); cost.link(this.ledger); }
     }
 
     public synchronized Map<String, String> create(String kind, String name, String value) {
         ensureOpen();
         String k = requireKind(kind);
         String n = resourceName(k, name);
+        if (cost != null) cost.reserveCreate(k);
         append(record("intent", k, n, "pending", "create"));
         try {
             Map<String, String> raw = backend.create(k, n, value, runId);
@@ -46,11 +56,16 @@ public final class Sandbox implements AutoCloseable {
             Entry e = new Entry(k, id, n);
             resources.put(key(k, id), e);
             append(createdRecord(k, id, n));
+            if (cost != null) cost.created(k, id, n);
             backend.awaitReady(k,id,runId);
             if (!backend.owned(k, id, runId)) throw new IllegalStateException("created resource ownership was not verified");
             return new LinkedHashMap<>(raw);
         } catch (RuntimeException ex) {
             append(record("failure", k, n, "pending", "create:" + safeError(ex)));
+            if((!k.equals("bucket") || cost!=null && (!cost.creationWasTransmitted("CreateBucket") || cost.lastOperation().equals("CreateBucket"))) && ex instanceof software.amazon.awssdk.awscore.exception.AwsServiceException service && service.statusCode()>=400 && service.statusCode()<500 && resources.values().stream().noneMatch(v->v.kind.equals(k)&&v.name.equals(n))) {
+                append(record("not_created",k,n,"not_created","provider_rejected_create"));
+                if(cost!=null)cost.creationRejected(k,n,"AWS_CREATE_REJECTED",service.statusCode());
+            }
             throw ex;
         }
     }
@@ -58,7 +73,9 @@ public final class Sandbox implements AutoCloseable {
     public synchronized void put(Map<String, String> resource, String key, String value) {
         ensureOpen();
         Entry e = entry(resource);
+        if (cost != null) cost.select(e.kind, e.id);
         if (key == null || key.isBlank()) throw new IllegalArgumentException("key is required");
+        if (cost != null) cost.put(e.kind, e.id, value == null ? 0 : value.getBytes(StandardCharsets.UTF_8).length,key.getBytes(StandardCharsets.UTF_8).length);
         append(record("intent", e.kind, e.id, "active", "update:" + key));
         try {
             backend.update(e.kind, e.id, key, value);
@@ -69,18 +86,24 @@ public final class Sandbox implements AutoCloseable {
         }
     }
 
+    public CostLedger cost(){return cost;}
+
     public synchronized int remaining() { return resources.size(); }
 
     public synchronized void cleanup() {
         if (closed) return;
         RuntimeException first = null;
+        AutoCloseable scope = cost == null ? () -> {} : cost.cleanupScope();
+        try {
         List<Entry> copy = new ArrayList<>(resources.values());
         java.util.Collections.reverse(copy);
         for (Entry e : copy) {
             try {
+                if (cost != null) cost.select(e.kind, e.id);
                 if (!backend.owned(e.kind, e.id, runId)) throw new IllegalStateException("ownership check failed");
                 append(record("intent", e.kind, e.id, "active", "delete"));
                 backend.delete(e.kind, e.id);
+                if (cost != null) cost.deleted(e.kind, e.id);
                 append(record("deleted", e.kind, e.id, "deleted", "delete"));
                 resources.remove(key(e.kind, e.id));
             } catch (RuntimeException ex) {
@@ -89,6 +112,7 @@ public final class Sandbox implements AutoCloseable {
             }
         }
         if (first != null) throw first;
+        } finally { try { scope.close(); } catch (Exception ignored) {} }
     }
 
     @Override public synchronized void close() { cleanup(); closed = true; }
@@ -111,6 +135,7 @@ public final class Sandbox implements AutoCloseable {
         String kind = resource.get("kind"), id = resource.get("id");
         Entry e = resources.get(key(kind, id));
         if (e == null) throw new IllegalArgumentException("resource is not owned by this sandbox");
+        if(cost!=null)cost.select(e.kind,e.id);
         if (!backend.owned(e.kind, e.id, runId)) throw new IllegalArgumentException("resource ownership was not verified");
         return e;
     }
@@ -160,6 +185,7 @@ public final class Sandbox implements AutoCloseable {
             for (String line : Files.readAllLines(p)) {
                 if (!line.trim().endsWith("}")) { out.add(Map.of("ledger", p.toString(), "record", "manual review: torn ledger record")); continue; }
                 Map<String, String> row;
+                if (line.contains("\"event\":\"cost_")) continue;
                 try { row = jsonRow(line); } catch (RuntimeException ex) { out.add(Map.of("ledger", p.toString(), "record", "manual review: malformed ledger record")); continue; }
                 String kind = row.get("kind"), id = row.get("id");
                 if (kind == null || id == null || row.get("state") == null) { out.add(Map.of("ledger", p.toString(), "record", "manual review: malformed ledger record")); continue; }

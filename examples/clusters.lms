@@ -2,15 +2,15 @@
 mkdir("images");
 mkdir("data");
 aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
-let cloud = aws.demo();
+let cloud = aws.example("clusters");
 let csv = "service,count\n";
 let clusters_rows = cloud.clusters();
 let clusters_count = clusters_rows.len();
-check(clusters_count == 3);
+if (cloud.is_demo()) { check(clusters_count == 3); }
 csv = csv + "clusters," + str(clusters_count) + "\n";
 let instances_rows = cloud.instances();
 let instances_count = instances_rows.len();
-check(instances_count == 3);
+if (cloud.is_demo()) { check(instances_count == 3); }
 csv = csv + "instances," + str(instances_count) + "\n";
 file_write("data/clusters.csv", csv);
 end _dsl_
@@ -22,8 +22,14 @@ plot.close();
 end _dsl_
 savedsl(aws, "clusters-aws.dslb");
 r = system ${dsl_cli(aws)} --dsl "clusters-aws.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
+let cost_line = "";
+for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
+assert(starts_with(cost_line, "estimated cost: $"));
 savedsl(plot, "clusters-plot.dslb");
 r = system ${dsl_cli(plot)} --dsl "clusters-plot.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/clusters.png");
+println(cost_line);

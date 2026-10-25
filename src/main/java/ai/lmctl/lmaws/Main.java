@@ -7,9 +7,9 @@ import java.util.*;
 import java.io.*;
 
 public final class Main {
-    public static final String VERSION="0.1.0";
+    public static final String VERSION="0.1.1";
     private static final String HELP="""
-        lmaws 0.1.0 — AWS SDK for Java v2 scripting host
+        lmaws 0.1.1 — AWS SDK for Java v2 scripting host
         usage: lmaws [--dry-run] --dsl FILE | --dsl-schema [--json] | --dsl-signatures
                lmaws --version | --notices | --help | --self-test
                lmaws --sweep LEDGER_DIR --older-than-hours N
@@ -17,6 +17,10 @@ public final class Main {
         Writes require a new run ledger, run-prefixed names and verified ownership tags.
         Every run is cleaned up on success and failure. --sweep is always read-only.
         LMAWS_MAX_MEMORY_MB: positive whole MiB, default 4096; bounded heap and VM data.
+        LMAWS_MAX_COST_USD: default 0.05, hard whole-run ceiling 0.25.
+        aws.example(name) selects local profile live mode only when LMAWS_LIVE=1;
+        examples record prices, requests, minutes, teardown, sweeper and cost evidence.
+        No OIDC or AWS credentials in CI; CI uses loopback fakes only.
         --dry-run uses demo sessions: no AWS requests; local reports/ledgers still write.
         LMAWS_LIVE=1 is required for real-account writes; read-only inventories use the
         standard AWS credential chain. Secret values and IAM key APIs are not exposed.
@@ -41,6 +45,8 @@ public final class Main {
         return (Jsons.encode(all)+"\n").getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
     static String safeError(Throwable e) {
+        for(Throwable x=e;x!=null;x=x.getCause())if(x instanceof IllegalStateException && x.getMessage()!=null && x.getMessage().startsWith("estimated cost cap exceeded"))return x.getMessage();
+        if(e instanceof NumberFormatException)return "invalid integer argument";
         if(e instanceof AwsServiceException aws) {String code=aws.awsErrorDetails()==null?"AWS_SERVICE_ERROR":aws.awsErrorDetails().errorCode();if(code==null||!code.matches("[A-Za-z0-9_.-]{1,100}"))code="AWS_SERVICE_ERROR";return "AWS "+code+" (HTTP "+aws.statusCode()+")";}
         if(e instanceof VmException || e instanceof IllegalArgumentException || e instanceof IllegalStateException) return Jsons.mask(e.getMessage()==null?e.getClass().getSimpleName():e.getMessage());
         return "operation failed ("+e.getClass().getSimpleName()+")";
@@ -49,7 +55,7 @@ public final class Main {
         String[] requested=args;
         if(args.length==3&&args[0].equals("--dry-run")){System.setProperty("lmaws.dryRun","true");args=Arrays.copyOfRange(args,1,3);}
         else if(args.length==3&&args[2].equals("--dry-run")){System.setProperty("lmaws.dryRun","true");args=Arrays.copyOf(args,2);}
-        long bytes;try{bytes=budget();}catch(IllegalArgumentException e){System.err.println(e.getMessage());return 2;}
+        long bytes;try{bytes=budget();CloudHost.costCap();}catch(IllegalArgumentException e){System.err.println(e.getMessage());return 2;}
         if(Arrays.equals(args,new String[]{"--version"})){System.out.println("lmaws "+VERSION);return 0;}
         if(Arrays.equals(args,new String[]{"--help"})){System.out.print(HELP);return 0;}
         if(Arrays.equals(args,new String[]{"--notices"})){try(InputStream in=Main.class.getResourceAsStream("/THIRD_PARTY_NOTICES")){if(in==null)throw new IOException("notices missing");in.transferTo(System.out);}return 0;}
@@ -61,12 +67,16 @@ public final class Main {
             if(args.length>=1&&args[0].equals("--dsl-schema")&&(args.length==1||args.length==2&&args[1].equals("--json"))){System.out.write(schema);return 0;}
             if(Arrays.equals(args,new String[]{"--dsl-signatures"})){registry.signatures().forEach(System.out::println);return 0;}
             if(args.length==4&&args[0].equals("--sweep")&&args[2].equals("--older-than-hours")){System.out.println(Jsons.encode(Sandbox.leftovers(Path.of(args[1]),Long.parseLong(args[3]))));return 0;}
-            if(Arrays.equals(args,new String[]{"--self-test"})){SafetyChecks.run();SelfTest.main(new String[0]);return 0;}
+            if(Arrays.equals(args,new String[]{"--self-test"})){SafetyChecks.run();CostChecks.run();SelfTest.main(new String[0]);return 0;}
             if(args.length!=2||!args[0].equals("--dsl")){System.err.print(HELP);return 2;}
             RuntimeBudget.configure(bytes,requested);
             Path input=Path.of(args[1]);if(Files.size(input)>Math.min(bytes/4,64L*1024*1024))throw VmException.run("LMAWS_MAX_MEMORY_MB bytecode input exceeds memory budget");
             io.lmctl.lmcode.Program program=io.lmctl.lmcode.Program.load(Files.readAllBytes(input),schema,registry);
-            program.run(host.context(bytes),registry);
+            try{program.run(host.context(bytes),registry);}catch(Exception failure){
+                String action="";
+                if(failure instanceof AwsServiceException service && service.awsErrorDetails()!=null){String reason=service.awsErrorDetails().errorMessage();if(reason!=null){var matcher=java.util.regex.Pattern.compile("perform:?\\s+([A-Za-z0-9]+:[A-Za-z0-9]+)").matcher(reason);if(matcher.find())action=matcher.group(1);}}
+                host.noteFailure(safeError(failure),action);throw failure;
+            }
             host.close();
             return Reports.ok("null");
         } finally {try{Runtime.getRuntime().removeShutdownHook(shutdown);}catch(IllegalStateException ignored){}}

@@ -6,7 +6,7 @@ with host.open('rb') as binary: is_elf=binary.read(4)==b'\x7fELF'
 def run(args,code=0,extra=None):
  p=subprocess.run(([str(host)] if host.suffix!='.cmd' else ['cmd.exe','/c',str(host)])+args,env=dict(env,**(extra or {})),text=True,encoding="utf-8",capture_output=True,timeout=120)
  assert p.returncode==code,(args,p.returncode,p.stdout[-1200:],p.stderr[-1200:]);return p
-assert run(['--version']).stdout=='lmaws 0.1.0\n'
+assert run(['--version']).stdout=='lmaws 0.1.1\n'
 assert run(['--notices']).stdout==(root/'THIRD_PARTY_NOTICES').read_text(encoding="utf-8")
 assert 'LMAWS_MAX_MEMORY_MB' in run(['--help']).stdout
 assert '\u2014 AWS SDK' in run(['--help'],extra={'JAVA_TOOL_OPTIONS':'-Dstdout.encoding=windows-1252 -Dstderr.encoding=windows-1252'}).stdout
@@ -16,9 +16,18 @@ assert p.stdout==run(['--dsl-signatures']).stdout,'schema/registry signature mis
 run([],2);run(['--nonesuch'],2);run(['--dsl','missing-bytecode.dslb'],3)
 for raw in ['0','-1','wat','1.5','99999999999999999999999999']:
  assert 'positive whole' in run(['--version'],2,{'LMAWS_MAX_MEMORY_MB':raw}).stderr
+for raw in ['-0.01','0.250001','nan','1e100']:
+ assert 'LMAWS_MAX_COST_USD' in run(['--version'],2,{'LMAWS_MAX_COST_USD':raw}).stderr
+workflow=(root/'.github/workflows/ci.yml').read_text(encoding='utf-8').lower()
+assert 'id-token:' not in workflow and 'configure-aws-credentials' not in workflow and 'secrets.aws_' not in workflow,'CI must remain fake-only with no OIDC or cloud credentials'
 run(['--self-test'])
 with tempfile.TemporaryDirectory(prefix='lmaws-cli-') as d:
  d=pathlib.Path(d);bad=d/'bad.dslb';bad.write_bytes(b'not bytecode');run(['--dsl',str(bad)],3)
+ deny=d/'ci-denied.lms';deny_out=d/'ci-denied.dslb'
+ deny.write_text('p = _dsl_ schema='+json.dumps(str(root/'schema/lmaws.dsl.json'))+';\nlet cloud=aws.region("us-east-1"); let who=cloud.identity();\nend _dsl_\nsavedsl(p,'+json.dumps(str(deny_out))+');\n')
+ compiled=subprocess.run([shutil.which('lmscript'),str(deny)],text=True,encoding='utf-8',capture_output=True,timeout=60);assert compiled.returncode==0,compiled.stderr
+ denied=run(['--dsl',str(deny_out)],3,{'CI':'true','LMAWS_LIVE':'1','LMAWS_ENDPOINT':'','LMAWS_LEDGER_DIR':str(d/'ci-ledgers')})
+ assert 'disabled in CI' in denied.stdout
  code=d/'budget.lms';out=d/'budget.dslb'
  code.write_text('p = _dsl_ schema='+json.dumps(str(root/'schema/lmaws.dsl.json'))+';\nlet i = 0; while (i < 10000) { let data = str_repeat("x", 1000000); i = i + 1; }\nend _dsl_\nsavedsl(p, '+json.dumps(str(out))+');\n')
  p=subprocess.run([shutil.which('lmscript'),str(code)],text=True,encoding="utf-8",capture_output=True,timeout=60);assert p.returncode==0,p.stderr

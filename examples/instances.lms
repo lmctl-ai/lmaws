@@ -1,28 +1,33 @@
-# Compute state distribution: derived from fields in the host's deterministic demo rows.
+# Compute state distribution: derived from fields in the host rows.
 mkdir("images");
 mkdir("data");
 aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
-let cloud = aws.demo();
+let cloud = aws.example("instances");
 let rows = cloud.instances();
-let first = rows.at(0);
-check(rows.len() == 3);
+if (cloud.is_demo()) { check(rows.len() == 3); }
 let a_count = rows.count("state", "running");
 let b_count = rows.count("state", "stopped");
-check(a_count == 1);
-check(b_count == 2);
+if (cloud.is_demo()) { check(a_count == 1); }
+if (cloud.is_demo()) { check(b_count == 2); }
 let csv = "category,count\nrunning," + str(a_count) + "\nstopped," + str(b_count) + "\n";
 file_write("data/instances.csv", csv);
 end _dsl_
 plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png("images/instances.png", 900, 560);
 plot.cmd("set datafile separator ','; set yrange [0:*]; set title 'Compute state distribution'; set style data histograms; set style fill solid 0.8; set boxwidth 0.65");
-plot.cmd("plot 'data/instances.csv' every ::1 using 2:xtic(1) title 'demo rows' lc rgb '#f5c16c'");
+plot.cmd("plot 'data/instances.csv' every ::1 using 2:xtic(1) title 'rows' lc rgb '#f5c16c'");
 plot.close();
 end _dsl_
 savedsl(aws, "instances-aws.dslb");
 r = system ${dsl_cli(aws)} --dsl "instances-aws.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
+let cost_line = "";
+for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
+assert(starts_with(cost_line, "estimated cost: $"));
 savedsl(plot, "instances-plot.dslb");
 r = system ${dsl_cli(plot)} --dsl "instances-plot.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/instances.png");
+println(cost_line);

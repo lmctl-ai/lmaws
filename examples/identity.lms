@@ -2,15 +2,15 @@
 mkdir("images");
 mkdir("data");
 aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
-let cloud = aws.demo();
+let cloud = aws.example("identity");
 let csv = "service,count\n";
 let identity_rows = cloud.identity();
 let identity_count = identity_rows.len();
-check(identity_count == 3);
+if (cloud.is_demo()) { check(identity_count == 3); }
 csv = csv + "identity," + str(identity_count) + "\n";
 let roles_rows = cloud.roles();
 let roles_count = roles_rows.len();
-check(roles_count == 3);
+if (cloud.is_demo()) { check(roles_count == 3); }
 csv = csv + "roles," + str(roles_count) + "\n";
 file_write("data/identity.csv", csv);
 end _dsl_
@@ -22,8 +22,14 @@ plot.close();
 end _dsl_
 savedsl(aws, "identity-aws.dslb");
 r = system ${dsl_cli(aws)} --dsl "identity-aws.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
+let cost_line = "";
+for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
+assert(starts_with(cost_line, "estimated cost: $"));
 savedsl(plot, "identity-plot.dslb");
 r = system ${dsl_cli(plot)} --dsl "identity-plot.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/identity.png");
+println(cost_line);

@@ -3,6 +3,7 @@
 from pathlib import Path
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -10,7 +11,7 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 examples = sorted(p.stem for p in (root / "examples").glob("*.lms") if p.stem != "render-all")
-assert len(examples) == 25, len(examples)
+assert len(examples) >= 30, len(examples)
 readme = (root / "README.md").read_text(encoding="utf-8")
 for name in examples:
     assert f"examples/{name}.lms" in readme, name
@@ -21,20 +22,22 @@ for name in examples:
     assert len(data) <= 300_000, image
     source = (root / "examples" / f"{name}.lms").read_text(encoding="utf-8")
     assert "savedsl(" in source and "assert(r.code == 0)" in source, name
-assert len(re.findall(r"lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/", readme)) >= 25
+assert len(re.findall(r"lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/", readme)) >= 30
 print(f"gallery: {len(examples)} examples and images verified")
 
 def run_examples():
     runner = shutil.which("lmscript")
     if runner is None:
         raise SystemExit("gallery --run: lmscript is not on PATH")
-    evidence = {"examples": len(examples), "passed": [], "failed": [], "timeout_seconds": 120}
+    offline_env = dict(os.environ, LMAWS_LIVE="0", AWS_EC2_METADATA_DISABLED="true")
+    offline_env.pop("LMAWS_ENDPOINT", None)
+    evidence = {"examples": len(examples), "passed": [], "failed": [], "timeout_seconds": 120, "live_forced_off": True}
     outputs = {}
     for name in examples:
         with tempfile.TemporaryDirectory(prefix=f"lmaws-gallery-{name}-") as work:
             result = subprocess.run(
                 [runner, str(root / "examples" / f"{name}.lms")],
-                cwd=work, text=True,encoding="utf-8", capture_output=True, timeout=120,
+                cwd=work, env=offline_env, text=True, encoding="utf-8", capture_output=True, timeout=120,
             )
             if result.returncode:
                 evidence["failed"].append({"name": name, "returncode": result.returncode,
@@ -55,7 +58,7 @@ def run_examples():
     with tempfile.TemporaryDirectory(prefix="lmaws-gallery-repeat-") as one, tempfile.TemporaryDirectory(prefix="lmaws-gallery-repeat-") as two:
         for work in (one, two):
             result = subprocess.run([runner, str(root / "examples" / "inventory.lms")],
-                                    cwd=work, text=True,encoding="utf-8", capture_output=True, timeout=120)
+                                    cwd=work, env=offline_env, text=True, encoding="utf-8", capture_output=True, timeout=120)
             if result.returncode:
                 raise SystemExit("gallery --run: inventory repeat failed: " + (result.stdout + result.stderr)[-2000:])
         first = (Path(one) / "data" / "inventory.csv").read_bytes()

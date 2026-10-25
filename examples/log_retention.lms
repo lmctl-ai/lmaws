@@ -1,0 +1,34 @@
+# Create one log group, set a short retention, and tear it down.
+mkdir("images"); mkdir("data");
+aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("log_retention");
+let run = cloud.example_run();
+let group = run.log_group("sample");
+run.put(group, "retention_days", "7");
+let created = run.remaining();
+let retention_days = 7;
+check(created == 1);
+run.cleanup();
+let cleaned = run.remaining();
+check(cleaned == 0);
+file_write("data/log_retention.csv", "phase,count\ncreated," + str(created) + "\nretention_days," + str(retention_days) + "\ncleaned," + str(cleaned) + "\n");
+end _dsl_
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png("images/log_retention.png", 900, 560);
+plot.cmd("set datafile separator ','; set yrange [0:*]; set title 'Short log retention'; set style data histograms; set style fill solid 0.8");
+plot.cmd("plot 'data/log_retention.csv' every ::1 using 2:xtic(1) title 'logs' lc rgb '#6fbdb4'");
+plot.close();
+end _dsl_
+savedsl(aws, "log_retention-aws.dslb");
+r = system ${dsl_cli(aws)} --dsl "log_retention-aws.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
+assert(r.code == 0);
+let cost_line = "";
+for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
+assert(starts_with(cost_line, "estimated cost: $"));
+savedsl(plot, "log_retention-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl "log_retention-plot.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
+assert(r.code == 0);
+println("images/log_retention.png");
+println(cost_line);

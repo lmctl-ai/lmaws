@@ -1,0 +1,26 @@
+# Scan only local run ledgers; never deletes AWS resources.
+mkdir("images"); mkdir("data");
+aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("sweeper");
+let leftovers = cloud.sweep(0);
+check(leftovers.len() == 0);
+file_write("data/sweeper.csv", "state,count\nleftovers," + str(leftovers.len()) + "\n");
+end _dsl_
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png("images/sweeper.png", 900, 560);
+plot.cmd("set datafile separator ','; set yrange [0:1]; set title 'Local run ledger sweeper (dry run)'; set style data histograms; set style fill solid 0.8");
+plot.cmd("plot 'data/sweeper.csv' every ::1 using 2:xtic(1) title 'leftovers' lc rgb '#6fbdb4'");
+plot.close();
+end _dsl_
+savedsl(aws,"sweeper-aws.dslb");
+r = system ${dsl_cli(aws)} --dsl sweeper-aws.dslb;
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
+assert(r.code == 0);
+cost_line = "";
+for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
+assert(cost_line != "");
+savedsl(plot,"sweeper-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl sweeper-plot.dslb;
+assert(r.code == 0);
+println("images/sweeper.png");
+println(cost_line);

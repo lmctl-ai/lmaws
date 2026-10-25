@@ -1,0 +1,23 @@
+{
+  "profile": "default",
+  "region": "us-east-1",
+  "local_only": true,
+  "oidc": false,
+  "cloud_credentials_in_ci": false,
+  "total_estimated_usd": "0.0000463",
+  "whole_run_cap_usd": "0.25",
+  "example_default_cap_usd": "0.05",
+  "examples": [
+    {
+      "example": "sweeper",
+      "estimated_usd": "0",
+      "display": "$0.00",
+      "evidence": "evidence/live-cost-sweeper-rb06fb78dx83ba4d51.json",
+      "resource_kinds": [],
+      "resource_names": [],
+      "leftover_count": 0
+    }
+  ],
+  "failed_examples": [],
+  "leftover_count": 0
+}

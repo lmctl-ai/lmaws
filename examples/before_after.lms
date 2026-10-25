@@ -2,16 +2,16 @@
 mkdir("images");
 mkdir("data");
 aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
-let cloud = aws.demo();
+let cloud = aws.example("before_after");
 let before = cloud.queues().len();
-check(before == 3);
-let run = cloud.run("beforeafter01", "data");
+if (cloud.is_demo()) { check(before == 3); }
+let run = cloud.example_run();
 let owned = run.queue("audit");
 let active = cloud.queues().len();
-check(active == 4);
+if (cloud.is_demo()) { check(active == 4); }
 run.cleanup();
 let after = cloud.queues().len();
-check(after == 3);
+if (cloud.is_demo()) { check(after == 3); }
 check(run.remaining() == 0);
 let csv = "phase,count\nbefore," + str(before) + "\nactive," + str(active) + "\nafter," + str(after) + "\n";
 file_write("data/before_after.csv", csv);
@@ -24,8 +24,14 @@ plot.close();
 end _dsl_
 savedsl(aws, "before_after-aws.dslb");
 r = system ${dsl_cli(aws)} --dsl "before_after-aws.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
+let cost_line = "";
+for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
+assert(starts_with(cost_line, "estimated cost: $"));
 savedsl(plot, "before_after-plot.dslb");
 r = system ${dsl_cli(plot)} --dsl "before_after-plot.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/before_after.png");
+println(cost_line);

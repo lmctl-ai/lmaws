@@ -1,0 +1,71 @@
+{
+  "schema": "lmaws-cost-v2",
+  "run_id": "r2eb0dad7x8cd3462d",
+  "example": "read_only_audit",
+  "region": "us-east-1",
+  "live": true,
+  "cap_usd": 0.05,
+  "hard_ceiling_usd": 0.25,
+  "total_estimated_usd": 1e-05,
+  "reserved_future_usd": 0,
+  "price_table": {
+    "dynamodb.write_1kib": 6.25e-07,
+    "sqs.request_64kib": 4e-07,
+    "s3.storage_gb_month": 0.023,
+    "conservative_unknown_api_request": 5e-06,
+    "secretsmanager.api_request": 5e-06,
+    "s3.get_or_head_request": 4e-07,
+    "dynamodb.storage_gb_month": 0.25,
+    "sns.request_64kib": 5e-07,
+    "s3.write_or_list_request": 5e-06
+  },
+  "price_metadata": {
+    "sources": [
+      "https://aws.amazon.com/s3/pricing/",
+      "https://aws.amazon.com/sqs/pricing/",
+      "https://aws.amazon.com/sns/pricing/",
+      "https://aws.amazon.com/dynamodb/pricing/",
+      "https://aws.amazon.com/systems-manager/pricing/",
+      "https://aws.amazon.com/secrets-manager/pricing/"
+    ],
+    "as_of": "2026-10-25",
+    "estimate_only": true,
+    "unknown_calls": "conservative $5 per million attempts",
+    "currency": "USD",
+    "month_minutes": 43200,
+    "free_tier_credits_applied": false,
+    "price_region": "us-east-1"
+  },
+  "resources": [],
+  "rejected_creations": [],
+  "service_requests": {
+    "free_metadata.GetCallerIdentity": {
+      "billing_units": 1,
+      "estimated_usd": 0,
+      "unit_price_usd": 0,
+      "requests": 1
+    },
+    "secretsmanager.ListSecrets": {
+      "billing_units": 2,
+      "estimated_usd": 1e-05,
+      "unit_price_usd": 5e-06,
+      "requests": 2
+    },
+    "free_metadata.ListRoles": {
+      "billing_units": 1,
+      "estimated_usd": 0,
+      "unit_price_usd": 0,
+      "requests": 1
+    }
+  },
+  "cap_refusals": 0,
+  "leftover_count": 0,
+  "provider_verification": [],
+  "sweeper_leftover_count": 0,
+  "profile": "default",
+  "ledger": "/home/mma/repos/dsl/lmaws/ledgers/lmaws-r2eb0dad7x8cd3462d.jsonl",
+  "estimated_cost_display": "$0.00",
+  "finished_at": "2026-10-25T04:40:30.400351440Z",
+  "example_exit_code": 1,
+  "validation_status": "blocked_or_failed"
+}

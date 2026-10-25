@@ -2,15 +2,15 @@
 mkdir("images");
 mkdir("data");
 aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
-let cloud = aws.demo();
+let cloud = aws.example("functions");
 let csv = "service,count\n";
 let functions_rows = cloud.functions();
 let functions_count = functions_rows.len();
-check(functions_count == 3);
+if (cloud.is_demo()) { check(functions_count == 3); }
 csv = csv + "functions," + str(functions_count) + "\n";
 let log_groups_rows = cloud.log_groups();
 let log_groups_count = log_groups_rows.len();
-check(log_groups_count == 3);
+if (cloud.is_demo()) { check(log_groups_count == 3); }
 csv = csv + "log_groups," + str(log_groups_count) + "\n";
 file_write("data/functions.csv", csv);
 end _dsl_
@@ -22,8 +22,14 @@ plot.close();
 end _dsl_
 savedsl(aws, "functions-aws.dslb");
 r = system ${dsl_cli(aws)} --dsl "functions-aws.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
+let cost_line = "";
+for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
+assert(starts_with(cost_line, "estimated cost: $"));
 savedsl(plot, "functions-plot.dslb");
 r = system ${dsl_cli(plot)} --dsl "functions-plot.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/functions.png");
+println(cost_line);

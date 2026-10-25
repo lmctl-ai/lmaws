@@ -9,7 +9,7 @@ timeout 30 python3 scripts/lock-deps.py
 mkdir -p target/jvm-bin
 cat > target/jvm-bin/lmaws <<'WRAPPER'
 #!/usr/bin/env bash
-exec java -cp "$(cd "$(dirname "$0")/.." && pwd)/lmaws-0.1.0.jar" ai.lmctl.lmaws.Main "$@"
+exec java -cp "$(cd "$(dirname "$0")/.." && pwd)/lmaws-0.1.1.jar" ai.lmctl.lmaws.Main "$@"
 WRAPPER
 chmod +x target/jvm-bin/lmaws
 export PATH="$PWD/target/jvm-bin:$PATH"
@@ -17,7 +17,7 @@ jvm=target/jvm-bin/lmaws
 if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
   python3 - <<'PYWIN'
 from pathlib import Path
-p=Path("target/jvm-bin/lmaws.cmd");jar=Path("target/lmaws-0.1.0.jar").resolve()
+p=Path("target/jvm-bin/lmaws.cmd");jar=Path("target/lmaws-0.1.1.jar").resolve()
 p.write_text('@echo off\njava -cp "'+str(jar)+'" ai.lmctl.lmaws.Main %*\n')
 PYWIN
   jvm=target/jvm-bin/lmaws.cmd

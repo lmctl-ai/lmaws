@@ -1,14 +1,18 @@
 # Resource graph diagram with counts read from the host-generated file.
 mkdir("images"); mkdir("data");
 aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
-let cloud = aws.demo();
+let cloud = aws.example("resource_graph");
 let stores = cloud.buckets(); let queues = cloud.queues(); let workers = cloud.functions();
-check(stores.len() == 3); check(queues.len() == 3); check(workers.len() == 3);
+if (cloud.is_demo()) { check(stores.len() == 3); } if (cloud.is_demo()) { check(queues.len() == 3); } if (cloud.is_demo()) { check(workers.len() == 3); }
 file_write("data/resource_graph.count", "stores=" + str(stores.len()) + ", queues=" + str(queues.len()) + ", functions=" + str(workers.len()));
 end _dsl_
 savedsl(aws, "resource_graph-aws.dslb");
 r = system ${dsl_cli(aws)} --dsl "resource_graph-aws.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
+let cost_line = "";
+for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
+assert(starts_with(cost_line, "estimated cost: $"));
 let topology = read_file("data/resource_graph.count");
 draw = _dsl_ cli="lmdraw" install="github:lmctl-ai/lmdraw@latest";
 scene.canvas(900, 560, "#101820");
@@ -26,5 +30,7 @@ scene.render_png("images/resource_graph.png", 900, 560, 1);
 end _dsl_
 savedsl(draw, "resource_graph-draw.dslb");
 r = system ${dsl_cli(draw)} --dsl "resource_graph-draw.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/resource_graph.png");
+println(cost_line);

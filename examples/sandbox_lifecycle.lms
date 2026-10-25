@@ -1,8 +1,8 @@
 # Owned parameter lifecycle with deterministic cleanup and a per-run ledger directory.
 mkdir("images"); mkdir("data");
 aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
-let cloud = aws.demo();
-let run = cloud.run("sandbox01", "data");
+let cloud = aws.example("sandbox_lifecycle");
+let run = cloud.example_run();
 let p = run.parameter("lifecycle", "demo-value");
 run.put(p, "purpose", "demo");
 check(run.remaining() == 1);
@@ -18,8 +18,14 @@ plot.close();
 end _dsl_
 savedsl(aws, "sandbox_lifecycle-aws.dslb");
 r = system ${dsl_cli(aws)} --dsl "sandbox_lifecycle-aws.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
+let cost_line = "";
+for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
+assert(starts_with(cost_line, "estimated cost: $"));
 savedsl(plot, "sandbox_lifecycle-plot.dslb");
 r = system ${dsl_cli(plot)} --dsl "sandbox_lifecycle-plot.dslb";
+if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/sandbox_lifecycle.png");
+println(cost_line);
