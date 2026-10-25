@@ -58,3 +58,14 @@ by the cost lane and is intentionally left untouched/uncommitted. The five green
 checks certify the dispatched cost candidate 98cdc8a, not that pending compiler
 change. Integrate the newer main/SDK work and rerun checks when resuming; do not
 overwrite the concurrent edit or claim the cost branch is merged/released.
+
+## Publishing rule superseded on resume
+
+The user explicitly permits publishing before live testing. The earlier live-only
+release gate above is historical and superseded. Merge current main's implicit-std
+schema and compiler 0.2.420, validate all five fake-only platforms, then release
+v0.1.1. Preserve the 19 measured read-only results; label all other examples as
+estimated from price table, not yet measured live. The federated session
+awsspot-local-default denied SQS CreateQueue and ssm:PutParameter; IAM ListRoles
+returned InvalidClientTokenId. No IAM, credentials, profile or identity changes
+are authorized or performed. The user's own AWS agent will validate live later.

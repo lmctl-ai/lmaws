@@ -1,10 +1,11 @@
 # Local user AWS-agent test procedure (candidate v0.1.1)
 
-Status: live validation is blocked by the configured default profile. Do not treat
-this candidate as READY FOR USER TEST until every example has successful live cost
-evidence with leftover_count=0. The current profile denies SQS creation and
-ssm:PutParameter; IAM ListRoles returns InvalidClientTokenId. The host never edits
-IAM users/keys or escalates the profile to overcome these errors.
+Status: READY FOR USER TEST after fake-only five-platform CI and the v0.1.1 release.
+Nineteen read-only examples have measured $0.00 evidence. The remaining examples
+are labelled in README as “estimated from price table, not yet measured live” because
+the federated session `awsspot-local-default` denied SQS CreateQueue and
+`ssm:PutParameter`, while IAM ListRoles returned InvalidClientTokenId. The host
+never edits IAM users/keys or changes profiles.
 
 Run locally, never in GitHub Actions or another CI service. No OIDC setup, cloud
 credentials in GitHub, trust policy or Cost Explorer request is needed.
@@ -28,15 +29,37 @@ create/tag/use/delete operations for the example's `lmaws_` resources (S3 names 
 so cleanup can finish. Fix the local profile outside this host if authentication
 or authorization fails; do not add cloud credentials or OIDC to public CI.
 
-After the patch is published, use a fresh tool cache and ensure an older `lmaws`
-is not on PATH. For each example, copy its exact `lmctl autorun` command and expected
-cost from README. Each writes its PNG, a new private ledger, and a sanitized
-`evidence/live-cost-<example>-<run-id>.json`, and ends with its estimated cost.
+After v0.1.1 is published, use a fresh tool cache and ensure an older `lmaws` is not
+on PATH. From an empty directory, run each of the 30 `lmctl autorun` URLs listed in
+README. Read-only examples print `estimated cost: $0.00`; README gives the
+price-table estimate for each blocked example. Each run writes its PNG, a private
+ledger, sanitized `evidence/live-cost-<example>-<run-id>.json`, and its estimate.
 
 ```sh
 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms
 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms
 ```
+
+The live write examples need least-privilege permissions restricted to the run's
+`lmaws_` names (S3 uses `lmaws-`) and `lmaws_test=<run-id>` tag:
+
+* S3 `CreateBucket`, `PutObject`, `GetObject`, `HeadObject`, `ListBucket`,
+  `DeleteObject`, `DeleteBucket`.
+* SQS `CreateQueue`, `GetQueueUrl`, `GetQueueAttributes`, `SendMessage`,
+  `ReceiveMessage`, `DeleteMessage`, `DeleteQueue`.
+* SSM `PutParameter`, `GetParameter`, `DescribeParameters`, `DeleteParameter`
+  (Standard String only).
+* DynamoDB `CreateTable`, `DescribeTable`, `PutItem`, `Scan`, `DeleteTable`.
+* SNS `CreateTopic`, `GetTopicAttributes`, `Publish`, `DeleteTopic`.
+* CloudWatch Logs `CreateLogGroup`, `DescribeLogGroups`, `PutRetentionPolicy`,
+  `DeleteLogGroup`.
+
+The roles, identity, read_only_audit and service_matrix examples need read-only
+IAM inventory calls including `iam:ListRoles` and the `Get*`/`List*` calls shown by
+their errors. IAM list operations cannot be resource-scoped; grant no user, key,
+trust-policy, or policy-write actions. `InvalidClientTokenId` is a federated-session
+authentication problem, so repair `awsspot-local-default` outside lmaws rather than
+switching identity.
 
 The sweeper example scans the directory in `LMAWS_LEDGER_DIR`, asserts zero ledger
 leftovers, prints `$0.00`, and never deletes account resources. With the native

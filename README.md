@@ -5,8 +5,8 @@ AWS read-only inventory and safely owned test resources for lmscript, powered by
 |---|---|---|
 | ![Cloud inventory](docs/images/inventory.png) | Cloud inventory at a glance — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms` | running this example costs about $0.00 ([live evidence](evidence/live-cost-inventory-r71d606a0xcaf04f53.json)).
 | ![Network topology](docs/images/vpcs.png) | Network topology overview — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/vpcs.lms` | running this example costs about $0.00 ([live evidence](evidence/live-cost-vpcs-r62eeb5c9x53334996.json)).
-| ![Queue pipeline](docs/images/queue_pipeline.png) | Queue lifecycle simulation — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms` | live cost pending — default-profile authorization blocked.
-| ![Safety audit](docs/images/read_only_audit.png) | Read-only safety audit — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/read_only_audit.lms` | live cost pending — default-profile authorization blocked.
+| ![Queue pipeline](docs/images/queue_pipeline.png) | Queue lifecycle simulation — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms` | running this example costs about $0.000001 (estimated from price table, not yet measured live).
+| ![Safety audit](docs/images/read_only_audit.png) | Read-only safety audit — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/read_only_audit.lms` | running this example costs about $0.00 (estimated from price table, not yet measured live).
 | ![Resource graph](docs/images/resource_graph.png) | Resource relationship graph — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/resource_graph.lms` | running this example costs about $0.00 ([live evidence](evidence/live-cost-resource_graph-r2511a45fxb4544623.json)).
 
 ## Install
@@ -63,7 +63,7 @@ v0.1.0 writes are limited to those six resource kinds. Compute, networking, IAM,
 
 Every example prints a final `estimated cost: $...` line. Read-only examples use `$0.00`; write examples estimate each request and resource from a price table, exact request counts, fractional minutes alive and fractional GB-month storage. The table uses conservative us-east-1 prices as of 2026-10-25, ignores free-tier credits, and does not call Cost Explorer. Prices vary by region and change over time.
 
-Each ledger refuses the next creation above the example cap of $0.05 or the whole-run hard ceiling of $0.25. Evidence is stored as `evidence/live-cost-<example>-<run-id>.json`; successful entries include the price table, requests, resources and leftover count. Current authorization blocks several live examples, so the project is **NOT READY FOR USER TEST** until all 30 examples have a successful default-profile live run with zero leftovers.
+Each ledger refuses the next creation above the example cap of $0.05 or the whole-run hard ceiling of $0.25. Evidence is stored as `evidence/live-cost-<example>-<run-id>.json`; successful entries include the price table, requests, resources and leftover count. Nineteen read-only examples have measured $0.00 evidence. The remaining examples below are labelled as price-table estimates because the configured federated session `awsspot-local-default` denied their live calls; they are eligible for user testing after the required permissions are granted.
 
 ## Resource limits and build
 
@@ -98,23 +98,25 @@ Each example writes its image to `images/<name>.png` in the current directory an
 - **secrets** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/secrets.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-secrets-r320f386bx9cea4ec7.json)).
 - **parameters** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/parameters.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-parameters-r61d3586dx74ab4fa6.json)).
 - **clusters** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/clusters.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-clusters-rc6e3bf8bx64b54aaf.json)).
-- **roles** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/roles.lms` — live cost pending — default-profile authorization blocked.
-- **identity** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/identity.lms` — live cost pending — default-profile authorization blocked.
+- **roles** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/roles.lms` — running this example costs about $0.00 (estimated from price table, not yet measured live; IAM ListRoles was denied).
+- **identity** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/identity.lms` — running this example costs about $0.00 (estimated from price table, not yet measured live; IAM ListRoles was denied).
 - **resource_graph** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/resource_graph.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-resource_graph-r2511a45fxb4544623.json)).
 - **tag_compliance** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tag_compliance.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-tag_compliance-r7cb07155x9d6941ad.json)).
-- **queue_pipeline** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms` — live cost pending — default-profile authorization blocked.
-- **sandbox_lifecycle** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sandbox_lifecycle.lms` — live cost pending — default-profile authorization blocked.
-- **before_after** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/before_after.lms` — live cost pending — default-profile authorization blocked.
-- **read_only_audit** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/read_only_audit.lms` — live cost pending — default-profile authorization blocked.
+- **queue_pipeline** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms` — running this example costs about $0.000001 (estimated from price table, not yet measured live; SQS CreateQueue was denied).
+- **sandbox_lifecycle** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sandbox_lifecycle.lms` — running this example costs about $0.000000 (estimated from price table, not yet measured live; ssm:PutParameter was denied).
+- **before_after** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/before_after.lms` — running this example costs about $0.000001 (estimated from price table, not yet measured live; SQS CreateQueue was denied).
+- **read_only_audit** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/read_only_audit.lms` — running this example costs about $0.00 (estimated from price table, not yet measured live; IAM ListRoles was denied).
 - **regional_posture** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/regional_posture.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-regional_posture-r8c324e7dx1c334aa2.json)).
-- **service_matrix** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/service_matrix.lms` — live cost pending — default-profile authorization blocked.
+- **service_matrix** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/service_matrix.lms` — running this example costs about $0.00 (estimated from price table, not yet measured live; IAM ListRoles was denied).
 
-- **bucket_objects** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/bucket_objects.lms` — live cost pending — default-profile authorization blocked.
-- **table_items** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/table_items.lms` — live cost pending — default-profile authorization blocked.
-- **topic_publish** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topic_publish.lms` — live cost pending — default-profile authorization blocked.
-- **log_retention** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_retention.lms` — live cost pending — default-profile authorization blocked.
+- **bucket_objects** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/bucket_objects.lms` — running this example costs about $0.000006 (estimated from price table, not yet measured live; S3 writes require authorization).
+- **table_items** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/table_items.lms` — running this example costs about $0.000002 (estimated from price table, not yet measured live; DynamoDB writes require authorization).
+- **topic_publish** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topic_publish.lms` — running this example costs about $0.000001 (estimated from price table, not yet measured live; SNS publish requires authorization).
+- **log_retention** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_retention.lms` — running this example costs about $0.000000 (estimated from price table, not yet measured live; CloudWatch Logs writes require authorization).
 
 The gallery contains 27 lmplot charts and 3 lmdraw diagrams generated from all 30 examples. `scripts/test-gallery.py` checks every URL, image and isolated demo run. Public CI forces `LMAWS_LIVE=0`, uses in-process fakes only, and never receives OIDC or cloud credentials. Live runs use the default AWS profile on this machine, with per-example ledgers, a dry-run sweeper and teardown.
 
 
 - **sweeper** — `lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-sweeper-rb06fb78dx83ba4d51.json)).
+
+Compiler minimum: lmscript 0.2.420. Host schema bytes omit built-in std; `--dsl-signatures` includes it and `--without-std` selects host declarations.

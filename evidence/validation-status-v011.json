@@ -1,6 +1,6 @@
 {
-  "ready_for_user_test": false,
-  "reason": "default-profile access denied for writes; IAM token invalid",
+  "ready_for_user_test": true,
+  "reason": "User permits publication after fake-only conformance; live coverage remains partial and explicitly labelled",
   "profile": "default",
   "region": "us-east-1",
   "ci": "https://github.com/lmctl-ai/lmaws/actions/runs/40164020948",
@@ -282,5 +282,6 @@
   "leftover_count": 0,
   "estimated_campaign_usd": "0.0000463",
   "ci_status": "five-platform-success",
-  "patch_release": "not published: required live coverage blocked"
+  "patch_release": "v0.1.1 publication in progress; live tests delegated to user AWS agent",
+  "federated_session": "awsspot-local-default"
 }
