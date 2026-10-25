@@ -11,10 +11,10 @@ env=dict(os.environ,AWS_PROFILE='default',AWS_DEFAULT_PROFILE='default',AWS_EC2_
 for key in ['AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN','AWS_SECURITY_TOKEN','AWS_WEB_IDENTITY_TOKEN_FILE','AWS_ROLE_ARN','AWS_ROLE_SESSION_NAME','AWS_CONTAINER_CREDENTIALS_RELATIVE_URI','AWS_CONTAINER_CREDENTIALS_FULL_URI','LMAWS_ENDPOINT']:
  env.pop(key,None)
 def cli(*args,allow=False):
- p=subprocess.run(['aws',*args,'--profile','default','--region',region,'--output','json','--no-cli-pager'],env=env,text=True,capture_output=True,timeout=40)
+ p=subprocess.run(['aws',*args,'--profile','default','--region',region,'--output','json','--no-cli-pager'],env=env,text=True,encoding="utf-8",capture_output=True,timeout=40)
  if p.returncode and not allow:raise RuntimeError('AWS CLI verification failed: '+args[0]+'/'+args[1])
  return p
-p=subprocess.run(['aws','configure','get','region','--profile','default'],env=env,text=True,capture_output=True,timeout=15)
+p=subprocess.run(['aws','configure','get','region','--profile','default'],env=env,text=True,encoding="utf-8",capture_output=True,timeout=15)
 region=p.stdout.strip();assert region and region.replace('-','').isalnum(),'configure a default-profile region first'
 env.update(AWS_REGION=region,AWS_DEFAULT_REGION=region)
 ledgerdir=ROOT/'live-ledger'/runid;ledgerdir.mkdir(parents=True);ledger=ledgerdir/('lmaws-'+runid+'.jsonl')
@@ -31,7 +31,7 @@ def parameter_exists():
 
 def cleanup_fallback():
  # A ledger intent is written and forced BEFORE the host contacts AWS.
- records=[json.loads(s) for s in ledger.read_text().splitlines()] if ledger.exists() else []
+ records=[json.loads(s) for s in ledger.read_text(encoding="utf-8").splitlines()] if ledger.exists() else []
  intents={(r.get('kind'),r.get('id')) for r in records if r.get('event')=='intent' and r.get('action')=='create'}
  if ('queue',queue) in intents:
   url=queue_url()
@@ -54,9 +54,9 @@ try:
   # Leave cleanup to the host finally block, deliberately testing failure teardown.
   lines+=['check(false);','end _dsl_','savedsl(p, '+json.dumps(str(out))+');']
   src=d/'live.lms';src.write_text('\n'.join(lines)+'\n')
-  comp=subprocess.run(['lmscript',str(src)],env=env,text=True,capture_output=True,timeout=60)
+  comp=subprocess.run(['lmscript',str(src)],env=env,text=True,encoding="utf-8",capture_output=True,timeout=60)
   if comp.returncode:raise RuntimeError('live script compilation failed')
-  p=subprocess.run([str(host),'--dsl',str(out)],env=env,text=True,capture_output=True,timeout=240)
+  p=subprocess.run([str(host),'--dsl',str(out)],env=env,text=True,encoding="utf-8",capture_output=True,timeout=240)
   # Logs deliberately stay private, and are not echoed on errors.
   (ledgerdir/'host.stdout').write_text(p.stdout);(ledgerdir/'host.stderr').write_text(p.stderr)
   if p.returncode!=3 or 'check failed' not in p.stdout:raise RuntimeError('live script did not reach expected deliberate failure')
@@ -66,7 +66,7 @@ finally:
  try:cleanup_fallback()
  except BaseException as e:failure=failure or e
 
-records=[json.loads(s) for s in ledger.read_text().splitlines()] if ledger.exists() else []
+records=[json.loads(s) for s in ledger.read_text(encoding="utf-8").splitlines()] if ledger.exists() else []
 for record in records:
  if record.get('event')=='created':
   created.append(dict(kind=record['kind'],name=record.get('name',record['id']),recovered=False))

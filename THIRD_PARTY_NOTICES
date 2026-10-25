@@ -9760,9 +9760,11 @@ SOFTWARE.
 
 
 Runtime corresponding source and reproducible build references
-Release CI pins GraalVM Community Edition 25.0.2 (GPLv2 with Classpath Exception).
+Release CI pins GraalVM Community Edition 25.0.2, except macOS Intel uses 25.0.1,
+the final upstream build for that architecture (GPLv2 with Classpath Exception).
 GraalVM release distribution: https://github.com/graalvm/graalvm-ce-builds/releases/tag/jdk-25.0.2
-GraalVM corresponding source: https://github.com/oracle/graal/tree/vm-25.0.2
+GraalVM corresponding source: https://github.com/oracle/graal/tree/jdk-25.0.2
+macOS Intel corresponding source: https://github.com/oracle/graal/tree/jdk-25.0.1
 OpenJDK/JVMCI corresponding source: https://github.com/graalvm/labs-openjdk
 The upstream release source and build instructions are available from those public repositories.
 AWS SDK source: https://github.com/aws/aws-sdk-java-v2/tree/2.57.3

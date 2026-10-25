@@ -11,7 +11,7 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 examples = sorted(p.stem for p in (root / "examples").glob("*.lms") if p.stem != "render-all")
 assert len(examples) == 25, len(examples)
-readme = (root / "README.md").read_text()
+readme = (root / "README.md").read_text(encoding="utf-8")
 for name in examples:
     assert f"examples/{name}.lms" in readme, name
     image = root / "docs" / "images" / f"{name}.png"
@@ -19,7 +19,7 @@ for name in examples:
     data = image.read_bytes()
     assert data.startswith(b"\x89PNG\r\n\x1a\n"), image
     assert len(data) <= 300_000, image
-    source = (root / "examples" / f"{name}.lms").read_text()
+    source = (root / "examples" / f"{name}.lms").read_text(encoding="utf-8")
     assert "savedsl(" in source and "assert(r.code == 0)" in source, name
 assert len(re.findall(r"lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/", readme)) >= 25
 print(f"gallery: {len(examples)} examples and images verified")
@@ -34,7 +34,7 @@ def run_examples():
         with tempfile.TemporaryDirectory(prefix=f"lmaws-gallery-{name}-") as work:
             result = subprocess.run(
                 [runner, str(root / "examples" / f"{name}.lms")],
-                cwd=work, text=True, capture_output=True, timeout=120,
+                cwd=work, text=True,encoding="utf-8", capture_output=True, timeout=120,
             )
             if result.returncode:
                 evidence["failed"].append({"name": name, "returncode": result.returncode,
@@ -55,7 +55,7 @@ def run_examples():
     with tempfile.TemporaryDirectory(prefix="lmaws-gallery-repeat-") as one, tempfile.TemporaryDirectory(prefix="lmaws-gallery-repeat-") as two:
         for work in (one, two):
             result = subprocess.run([runner, str(root / "examples" / "inventory.lms")],
-                                    cwd=work, text=True, capture_output=True, timeout=120)
+                                    cwd=work, text=True,encoding="utf-8", capture_output=True, timeout=120)
             if result.returncode:
                 raise SystemExit("gallery --run: inventory repeat failed: " + (result.stdout + result.stderr)[-2000:])
         first = (Path(one) / "data" / "inventory.csv").read_bytes()

@@ -6,6 +6,8 @@ on:
     paths-ignore: ['durable-memory/**', '**.md']
   pull_request:
   workflow_dispatch:
+env:
+  PYTHONUTF8: '1'
 permissions:
   contents: read
 concurrency:
@@ -20,11 +22,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-22.04, name: linux-x64}
-          - {os: ubuntu-22.04-arm, name: linux-arm64}
-          - {os: macos-15-intel, name: macos-x64}
-          - {os: macos-15, name: macos-arm64}
-          - {os: windows-2022, name: windows-x64}
+          - {os: ubuntu-22.04, name: linux-x64, graal: '25.0.2'}
+          - {os: ubuntu-22.04-arm, name: linux-arm64, graal: '25.0.2'}
+          - {os: macos-15-intel, name: macos-x64, graal: '25.0.1'}
+          - {os: macos-15, name: macos-arm64, graal: '25.0.2'}
+          - {os: windows-2022, name: windows-x64, graal: '25.0.2'}
     defaults:
       run:
         shell: bash
@@ -34,7 +36,7 @@ jobs:
           persist-credentials: false
       - uses: graalvm/setup-graalvm@27b360dbb857524eaf0b4c4cef364d38e5b4f173
         with:
-          java-version: '25.0.2'
+          java-version: ${{ matrix.graal }}
           distribution: graalvm-community
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: maven

@@ -185,9 +185,9 @@ def run(host):
             def execute(name,body,expected=0):
                 src=work/(name+".lms");out=work/(name+".dslb")
                 src.write_text('p = _dsl_ schema='+json.dumps(str(schema))+';\n'+body+'\nend _dsl_\nsavedsl(p, '+json.dumps(str(out))+');\n')
-                compiled=subprocess.run([runner,str(src)],cwd=work,env=env,text=True,capture_output=True,timeout=60)
+                compiled=subprocess.run([runner,str(src)],cwd=work,env=env,text=True,encoding="utf-8",capture_output=True,timeout=60)
                 assert compiled.returncode==0,compiled.stderr
-                result=subprocess.run(host_prefix+["--dsl",str(out)],cwd=work,env=env,text=True,capture_output=True,timeout=180)
+                result=subprocess.run(host_prefix+["--dsl",str(out)],cwd=work,env=env,text=True,encoding="utf-8",capture_output=True,timeout=180)
                 assert result.returncode==expected,(name,result.returncode,result.stdout,result.stderr,Fake.requests[-8:])
                 assert "TOP_SECRET_SENTINEL" not in result.stdout+result.stderr,"AWS error message leaked"
                 return result

@@ -39,3 +39,7 @@ creation tags from actual requests, pagination, finally cleanup, and a provider
 error containing a secret sentinel that never reaches output. All fake resources
 are deleted. All 25 examples pass and regenerate companion PNGs. Native Linux
 x64 prototype size is 55,511,304 bytes, with only libc.so.6 dynamically needed.
+
+macOS Intel pins GraalVM CE 25.0.1, the final upstream Intel build; 25.0.2
+has no macOS x64 asset. Other release lanes pin 25.0.2. Windows Python tests
+explicitly decode UTF-8 so embedded upstream license typography is byte-correct.

@@ -1,0 +1,30 @@
+{
+  "run_id": "r170f2785352f4d76",
+  "profile": "default",
+  "region": "us-east-1",
+  "opt_in": true,
+  "read_only_inventories": [
+    "identity",
+    "buckets",
+    "vpcs",
+    "security_groups",
+    "queues",
+    "parameters"
+  ],
+  "created": [
+    {
+      "kind": "queue",
+      "name": "lmaws_r170f2785352f4d76_queue",
+      "recovered": false
+    },
+    {
+      "kind": "parameter",
+      "name": "lmaws_r170f2785352f4d76_parameter",
+      "recovered": false
+    }
+  ],
+  "all_deleted": true,
+  "independent_verification": "AWS CLI GetQueueUrl and DescribeParameters metadata only",
+  "failure_teardown": true,
+  "ledger": "live-ledger/r170f2785352f4d76/lmaws-r170f2785352f4d76.jsonl"
+}
