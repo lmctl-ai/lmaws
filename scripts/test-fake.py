@@ -31,7 +31,7 @@ class Fake(http.server.BaseHTTPRequestHandler):
         elif self.command=="HEAD": self.send(404,"text/plain","")
         elif action=="GetBucketLocation": self.xml("<GetBucketLocationOutput xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><LocationConstraint>us-east-1</LocationConstraint></GetBucketLocationOutput>")
         elif "list-type" in query: self.xml("<ListBucketResult><Name>fixture</Name><Prefix></Prefix><KeyCount>0</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated></ListBucketResult>")
-        elif action=="ListBuckets" or (self.path=="/" and not action and not target and self.command=="GET"): self.xml("<ListAllMyBucketsResult><Buckets><Bucket><Name>lmaws_fixture_bucket</Name><CreationDate>2020-01-01T00:00:00Z</CreationDate></Bucket></Buckets><Owner><ID>fake</ID></Owner></ListAllMyBucketsResult>")
+        elif action=="ListBuckets" or (self.path=="/" and not action and not target and self.command=="GET"): self.xml("<ListAllMyBucketsResult><Buckets><Bucket><Name>lmaws_fixture_bucket</Name><BucketRegion>us-west-2</BucketRegion><CreationDate>2020-01-01T00:00:00Z</CreationDate></Bucket></Buckets><Owner><ID>fake</ID></Owner></ListAllMyBucketsResult>")
         elif target.startswith("AWSLambda") or self.path.startswith("/2015-03-31/functions") or target.startswith("Logs_") or target.startswith("AmazonEC2ContainerService") or target.startswith("secretsmanager"):
             self.json_inventory("ListFunctions" if self.path.startswith("/2015-03-31/functions") else op,body)
         elif self.path.endswith("/DescribeAlarms"):
@@ -196,7 +196,7 @@ def run(host):
             lines=['let cloud = aws.region("us-east-1");']
             for kind in kinds:
                 lines += ['let rows_'+kind+' = cloud.'+kind+'();','check(rows_'+kind+'.len() == '+('2' if kind=='queues' else '1')+');']
-            lines += ['check(rows_instances.at(0).get("state") == "stopped");','check(rows_parameters.at(0).get("value") == "[redacted]");','let run = cloud.run("queue01", "lmaws-main.jsonl");']
+            lines += ['check(rows_instances.at(0).get("state") == "stopped"); check(rows_instances.at(0).get("tagged") == "false"); check(rows_buckets.at(0).get("region") == "us-west-2");','check(rows_parameters.at(0).get("value") == "[redacted]");','let run = cloud.run("queue01", "lmaws-main.jsonl");']
             for kind in ['queue','bucket','topic','parameter','table','log_group']:
                 args='"sample", "nonsecret"' if kind=='parameter' else '"sample"'
                 lines += ['let resource_'+kind+' = run.'+kind+'('+args+');','run.put(resource_'+kind+', "'+('retention_days' if kind=='log_group' else 'object')+'", "'+('7' if kind=='log_group' else 'payload')+'");']

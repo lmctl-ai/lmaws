@@ -1,0 +1,16 @@
+{
+  "ci_run": "https://github.com/lmctl-ai/lmaws/actions/runs/40156782606",
+  "graal": "CE 25.0.2",
+  "bytes": 76024072,
+  "sha256": "32bbec2e9a22a4c1891b44e5411208ba18d7d5faf34b7b998dcb28ad85e09b60",
+  "notices_match": true,
+  "schema_match": true,
+  "glibc_policy": true,
+  "live_readonly_default_profile": true,
+  "region": "us-east-1",
+  "services": [
+    "identity",
+    "buckets"
+  ],
+  "resources_created": 0
+}

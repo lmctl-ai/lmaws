@@ -37,3 +37,7 @@ runtime licensing follows the explicit JAVA_BRIEF exception/pattern.
 The private ledger retains exact resource identifiers for recovery (account IDs are
 identifiers, not credentials). Public JSON/CSV/sweeper output masks account IDs.
 Ledger records never contain request payloads, parameter values or SDK error text.
+
+S3 bucket regions come from the provider response, never from the selected client
+region (ListBuckets can return resources in other regions). EC2 instance/VPC tag
+compliance exposes tag presence without publishing arbitrary tag values.

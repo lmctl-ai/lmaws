@@ -23,7 +23,9 @@ created=[];failure=None
 
 def queue_url():
  p=cli('sqs','get-queue-url','--queue-name',queue,allow=True)
- return json.loads(p.stdout).get('QueueUrl') if p.returncode==0 else None
+ if p.returncode==0:return json.loads(p.stdout)['QueueUrl']
+ if any(code in p.stderr for code in ['(AWS.SimpleQueueService.NonExistentQueue)','(QueueDoesNotExist)','(NonExistentQueue)']):return None
+ raise RuntimeError('Queue absence could not be verified; AWS error details withheld')
 
 def parameter_exists():
  p=cli('ssm','describe-parameters','--parameter-filters','Key=Name,Option=Equals,Values='+parameter)
