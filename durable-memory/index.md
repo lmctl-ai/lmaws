@@ -5,3 +5,12 @@
 - [03-live.md](03-live.md): approved default-profile live smoke and teardown protocol.
 - [04-examples.md](04-examples.md): gallery, demo data and reproducible autoruns.
 - [05-release.md](05-release.md): five-platform release proof and remaining limits.
+
+Release evidence:
+- [main-ci-v010.json](main-ci-v010.json): five green main platform jobs.
+- [release-v010.json](release-v010.json): green tag publication, asset hashes and sizes.
+- [autorun-v010.json](autorun-v010.json): 25 empty-directory released-native autoruns.
+- [gallery-v010.json](gallery-v010.json): local gallery and deterministic CSV checks.
+- [fake-jvm-v010.json](fake-jvm-v010.json), [fake-native-v010.json](fake-native-v010.json): SDK HTTP fixture coverage.
+- [live-v010.json](live-v010.json): two approved live resources, both deleted.
+- [ci-linux-readonly-v010.json](ci-linux-readonly-v010.json): actual CI binary credential/TLS reads.

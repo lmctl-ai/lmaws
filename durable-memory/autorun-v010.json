@@ -1,0 +1,431 @@
+{
+  "release": "v0.1.0",
+  "initially_empty_shared_tool_cache": true,
+  "cases": [
+    {
+      "example": "alarms",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/alarms.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": true,
+      "shared_cache_after_first": false,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 22263,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "before_after",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/before_after.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 22883,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "buckets",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/buckets.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 22844,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "clusters",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/clusters.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 22077,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "functions",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/functions.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 22944,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "identity",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/identity.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 21693,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "instances",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/instances.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 20045,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "inventory",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 25146,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "log_groups",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_groups.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 22312,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "parameters",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/parameters.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 22750,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "queue_pipeline",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 21305,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "queues",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queues.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 21381,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "read_only_audit",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/read_only_audit.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 38536,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "regional_posture",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/regional_posture.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 22243,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "resource_graph",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/resource_graph.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 39511,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "roles",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/roles.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 21627,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "sandbox_lifecycle",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sandbox_lifecycle.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 21819,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "secrets",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/secrets.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 21341,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "security_groups",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/security_groups.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 18619,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "service_matrix",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/service_matrix.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 34436,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "tables",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tables.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 21153,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "tag_compliance",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tag_compliance.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 19104,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "topics",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topics.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 21269,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "vpcs",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/vpcs.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 20892,
+      "dimensions": [
+        900,
+        560
+      ]
+    },
+    {
+      "example": "zones",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/zones.lms",
+      "version": "lmaws 0.1.0",
+      "sha256": "add14d2796417dea43665d4239811fb00dd3be94641d7e2de5f8918ac1efc421",
+      "exit_code": 0,
+      "started_empty": true,
+      "fresh_cache_first_case": false,
+      "shared_cache_after_first": true,
+      "no_host_on_path": true,
+      "github_token_source": "gh auth token",
+      "png_bytes": 20066,
+      "dimensions": [
+        900,
+        560
+      ]
+    }
+  ]
+}
