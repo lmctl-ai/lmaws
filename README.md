@@ -34,9 +34,10 @@ The native release targets five platforms and uses a 4096 MB memory budget. Linu
 | `cloud.log_groups()`, `alarms()`, `zones()`, `secrets()`, `parameters()` | Operations and metadata Rows |
 | `rows.len()`, `rows.at(i)`, `rows.count(key,value)`, `rows.filter(key,value)` | Inspect and aggregate Rows |
 | `rows.csv(path)`, `rows.json()` | Masked tabular or JSON output |
-| `cloud.run(runId, ledgerDir)` | Owned writes with ledger, tags and cleanup |
+| `cloud.run(runId, existingLedgerDir)` | Owned writes with an automatically named ledger, tags and cleanup |
 
 ```lmscript
+mkdir("data");
 aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.demo();
 let rows = cloud.instances();
@@ -48,13 +49,14 @@ r = system ${dsl_cli(aws)} --dsl "inventory.dslb";
 assert(r.code == 0);
 ```
 
-`--dry-run` uses demo data and makes no AWS requests, while still writing local reports and ledgers. `lmaws --sweep LEDGER_DIR --older-than-hours 24` is always a dry-run: it lists stale ledger candidates and never deletes account resources. Errors use exit 2 for configuration and 3 for runtime failures.
+`--dry-run` uses demo data and makes no AWS requests, while still writing local reports and ledgers. `lmaws --sweep LEDGER_DIR --older-than-hours 24` is always a dry-run: it lists stale `lmaws-*.jsonl` ledger candidates and never deletes account resources. Create the ledger directory before opening a run; explicit ledger filenames should also use that prefix and extension. Errors use exit 2 for configuration and 3 for runtime failures.
 
 ## Resource limits and build
 
-`LMAWS_MAX_MEMORY_MB` accepts a positive whole number, defaults to 4096 MiB, and bounds both heap and VM inputs. The minimum supported runtime is Java 21 for JVM development; releases are GraalVM native executables. Build and validate locally with:
+`LMAWS_MAX_MEMORY_MB` accepts a positive whole number, defaults to 4096 MiB, and bounds both heap and VM inputs. Budgets below 16 MiB end with a runtime error. The minimum supported runtime is Java 21 for JVM development; releases are GraalVM native executables. Build and validate locally with:
 
 ```sh
+bash scripts/sync-deps.sh
 mvn -q verify
 ./test.sh
 bash scripts/build-native.sh

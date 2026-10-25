@@ -18,3 +18,9 @@ and ownership tag. It checks deletion independently using AWS CLI GetQueueUrl an
 DescribeParameters (metadata only). Private raw logs/ledgers stay in ignored
 live-ledger/. A sanitized result is saved in live-v010.json. Never print credential
 files, raw SDK error details or live AWS data into the gallery.
+
+Verified native live run r170f2785352f4d76 in us-east-1 created queue
+lmaws_r170f2785352f4d76_queue and standard String parameter
+lmaws_r170f2785352f4d76_parameter. Both were deleted by the host after the deliberate
+assertion failure, without outer recovery, and independently verified absent.
+See live-v010.json. No real resource remains from this run.
