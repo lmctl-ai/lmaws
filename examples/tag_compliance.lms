@@ -1,0 +1,28 @@
+# Resource tag compliance: derived from fields in the host's deterministic demo rows.
+mkdir("images");
+mkdir("data");
+aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.demo();
+let rows = cloud.buckets();
+let first = rows.at(0);
+check(rows.len() == 3);
+let a_count = rows.count("tagged", "true");
+let b_count = rows.count("tagged", "false");
+check(a_count == 2);
+check(b_count == 1);
+let csv = "category,count\ntrue," + str(a_count) + "\nfalse," + str(b_count) + "\n";
+file_write("data/tag_compliance.csv", csv);
+end _dsl_
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png("images/tag_compliance.png", 900, 560);
+plot.cmd("set datafile separator ','; set yrange [0:*]; set title 'Resource tag compliance'; set style data histograms; set style fill solid 0.8; set boxwidth 0.65");
+plot.cmd("plot 'data/tag_compliance.csv' every ::1 using 2:xtic(1) title 'demo rows' lc rgb '#f5c16c'");
+plot.close();
+end _dsl_
+savedsl(aws, "tag_compliance-aws.dslb");
+r = system ${dsl_cli(aws)} --dsl "tag_compliance-aws.dslb";
+assert(r.code == 0);
+savedsl(plot, "tag_compliance-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl "tag_compliance-plot.dslb";
+assert(r.code == 0);
+println("images/tag_compliance.png");

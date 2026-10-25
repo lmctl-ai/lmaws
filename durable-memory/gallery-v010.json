@@ -1,0 +1,10 @@
+{
+  "run": "python3 scripts/test-gallery.py --run",
+  "examples": 25,
+  "passed_count": 25,
+  "failed_count": 0,
+  "deterministic_inventory_csv": true,
+  "timeouts_seconds": 120,
+  "generated_artifacts": "Each example produced a valid PNG and host-generated CSV or count file in an isolated temporary directory.",
+  "lifecycle": "before_after queue counts 3 -> 4 -> 3; queue_pipeline and sandbox_lifecycle remaining 1 -> 0."
+}

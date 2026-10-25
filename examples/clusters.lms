@@ -1,0 +1,29 @@
+# Container inventory. Demo mode is deterministic and never contacts AWS.
+mkdir("images");
+mkdir("data");
+aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.demo();
+let csv = "service,count\n";
+let clusters_rows = cloud.clusters();
+let clusters_count = clusters_rows.len();
+check(clusters_count == 3);
+csv = csv + "clusters," + str(clusters_count) + "\n";
+let instances_rows = cloud.instances();
+let instances_count = instances_rows.len();
+check(instances_count == 3);
+csv = csv + "instances," + str(instances_count) + "\n";
+file_write("data/clusters.csv", csv);
+end _dsl_
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png("images/clusters.png", 900, 560);
+plot.cmd("set datafile separator ','; set yrange [0:*]; set title 'Container inventory'; set style data histograms; set style fill solid 0.8; set boxwidth 0.65; set xtics rotate by -35");
+plot.cmd("plot 'data/clusters.csv' every ::1 using 2:xtic(1) title 'demo resources' lc rgb '#f5c16c'");
+plot.close();
+end _dsl_
+savedsl(aws, "clusters-aws.dslb");
+r = system ${dsl_cli(aws)} --dsl "clusters-aws.dslb";
+assert(r.code == 0);
+savedsl(plot, "clusters-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl "clusters-plot.dslb";
+assert(r.code == 0);
+println("images/clusters.png");

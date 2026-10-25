@@ -139,7 +139,7 @@ public final class Sandbox implements AutoCloseable {
     }
     private void append(Map<String, String> row) {
         try (FileChannel channel = FileChannel.open(ledger, StandardOpenOption.WRITE, StandardOpenOption.APPEND)) {
-            byte[] bytes = (Jsons.encode(row) + "\n").getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = (Jsons.encodeRaw(row) + "\n").getBytes(StandardCharsets.UTF_8);
             java.nio.ByteBuffer buffer=java.nio.ByteBuffer.wrap(bytes);
             while(buffer.hasRemaining())channel.write(buffer);
             channel.force(true);

@@ -8,7 +8,7 @@ ROOT=pathlib.Path(__file__).resolve().parents[1]
 if os.environ.get('LMAWS_LIVE')!='1':raise SystemExit('Live tests require explicit LMAWS_LIVE=1')
 host=pathlib.Path(sys.argv[1]).resolve();runid='r'+uuid.uuid4().hex[:16]
 env=dict(os.environ,AWS_PROFILE='default',AWS_DEFAULT_PROFILE='default',AWS_EC2_METADATA_DISABLED='true',LMAWS_LIVE='1')
-for key in ['AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN','AWS_SECURITY_TOKEN','LMAWS_ENDPOINT']:
+for key in ['AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN','AWS_SECURITY_TOKEN','AWS_WEB_IDENTITY_TOKEN_FILE','AWS_ROLE_ARN','AWS_ROLE_SESSION_NAME','AWS_CONTAINER_CREDENTIALS_RELATIVE_URI','AWS_CONTAINER_CREDENTIALS_FULL_URI','LMAWS_ENDPOINT']:
  env.pop(key,None)
 def cli(*args,allow=False):
  p=subprocess.run(['aws',*args,'--profile','default','--region',region,'--output','json','--no-cli-pager'],env=env,text=True,capture_output=True,timeout=40)

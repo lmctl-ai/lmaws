@@ -1,0 +1,31 @@
+# Before/active/after audit of one owned queue in the demo backend.
+mkdir("images");
+mkdir("data");
+aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.demo();
+let before = cloud.queues().len();
+check(before == 3);
+let run = cloud.run("beforeafter01", "data");
+let owned = run.queue("audit");
+let active = cloud.queues().len();
+check(active == 4);
+run.cleanup();
+let after = cloud.queues().len();
+check(after == 3);
+check(run.remaining() == 0);
+let csv = "phase,count\nbefore," + str(before) + "\nactive," + str(active) + "\nafter," + str(after) + "\n";
+file_write("data/before_after.csv", csv);
+end _dsl_
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png("images/before_after.png", 900, 560);
+plot.cmd("set datafile separator ','; set yrange [0:*]; set title 'Owned queue before and after'; set style data histograms; set style fill solid 0.8; set boxwidth 0.65");
+plot.cmd("plot 'data/before_after.csv' every ::1 using 2:xtic(1) title 'queue inventory' lc rgb '#f5c16c'");
+plot.close();
+end _dsl_
+savedsl(aws, "before_after-aws.dslb");
+r = system ${dsl_cli(aws)} --dsl "before_after-aws.dslb";
+assert(r.code == 0);
+savedsl(plot, "before_after-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl "before_after-plot.dslb";
+assert(r.code == 0);
+println("images/before_after.png");

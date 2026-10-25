@@ -9757,3 +9757,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 </pre>
+
+
+Runtime corresponding source and reproducible build references
+Release CI pins GraalVM Community Edition 25.0.2 (GPLv2 with Classpath Exception).
+GraalVM release distribution: https://github.com/graalvm/graalvm-ce-builds/releases/tag/jdk-25.0.2
+GraalVM corresponding source: https://github.com/oracle/graal/tree/vm-25.0.2
+OpenJDK/JVMCI corresponding source: https://github.com/graalvm/labs-openjdk
+The upstream release source and build instructions are available from those public repositories.
+AWS SDK source: https://github.com/aws/aws-sdk-java-v2/tree/2.57.3
+lmcode-java source: https://github.com/lmctl-ai/lmcode-java/tree/v0.1.1
+
+Local verification may also use GraalVM Community Edition 25.4.4.1.1.
+Its corresponding source is https://github.com/oracle/graal/tree/95ce1499c8c96ab7d5a6697c5b4bf42160f3b68b
+and https://github.com/graalvm/labs-openjdk/tree/391a5a739cb60fcc35927c6afecf6d9ac00f391d .

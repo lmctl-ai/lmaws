@@ -1,0 +1,25 @@
+# Owned parameter lifecycle with deterministic cleanup and a per-run ledger directory.
+mkdir("images"); mkdir("data");
+aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.demo();
+let run = cloud.run("sandbox01", "data");
+let p = run.parameter("lifecycle", "demo-value");
+run.put(p, "purpose", "demo");
+check(run.remaining() == 1);
+run.cleanup();
+check(run.remaining() == 0);
+file_write("data/sandbox_lifecycle.csv", "phase,count\ncreated,1\ncleaned,0\n");
+end _dsl_
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png("images/sandbox_lifecycle.png", 900, 560);
+plot.cmd("set datafile separator ','; set yrange [0:*]; set title 'Owned parameter lifecycle'; set style data histograms; set style fill solid 0.8");
+plot.cmd("plot 'data/sandbox_lifecycle.csv' every ::1 using 2:xtic(1) title 'owned resources' lc rgb '#f5c16c'");
+plot.close();
+end _dsl_
+savedsl(aws, "sandbox_lifecycle-aws.dslb");
+r = system ${dsl_cli(aws)} --dsl "sandbox_lifecycle-aws.dslb";
+assert(r.code == 0);
+savedsl(plot, "sandbox_lifecycle-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl "sandbox_lifecycle-plot.dslb";
+assert(r.code == 0);
+println("images/sandbox_lifecycle.png");

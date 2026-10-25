@@ -20,6 +20,10 @@ with tempfile.TemporaryDirectory(prefix='lmaws-cli-') as d:
  code=d/'budget.lms';out=d/'budget.dslb'
  code.write_text('p = _dsl_ schema='+json.dumps(str(root/'schema/lmaws.dsl.json'))+';\nlet i = 0; while (i < 10000) { let data = str_repeat("x", 1000000); i = i + 1; }\nend _dsl_\nsavedsl(p, '+json.dumps(str(out))+');\n')
  p=subprocess.run([shutil.which('lmscript'),str(code)],text=True,capture_output=True,timeout=60);assert p.returncode==0,p.stderr
+ dry=d/'dry.lms';dry_out=d/'dry.dslb'
+ dry.write_text('p = _dsl_ schema='+json.dumps(str(root/'schema/lmaws.dsl.json'))+';\nlet cloud = aws.region(""); check(cloud.tables().len() == 3); let owned = cloud.run("dry01", '+json.dumps(str(d/'lmaws-dry.jsonl'))+'); let q = owned.queue("safe"); check(owned.remaining() == 1); owned.cleanup(); check(owned.remaining() == 0);\nend _dsl_\nsavedsl(p, '+json.dumps(str(dry_out))+');\n')
+ compiled=subprocess.run([shutil.which('lmscript'),str(dry)],text=True,capture_output=True,timeout=60);assert compiled.returncode==0,compiled.stderr
+ run(['--dry-run','--dsl',str(dry_out)],extra={'LMAWS_MAX_MEMORY_MB':'64','LMAWS_ENDPOINT':'http://127.0.0.1:9','AWS_PROFILE':'lmaws-no-such-profile','AWS_EC2_METADATA_DISABLED':'true'})
  small=run(['--dsl',str(out)],3,{'LMAWS_MAX_MEMORY_MB':'64'});assert 'LMAWS_MAX_MEMORY_MB' in small.stderr and 'memory budget' in small.stdout
  if sys.platform=='linux' and host.suffix!='.sh' and os.environ.get('LMAWS_NATIVE')=='1':
   import resource

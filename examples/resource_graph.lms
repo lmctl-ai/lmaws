@@ -1,0 +1,30 @@
+# Resource graph diagram with counts read from the host-generated file.
+mkdir("images"); mkdir("data");
+aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.demo();
+let stores = cloud.buckets(); let queues = cloud.queues(); let workers = cloud.functions();
+check(stores.len() == 3); check(queues.len() == 3); check(workers.len() == 3);
+file_write("data/resource_graph.count", "stores=" + str(stores.len()) + ", queues=" + str(queues.len()) + ", functions=" + str(workers.len()));
+end _dsl_
+savedsl(aws, "resource_graph-aws.dslb");
+r = system ${dsl_cli(aws)} --dsl "resource_graph-aws.dslb";
+assert(r.code == 0);
+let topology = read_file("data/resource_graph.count");
+draw = _dsl_ cli="lmdraw" install="github:lmctl-ai/lmdraw@latest";
+scene.canvas(900, 560, "#101820");
+scene.text(48.0, 74.0, 30.0, "Resource relationship graph", "#dbe7f3");
+scene.text(48.0, 108.0, 16.0, ${topology}, "#9db4c8");
+scene.circle(210.0, 250.0, 48.0, "#284866");
+scene.circle(450.0, 250.0, 48.0, "#284866");
+scene.circle(690.0, 250.0, 48.0, "#284866");
+scene.text(210.0, 256.0, 15.0, "store", "#dbe7f3").set_attr("text-anchor", "middle");
+scene.text(450.0, 256.0, 15.0, "queue", "#dbe7f3").set_attr("text-anchor", "middle");
+scene.text(690.0, 256.0, 15.0, "worker", "#dbe7f3").set_attr("text-anchor", "middle");
+scene.line(258.0, 250.0, 402.0, 250.0, "#f5c16c", 3.0).set_attr("marker-end", "arrow");
+scene.line(498.0, 250.0, 642.0, 250.0, "#f5c16c", 3.0).set_attr("marker-end", "arrow");
+scene.render_png("images/resource_graph.png", 900, 560, 1);
+end _dsl_
+savedsl(draw, "resource_graph-draw.dslb");
+r = system ${dsl_cli(draw)} --dsl "resource_graph-draw.dslb";
+assert(r.code == 0);
+println("images/resource_graph.png");

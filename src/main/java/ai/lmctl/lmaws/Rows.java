@@ -23,7 +23,7 @@ public final class Rows {
     }
     private static String cell(String value) {
         String safe=Jsons.mask(value);
-        if(!safe.isEmpty() && "=+@\t\r".indexOf(safe.charAt(0))>=0) safe="'"+safe;
+        if(!safe.isEmpty() && "=+-@\t\r".indexOf(safe.charAt(0))>=0) safe="'"+safe;
         return "\""+safe.replace("\"","\"\"")+"\"";
     }
     public void write(String name) {

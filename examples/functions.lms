@@ -1,0 +1,29 @@
+# Serverless metadata. Demo mode is deterministic and never contacts AWS.
+mkdir("images");
+mkdir("data");
+aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.demo();
+let csv = "service,count\n";
+let functions_rows = cloud.functions();
+let functions_count = functions_rows.len();
+check(functions_count == 3);
+csv = csv + "functions," + str(functions_count) + "\n";
+let log_groups_rows = cloud.log_groups();
+let log_groups_count = log_groups_rows.len();
+check(log_groups_count == 3);
+csv = csv + "log_groups," + str(log_groups_count) + "\n";
+file_write("data/functions.csv", csv);
+end _dsl_
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png("images/functions.png", 900, 560);
+plot.cmd("set datafile separator ','; set yrange [0:*]; set title 'Serverless metadata'; set style data histograms; set style fill solid 0.8; set boxwidth 0.65; set xtics rotate by -35");
+plot.cmd("plot 'data/functions.csv' every ::1 using 2:xtic(1) title 'demo resources' lc rgb '#f5c16c'");
+plot.close();
+end _dsl_
+savedsl(aws, "functions-aws.dslb");
+r = system ${dsl_cli(aws)} --dsl "functions-aws.dslb";
+assert(r.code == 0);
+savedsl(plot, "functions-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl "functions-plot.dslb";
+assert(r.code == 0);
+println("images/functions.png");

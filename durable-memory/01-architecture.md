@@ -33,3 +33,7 @@ GraalVM native runtime GPLv2 with Classpath Exception, dynamic system glibc LGPL
 static GCC runtime exception and static zlib notices are embedded along with the
 SDK/transitive licenses. There are no GPL application dependencies. Java's native
 runtime licensing follows the explicit JAVA_BRIEF exception/pattern.
+
+The private ledger retains exact resource identifiers for recovery (account IDs are
+identifiers, not credentials). Public JSON/CSV/sweeper output masks account IDs.
+Ledger records never contain request payloads, parameter values or SDK error text.

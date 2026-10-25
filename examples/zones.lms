@@ -1,0 +1,29 @@
+# DNS inventory. Demo mode is deterministic and never contacts AWS.
+mkdir("images");
+mkdir("data");
+aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.demo();
+let csv = "service,count\n";
+let zones_rows = cloud.zones();
+let zones_count = zones_rows.len();
+check(zones_count == 3);
+csv = csv + "zones," + str(zones_count) + "\n";
+let vpcs_rows = cloud.vpcs();
+let vpcs_count = vpcs_rows.len();
+check(vpcs_count == 3);
+csv = csv + "vpcs," + str(vpcs_count) + "\n";
+file_write("data/zones.csv", csv);
+end _dsl_
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png("images/zones.png", 900, 560);
+plot.cmd("set datafile separator ','; set yrange [0:*]; set title 'DNS inventory'; set style data histograms; set style fill solid 0.8; set boxwidth 0.65; set xtics rotate by -35");
+plot.cmd("plot 'data/zones.csv' every ::1 using 2:xtic(1) title 'demo resources' lc rgb '#f5c16c'");
+plot.close();
+end _dsl_
+savedsl(aws, "zones-aws.dslb");
+r = system ${dsl_cli(aws)} --dsl "zones-aws.dslb";
+assert(r.code == 0);
+savedsl(plot, "zones-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl "zones-plot.dslb";
+assert(r.code == 0);
+println("images/zones.png");

@@ -1,0 +1,29 @@
+# Messaging fanout. Demo mode is deterministic and never contacts AWS.
+mkdir("images");
+mkdir("data");
+aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.demo();
+let csv = "service,count\n";
+let topics_rows = cloud.topics();
+let topics_count = topics_rows.len();
+check(topics_count == 3);
+csv = csv + "topics," + str(topics_count) + "\n";
+let queues_rows = cloud.queues();
+let queues_count = queues_rows.len();
+check(queues_count == 3);
+csv = csv + "queues," + str(queues_count) + "\n";
+file_write("data/topics.csv", csv);
+end _dsl_
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png("images/topics.png", 900, 560);
+plot.cmd("set datafile separator ','; set yrange [0:*]; set title 'Messaging fanout'; set style data histograms; set style fill solid 0.8; set boxwidth 0.65; set xtics rotate by -35");
+plot.cmd("plot 'data/topics.csv' every ::1 using 2:xtic(1) title 'demo resources' lc rgb '#f5c16c'");
+plot.close();
+end _dsl_
+savedsl(aws, "topics-aws.dslb");
+r = system ${dsl_cli(aws)} --dsl "topics-aws.dslb";
+assert(r.code == 0);
+savedsl(plot, "topics-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl "topics-plot.dslb";
+assert(r.code == 0);
+println("images/topics.png");

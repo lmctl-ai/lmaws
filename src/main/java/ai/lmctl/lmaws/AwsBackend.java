@@ -90,6 +90,7 @@ public final class AwsBackend implements AutoCloseable {
     private final boolean demo;
     private final URI endpoint;
     private final Map<String, Map<String, String>> demoResources = new LinkedHashMap<>();
+    private final Map<String, java.util.Set<String>> bucketObjects = new LinkedHashMap<>();
     private final List<AutoCloseable> clients = new ArrayList<>();
     private final ClientOverrideConfiguration config = ClientOverrideConfiguration.builder()
             .apiCallTimeout(Duration.ofSeconds(25)).apiCallAttemptTimeout(Duration.ofSeconds(10))
@@ -143,7 +144,7 @@ public final class AwsBackend implements AutoCloseable {
         if (demo) return demoCreate(k, n, value, runId);
         Map<String, String> out;
         switch (k) {
-            case "bucket" -> { preflightBucket(n); CreateBucketRequest.Builder b = CreateBucketRequest.builder().bucket(n); if (!regionName.equals("us-east-1")) b.createBucketConfiguration(CreateBucketConfiguration.builder().locationConstraint(regionName).build()); s3().createBucket(b.build()); try { tag(k, n, runId); } catch (RuntimeException e) { try { s3().deleteBucket(DeleteBucketRequest.builder().bucket(n).build()); } catch (RuntimeException ignored) { } throw e; } out = row("kind", k, "id", n, "name", n); }
+            case "bucket" -> { preflightBucket(n); CreateBucketRequest.Builder b = CreateBucketRequest.builder().bucket(n); if (!regionName.equals("us-east-1")) b.createBucketConfiguration(CreateBucketConfiguration.builder().locationConstraint(regionName).build()); s3().createBucket(b.build()); bucketObjects.put(n, new java.util.LinkedHashSet<>()); try { tagBucket(n, runId); } catch (RuntimeException e) { bucketObjects.remove(n); try { s3().deleteBucket(DeleteBucketRequest.builder().bucket(n).build()); } catch (RuntimeException ignored) { } throw e; } out = row("kind", k, "id", n, "name", n); }
             case "queue" -> { preflightQueue(n); String u = sqs().createQueue(CreateQueueRequest.builder().queueName(n).tags(Map.of("lmaws_test", runId)).build()).queueUrl(); out = row("kind", k, "id", u, "name", n); }
             case "topic" -> { preflightTopic(n); String a = sns().createTopic(CreateTopicRequest.builder().name(n).tags(software.amazon.awssdk.services.sns.model.Tag.builder().key("lmaws_test").value(runId).build()).build()).topicArn(); out = row("kind", k, "id", a, "name", n); }
             case "parameter" -> { ssm().putParameter(PutParameterRequest.builder().name(n).value(value == null ? "" : value).type("String").overwrite(false).tags(software.amazon.awssdk.services.ssm.model.Tag.builder().key("lmaws_test").value(runId).build()).build()); out = row("kind", k, "id", n, "name", n); }
@@ -157,9 +158,9 @@ public final class AwsBackend implements AutoCloseable {
     public void update(String kind, String id, String key, String value) {
         String k = createKind(kind); requireText(id, "id");
         requireWriteEnabled();
-        if (demo) { demoResources.computeIfPresent(id, (x, old) -> { old.put("updated", "true"); return old; }); return; }
+        if (demo) { demoResources.computeIfPresent(demoKey(k, id), (x, old) -> { old.put("updated", "true"); return old; }); return; }
         switch (k) {
-            case "bucket" -> { requireObjectKey(key); s3().putObject(PutObjectRequest.builder().bucket(id).key(key).build(), software.amazon.awssdk.core.sync.RequestBody.fromString(value == null ? "" : value)); }
+            case "bucket" -> { requireObjectKey(key); ensureNewObject(id, key); bucketObjects.computeIfAbsent(id, x -> new java.util.LinkedHashSet<>()).add(key); s3().putObject(PutObjectRequest.builder().bucket(id).key(key).build(), software.amazon.awssdk.core.sync.RequestBody.fromString(value == null ? "" : value)); }
             case "queue" -> sqs().sendMessage(SendMessageRequest.builder().queueUrl(id).messageBody(value == null ? "" : value).build());
             case "topic" -> sns().publish(PublishRequest.builder().topicArn(id).message(value == null ? "" : value).build());
             case "parameter" -> ssm().putParameter(PutParameterRequest.builder().name(id).value(value == null ? "" : value).type("String").overwrite(true).build());
@@ -172,9 +173,9 @@ public final class AwsBackend implements AutoCloseable {
     public void delete(String kind, String id) {
         String k = createKind(kind); requireText(id, "id");
         requireWriteEnabled();
-        if (demo) { demoResources.remove(id); return; }
+        if (demo) { demoResources.remove(demoKey(k, id)); return; }
         switch (k) {
-            case "bucket" -> { pages(s3().listObjectsV2Paginator(x -> x.bucket(id))).flatMap(p -> p.contents().stream()).forEach(o -> s3().deleteObject(DeleteObjectRequest.builder().bucket(id).key(o.key()).build())); s3().deleteBucket(DeleteBucketRequest.builder().bucket(id).build()); }
+            case "bucket" -> { java.util.Set<String> keys = bucketObjects.getOrDefault(id, java.util.Set.of()); for (String key : keys) s3().deleteObject(DeleteObjectRequest.builder().bucket(id).key(key).build()); boolean remaining = pages(s3().listObjectsV2Paginator(x -> x.bucket(id))).flatMap(p -> p.contents().stream()).findAny().isPresent(); if (remaining) throw new IllegalStateException("bucket contains objects outside this run; refusing deletion"); s3().deleteBucket(DeleteBucketRequest.builder().bucket(id).build()); bucketObjects.remove(id); }
             case "queue" -> sqs().deleteQueue(DeleteQueueRequest.builder().queueUrl(id).build());
             case "topic" -> sns().deleteTopic(DeleteTopicRequest.builder().topicArn(id).build());
             case "parameter" -> ssm().deleteParameter(DeleteParameterRequest.builder().name(id).build());
@@ -186,7 +187,7 @@ public final class AwsBackend implements AutoCloseable {
 
     public boolean owned(String kind, String id, String runId) {
         String k = createKind(kind); requireText(id, "id"); requireRunId(runId);
-        if (demo) return demoResources.containsKey(id) && runId.equals(demoResources.get(id).get("run_id"));
+        if (demo) { Map<String, String> resource = demoResources.get(demoKey(k, id)); return resource != null && runId.equals(resource.get("run_id")); }
         String n = last(id);
         String prefix = "bucket".equals(k) ? "lmaws-" + runId + "-" : "lmaws_" + runId + "_";
         if (!n.startsWith(prefix)) return false;
@@ -245,7 +246,6 @@ public final class AwsBackend implements AutoCloseable {
     private static String last(String s) { int i = s.lastIndexOf('/'); if (i < 0) i = s.lastIndexOf(':'); return i < 0 ? s : s.substring(i + 1); }
     private static String openPorts(List<IpPermission> permissions) { List<String> ports = new ArrayList<>(); for (var p : permissions) { boolean broad = p.ipRanges().stream().anyMatch(r -> "0.0.0.0/0".equals(r.cidrIp())) || p.ipv6Ranges().stream().anyMatch(r -> "::/0".equals(r.cidrIpv6())); if (!broad) continue; if (p.fromPort() == null || p.toPort() == null) ports.add("-1"); else if (p.fromPort().intValue() == p.toPort().intValue()) ports.add(Integer.toString(p.fromPort())); else ports.add(p.fromPort() + "-" + p.toPort()); } return String.join(",", ports); }
     private static Map<String, String> row(String... kv) { Map<String, String> m = new LinkedHashMap<>(); for (int i = 0; i + 1 < kv.length; i += 2) if (kv[i + 1] != null) m.put(kv[i], kv[i + 1]); return m; }
-    private static <T> List<Map<String, String>> rows(List<T> xs) { return xs.stream().map(x -> row("value", String.valueOf(x))).toList(); }
     private static <T> List<T> bounded(List<T> rows) { if (rows.size() > 10000) throw new IllegalStateException("inventory exceeds 10000 rows"); return rows; }
     private static <T> Stream<T> pages(Iterable<T> iterable) {
         final long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
@@ -263,6 +263,13 @@ public final class AwsBackend implements AutoCloseable {
     private static void requireText(String x, String n) { if (x == null || x.isBlank()) throw new IllegalArgumentException(n + " is required"); }
     private static void requireRunId(String x) { if (x == null || !x.matches("[a-z0-9]{1,24}")) throw new IllegalArgumentException("runId contains unsupported characters"); }
     private static void requireObjectKey(String x) { requireText(x, "key"); if (x.length() > 1024 || x.chars().anyMatch(c -> c < 0x20 || c == 0x7f)) throw new IllegalArgumentException("object key contains unsupported characters"); }
+    private void ensureNewObject(String bucket, String key) {
+        java.util.Set<String> tracked = bucketObjects.get(bucket);
+        if (tracked == null) throw new IllegalStateException("bucket was not created in this run");
+        if (tracked.contains(key)) return;
+        try { s3().headObject(x -> x.bucket(bucket).key(key)); throw new IllegalStateException("refusing to overwrite object outside this run"); }
+        catch (S3Exception e) { if (e.statusCode() != 404) throw e; }
+    }
     private static void sleepReady() { try { Thread.sleep(250L); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException("resource readiness wait interrupted", e); } }
     private void waitTableGone(String id) { long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos(); while (System.nanoTime() < deadline) { try { ddb().describeTable(x -> x.tableName(id)); } catch (software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException e) { return; } sleepReady(); } throw new IllegalStateException("table deletion did not complete within 30 seconds"); }
     private static URI checkedEndpoint(String x) { URI u = URI.create(x); String h = u.getHost(); if (!"http".equalsIgnoreCase(u.getScheme()) || u.getUserInfo() != null || u.getQuery() != null || u.getFragment() != null || (u.getPath() != null && !u.getPath().isEmpty() && !"/".equals(u.getPath())) || !("127.0.0.1".equals(h) || "::1".equals(h) || "[::1]".equals(h))) throw new IllegalArgumentException("LMAWS_ENDPOINT must be http://127.0.0.1 or http://[::1]"); return u; }
@@ -278,7 +285,7 @@ public final class AwsBackend implements AutoCloseable {
             String prefix = "demo-" + k + "-";
             for (int i = 1; i <= 3; i++) {
                 String id = prefix + i;
-                Map<String, String> r = row("kind", k, "id", id, "name", id, "region", regionName, "tagged", i == 3 ? "false" : "true");
+                Map<String, String> r = row("kind", inventoryKind(k), "id", id, "name", id, "region", regionName, "tagged", i == 3 ? "false" : "true");
                 if (k.equals("instances")) { r.put("state", i == 1 ? "running" : "stopped"); r.put("type", "t3.micro"); }
                 if (k.equals("security_groups")) { r.put("public", i == 1 ? "true" : "false"); r.put("open_ports", i == 1 ? "22,443" : ""); }
                 if (k.equals("tables")) r.put("billing", "on_demand");
@@ -287,19 +294,21 @@ public final class AwsBackend implements AutoCloseable {
             }
         }
     }
-    private List<Map<String, String>> demoInventory(String k) { return demoResources.values().stream().filter(x -> k.equals(x.get("kind"))).map(x -> (Map<String, String>) new LinkedHashMap<>(x)).toList(); }
-    private Map<String, String> demoCreate(String k, String n, String value, String runId) { String id = n; if(demoResources.containsKey(id))throw new IllegalStateException("demo resource already exists"); Map<String, String> m = row("kind", k, "id", id, "name", n, "created", Instant.now().toString(), "run_id", runId); if (value != null) m.put("value_metadata", "stored"); demoResources.put(id, m); return new LinkedHashMap<>(m); }
+    private static String inventoryKind(String inventory) {
+        return switch(inventory) {
+            case "buckets" -> "bucket"; case "instances" -> "instance"; case "vpcs" -> "vpc";
+            case "security_groups" -> "security_group"; case "tables" -> "table"; case "queues" -> "queue";
+            case "topics" -> "topic"; case "functions" -> "function"; case "log_groups" -> "log_group";
+            case "alarms" -> "alarm"; case "zones" -> "zone"; case "secrets" -> "secret";
+            case "parameters" -> "parameter"; case "clusters" -> "cluster"; case "roles" -> "role";
+            default -> inventory;
+        };
+    }
+    private List<Map<String, String>> demoInventory(String k) { return demoResources.values().stream().filter(x -> inventoryKind(k).equals(x.get("kind"))).map(x -> (Map<String, String>) new LinkedHashMap<>(x)).toList(); }
+    private Map<String, String> demoCreate(String k, String n, String value, String runId) { String id = n; String key = demoKey(k, id); if(demoResources.containsKey(key))throw new IllegalStateException("demo resource already exists"); Map<String, String> m = row("kind", k, "id", id, "name", n, "created", Instant.now().toString(), "run_id", runId); if (value != null) m.put("value_metadata", "stored"); demoResources.put(key, m); return new LinkedHashMap<>(m); }
+    private static String demoKey(String kind, String id) { return kind + "\u0000" + id; }
 
-    private void tag(String kind, String id, String runId) {
-        String value = runId;
-        switch (kind) {
-            case "bucket" -> s3().putBucketTagging(x -> x.bucket(id).tagging(t -> t.tagSet(Tag.builder().key("lmaws_test").value(value).build())));
-            case "queue" -> sqs().tagQueue(x -> x.queueUrl(id).tags(Map.of("lmaws_test", value)));
-            case "topic" -> sns().tagResource(x -> x.resourceArn(id).tags(software.amazon.awssdk.services.sns.model.Tag.builder().key("lmaws_test").value(value).build()));
-            case "parameter" -> ssm().addTagsToResource(x -> x.resourceType("Parameter").resourceId(id).tags(software.amazon.awssdk.services.ssm.model.Tag.builder().key("lmaws_test").value(value).build()));
-            case "table" -> ddb().tagResource(x -> x.resourceArn("arn:aws:dynamodb:" + regionName + ":000000000000:table/" + id).tags(software.amazon.awssdk.services.dynamodb.model.Tag.builder().key("lmaws_test").value(value).build()));
-            case "log_group" -> logs().tagLogGroup(x -> x.logGroupName(id).tags(Map.of("lmaws_test", value)));
-            default -> throw new IllegalArgumentException("unsupported tag kind: " + kind);
-        }
+    private void tagBucket(String id,String runId) {
+        s3().putBucketTagging(x -> x.bucket(id).tagging(t -> t.tagSet(Tag.builder().key("lmaws_test").value(runId).build())));
     }
 }

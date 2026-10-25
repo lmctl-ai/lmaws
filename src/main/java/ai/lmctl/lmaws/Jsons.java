@@ -13,16 +13,18 @@ public final class Jsons {
         if (text == null) return "";
         return ACCESS.matcher(ACCOUNT.matcher(text).replaceAll("************")).replaceAll("[redacted-key]");
     }
-    public static String encode(Object value) {
+    public static String encode(Object value) {return encode(value,true);}
+    static String encodeRaw(Object value) {return encode(value,false);}
+    private static String encode(Object value,boolean redact) {
         if (value == null) return "null";
-        if (value instanceof String s) return Reports.escape(mask(s));
+        if (value instanceof String s) return Reports.escape(redact?mask(s):s);
         if (value instanceof Number || value instanceof Boolean) return value.toString();
         if (value instanceof Map<?,?> m) {
             List<String> fields=new ArrayList<>();
-            m.forEach((k,v)->fields.add(Reports.escape(k.toString())+":"+encode(v)));
+            m.forEach((k,v)->fields.add(Reports.escape(k.toString())+":"+encode(v,redact)));
             return "{"+String.join(",",fields)+"}";
         }
-        if (value instanceof Collection<?> c) return "["+String.join(",",c.stream().map(Jsons::encode).toList())+"]";
+        if (value instanceof Collection<?> c) return "["+String.join(",",c.stream().map(v->encode(v,redact)).toList())+"]";
         throw new IllegalArgumentException("unsupported JSON type");
     }
 }

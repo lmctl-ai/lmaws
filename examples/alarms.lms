@@ -1,0 +1,29 @@
+# Monitoring coverage. Demo mode is deterministic and never contacts AWS.
+mkdir("images");
+mkdir("data");
+aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.demo();
+let csv = "service,count\n";
+let alarms_rows = cloud.alarms();
+let alarms_count = alarms_rows.len();
+check(alarms_count == 3);
+csv = csv + "alarms," + str(alarms_count) + "\n";
+let log_groups_rows = cloud.log_groups();
+let log_groups_count = log_groups_rows.len();
+check(log_groups_count == 3);
+csv = csv + "log_groups," + str(log_groups_count) + "\n";
+file_write("data/alarms.csv", csv);
+end _dsl_
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png("images/alarms.png", 900, 560);
+plot.cmd("set datafile separator ','; set yrange [0:*]; set title 'Monitoring coverage'; set style data histograms; set style fill solid 0.8; set boxwidth 0.65; set xtics rotate by -35");
+plot.cmd("plot 'data/alarms.csv' every ::1 using 2:xtic(1) title 'demo resources' lc rgb '#f5c16c'");
+plot.close();
+end _dsl_
+savedsl(aws, "alarms-aws.dslb");
+r = system ${dsl_cli(aws)} --dsl "alarms-aws.dslb";
+assert(r.code == 0);
+savedsl(plot, "alarms-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl "alarms-plot.dslb";
+assert(r.code == 0);
+println("images/alarms.png");

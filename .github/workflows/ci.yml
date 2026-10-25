@@ -34,7 +34,7 @@ jobs:
           persist-credentials: false
       - uses: graalvm/setup-graalvm@27b360dbb857524eaf0b4c4cef364d38e5b4f173
         with:
-          java-version: '25'
+          java-version: '25.0.2'
           distribution: graalvm-community
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: maven
