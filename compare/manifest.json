@@ -20,7 +20,10 @@
       "write": true,
       "iam": false,
       "kind": "aws_sqs_queue",
-      "notes": "Terraform creates queue; before/after inventory is harness-owned."
+      "notes": "Terraform creates queue; before/after inventory is harness-owned.",
+      "unsupported_operations": [
+        "global queue inventory snapshots are not reproduced by declarative resource creation"
+      ]
     },
     "bucket_objects": {
       "write": true,
@@ -127,7 +130,10 @@
       "write": true,
       "iam": false,
       "kind": "aws_sqs_queue",
-      "notes": "Queue lifecycle; SendMessage is not declaratively represented."
+      "notes": "Queue lifecycle; SendMessage is not declaratively represented.",
+      "unsupported_operations": [
+        "SQS SendMessage has no equivalent AWS provider resource"
+      ]
     },
     "queues": {
       "write": false,
@@ -182,7 +188,10 @@
       "write": true,
       "iam": false,
       "kind": "aws_ssm_parameter",
-      "notes": "Same final Standard String value; native creates then overwrites, while Terraform sets the final value declaratively."
+      "notes": "Same final Standard String value; native creates then overwrites, while Terraform sets the final value declaratively.",
+      "unsupported_operations": [
+        "native create-then-overwrite is represented as a declarative final value"
+      ]
     },
     "secrets": {
       "write": false,
@@ -240,7 +249,10 @@
       "write": true,
       "iam": false,
       "kind": "aws_sns_topic",
-      "notes": "Topic lifecycle matches; Publish is imperative and not represented by Terraform resource."
+      "notes": "Topic lifecycle matches; Publish is imperative and not represented by Terraform resource.",
+      "unsupported_operations": [
+        "SNS Publish has no equivalent AWS provider resource"
+      ]
     },
     "topics": {
       "write": false,

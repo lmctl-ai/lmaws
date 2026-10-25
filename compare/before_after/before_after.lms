@@ -52,6 +52,6 @@ file_write("phase-inspect_after.ok", str(ok));
 file_write("phase-inspect_after.error", tofu.last_error());
 end _dsl_
 savedsl(phase_inspect_after, "phase-inspect_after.dslb");
-result = system(["python3", "compare-runtime.py", "--name", "before_after", "--host", dsl_cli(phase_init)[0], "--config", "comparison-main.tf", "--metadata", "{\"write\": true, \"iam\": false, \"kind\": \"aws_sqs_queue\", \"notes\": \"Terraform creates queue; before/after inventory is harness-owned.\"}"], 900000);
+result = system(["python3", "compare-runtime.py", "--name", "before_after", "--host", dsl_cli(phase_init)[0], "--config", "comparison-main.tf", "--metadata", "{\"write\": true, \"iam\": false, \"kind\": \"aws_sqs_queue\", \"notes\": \"Terraform creates queue; before/after inventory is harness-owned.\", \"unsupported_operations\": [\"global queue inventory snapshots are not reproduced by declarative resource creation\"]}"], 900000);
 println(result.stdout);
 assert(result.code == 0);

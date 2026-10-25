@@ -6,8 +6,15 @@ from types import SimpleNamespace
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'compare'));sys.path.insert(0,str(ROOT/'scripts'))
 import runtime
+from decimal import Decimal
+from driver import check_comparison_budget
 manifest=json.loads((ROOT/'compare/manifest.json').read_text())['examples']
 assert len(manifest)==30
+assert check_comparison_budget(Decimal('0.001'),Decimal('0'),Decimal('0.05'),True)==Decimal('0.049')
+for native_cost,campaign_cost,cap in [(Decimal('0.049'),Decimal('0'),Decimal('0.05')),(Decimal('0.001'),Decimal('0.248'),Decimal('0.05'))]:
+ try:check_comparison_budget(native_cost,campaign_cost,cap,True)
+ except RuntimeError:pass
+ else:raise AssertionError('combined native/provider budget was allowed to exceed its cap')
 run='r1234abcdx5678abcd'
 plan={'resource_changes':[{'mode':'managed','type':'aws_sqs_queue','change':{'actions':['create'],'after':{'name':'lmaws_'+run+'_audit','tags':{'lmaws_test':run}}}}]}
 assert runtime.assert_owned(plan,run,True)[0]['kind']=='queue'

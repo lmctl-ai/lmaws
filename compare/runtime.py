@@ -96,7 +96,7 @@ def main():
     if not re.fullmatch(r'r[a-f0-9]{8}x[a-f0-9]{8}',run_id):raise RuntimeError('run id must be r<8 hex>x<8 hex>')
     infra=Path('infrastructure');infra.mkdir(exist_ok=True)
     old=load(infra/'terraform.tfstate')
-    if any(r.get('mode')=='managed' for r in old.get('resources',[])):raise RuntimeError('existing state retains resources; preserve it and run its own teardown')
+    if any(r.get('mode')=='managed' for r in old.get('resources',[])) or state_resources(old):raise RuntimeError('existing state retains resources; preserve it and run its own teardown')
     shutil.copyfile(args.config,infra/'main.tf')
     (infra/'run.auto.tfvars.json').write_text(json.dumps({'run_id':run_id}))
     provider_cache=Path(os.getenv('LMAWS_COMPARE_PROVIDER_CACHE',str(Path.cwd()/'.provider-cache'))).resolve();provider_cache.mkdir(parents=True,exist_ok=True)

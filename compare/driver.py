@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 from verify_absence import verify
-from runtime import clean,load,write
+from runtime import clean,load,write,ALLOWANCE
 MANIFEST=load(ROOT/'compare/manifest.json')['examples']
 
 def update_results():
@@ -50,6 +50,13 @@ def compare_outputs(native,cloud,write_mode):
     equal=all(counts[k]==Decimal(str(v)) for k,v in shared.items())
     missing=set(counts)-set(shared)
     return ('same' if equal and not missing else 'same supported counts; differs in '+','.join(sorted(missing)) if equal else 'differs: numeric outputs disagree')
+
+def check_comparison_budget(native_cost,campaign_cost,cap,write_mode):
+    if not cap.is_finite() or cap<0 or cap>Decimal('0.25'):raise RuntimeError('comparison cap must be between zero and 0.25')
+    allowance=ALLOWANCE if write_mode else Decimal(0)
+    if native_cost+allowance>cap:raise RuntimeError('example cap prohibits the next provider creation')
+    if campaign_cost+native_cost+allowance>Decimal('0.25'):raise RuntimeError('whole-run cap prohibits the next provider creation')
+    return cap-native_cost
 
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('example',choices=sorted(MANIFEST));ap.add_argument('--offline',action='store_true');ap.add_argument('--native-evidence');ap.add_argument('--host',default=str(ROOT/'target/lmaws'));ap.add_argument('--lmcloud');args=ap.parse_args()
@@ -97,7 +104,9 @@ def main():
     for resource in native.get('resources',[]):resource.setdefault('tags',{'lmaws_test':native['run_id']})
     prior=load(ROOT/'compare/runs/campaign.json');campaign=Decimal(str(prior.get('estimated_usd','0')))
     amount=Decimal(str(native.get('total_estimated_usd','0')))+previous_verification+sum((Decimal(str(v.get('estimated_usd',0))) for v in native['independent_readonly_verification']),Decimal(0))
-    if campaign+amount>Decimal('0.25'):raise RuntimeError('whole-run cap prohibits provider creation')
+    comparison_cap=Decimal(env.get('LMAWS_MAX_COST_USD','0.05'))
+    remaining_cap=check_comparison_budget(amount,campaign,comparison_cap,meta['write'])
+    env['LMAWS_MAX_COST_USD']=str(remaining_cap)
     write(ROOT/'compare/runs/campaign.json',{'estimated_usd':str(campaign+amount),'hard_ceiling_usd':'0.25'})
     started=time.monotonic();p=subprocess.run(['lmscript',str(ROOT/'compare'/name/(name+'.lms'))],cwd=cloud_work,env=env,text=True,capture_output=True,timeout=900)
     (cloud_work/'private.log').write_text(p.stdout+p.stderr)
@@ -116,7 +125,7 @@ def main():
     write(ROOT/'compare/evidence'/(name+'-'+run_id+'.json'),record);update_results()
     print(name+': native '+native['status']+'; lmcloud '+cloud['status']+'; leftovers '+str(record['leftover_count']))
     if record['leftover_count']:return 1
-    return 0 if native['status']=='passed' and cloud['status']=='passed' and same and record['comparison']['outputs']=='same' else 3
+    return 0 if native['status']=='passed' and cloud['status']=='passed' and same and record['comparison']['outputs']=='same' and not meta.get('unsupported_operations') else 3
 
 if __name__=='__main__':
     try:sys.exit(main())
