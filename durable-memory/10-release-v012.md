@@ -28,7 +28,8 @@ READY FOR USER TEST, with known limitations explicit:
 - Six other write/lifecycle creations were denied under lmaws: SQS twice, SSM,
   DynamoDB, SNS and Logs. Their attempted-request costs are retained; complete
   lifecycle costs remain price-table estimates. All seven were attempted once.
-- Four IAM examples were skipped; no IAM, credentials, profiles or other identity used.
+- Four IAM examples were skipped; no IAM, credential or profile changes were made,
+  and no other identity was used.
 - All 26 non-IAM OpenTofu attempts failed provider resolution before apply; four IAM
   comparisons skipped. Unsupported provider list/message operations are explicit gaps.
 
