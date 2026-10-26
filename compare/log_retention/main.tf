@@ -17,7 +17,7 @@ variable "run_id" {
 }
 
 resource "aws_cloudwatch_log_group" "logs" {
-  name              = "/lmaws_${var.run_id}_sample"
+  name              = "lmaws_${var.run_id}_sample"
   retention_in_days = 7
   tags              = { lmaws_test = var.run_id }
 }

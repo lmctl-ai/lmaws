@@ -17,7 +17,7 @@ variable "run_id" {
 }
 
 resource "aws_ssm_parameter" "parameter" {
-  name  = "/lmaws_${var.run_id}_lifecycle"
+  name  = "lmaws_${var.run_id}_lifecycle"
   type  = "String"
   value = "demo"
   tags  = { lmaws_test = var.run_id }

@@ -22,6 +22,24 @@ else:raise AssertionError('paid metadata reads escaped the shared provider allow
 run='r1234abcdx5678abcd'
 plan={'resource_changes':[{'mode':'managed','type':'aws_sqs_queue','change':{'actions':['create'],'after':{'name':'lmaws_'+run+'_audit','tags':{'lmaws_test':run}}}}]}
 assert runtime.assert_owned(plan,run,True)[0]['kind']=='queue'
+# Managed lifecycle fixtures must render names that satisfy the same ownership
+# prefix check used for real OpenTofu plans.  This catches accidental leading
+# slashes in SSM and CloudWatch names before a provider run.
+for managed_type, kind, suffix in (
+    ('aws_ssm_parameter', 'parameter', 'lifecycle'),
+    ('aws_cloudwatch_log_group', 'log_group', 'sample'),
+):
+    fixture_name={'parameter':'sandbox_lifecycle','log_group':'log_retention'}[kind]
+    hcl=(ROOT/'compare'/fixture_name/'main.tf').read_text()
+    rendered=re.search(r'\bname\s*=\s*"([^"]+)"',hcl).group(1).replace('${var.run_id}',run)
+    after={'name':rendered,'tags':{'lmaws_test':run}}
+    if managed_type=='aws_ssm_parameter':after.update(type='String',value='demo')
+    lifecycle_plan={'resource_changes':[{'mode':'managed','type':managed_type,'change':{'actions':['create'],'after':after}}]}
+    assert runtime.assert_owned(lifecycle_plan,run,True)[0]['kind']==kind
+    leading_slash=json.loads(json.dumps(lifecycle_plan));leading_slash['resource_changes'][0]['change']['after']['name']='/'+rendered.lstrip('/')
+    try:runtime.assert_owned(leading_slash,run,True)
+    except RuntimeError:pass
+    else:raise AssertionError('leading-slash lifecycle name accepted: '+managed_type)
 foreign_child=json.loads(json.dumps(plan));foreign_child['resource_changes'].append({'mode':'managed','type':'aws_s3_object','address':'aws_s3_object.foreign','change':{'actions':['create'],'after':{'bucket':'foreign-bucket','key':'foreign-key'}}})
 try:runtime.assert_owned(foreign_child,run,True)
 except RuntimeError:pass

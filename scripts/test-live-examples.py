@@ -3,7 +3,7 @@
 import argparse,json,os,pathlib,shutil,subprocess,tempfile,decimal,time
 from verify_absence import verify
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-p=argparse.ArgumentParser();p.add_argument('--summary',default='live-cost-summary-v013.json');p.add_argument('--host',default='target/lmaws');p.add_argument('--example');p.add_argument('--skip-example',action='append',default=[]);p.add_argument('--read-only',action='store_true');p.add_argument('--write-only',action='store_true');p.add_argument('--continue-on-error',action='store_true');args=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--summary',default='live-cost-summary-r'+str(time.time_ns())+'.json');p.add_argument('--host',default='target/lmaws');p.add_argument('--example');p.add_argument('--skip-example',action='append',default=[]);p.add_argument('--read-only',action='store_true');p.add_argument('--write-only',action='store_true');p.add_argument('--continue-on-error',action='store_true');args=p.parse_args()
 if pathlib.Path(args.summary).name!=args.summary or not args.summary.endswith('.json'):p.error('--summary must be a JSON filename')
 if os.environ.get('LMAWS_LIVE')!='1':raise SystemExit('Set LMAWS_LIVE=1 explicitly on your own local machine')
 if os.environ.get('CI','').lower() in ('1','true','yes') or os.environ.get('GITHUB_ACTIONS')=='true':raise SystemExit('Live examples are forbidden in CI')
