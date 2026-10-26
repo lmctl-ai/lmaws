@@ -7,6 +7,13 @@ lmcloud **v0.1.10**, verified against release SHA256SUMS, and AWS provider
 the former blockers are resolved. No further lmcloud core defect was found and
 no lmcloud source was modified. The provider is external, not bundled in lmaws.
 
+The first six provider successes
+used a local build reporting v0.1.10; a checksum audit caught this before final
+verification. All six provider sides were repeated with the published Linux x64
+asset, SHA256 `5f284718f1c3a3c05cc076712f806e02e6e3ccb821dd6ba0196eefc77ae4549b`.
+Native writes stayed at six: their evidence was reused. Both sets of provider
+attempts and the two earlier preflight rejects remain in the campaign accounting.
+
 [Campaign evidence](../evidence/comparison-campaign-v013.json) and
 [RESULTS](../compare/RESULTS.md) describe **26 completed live pairs**: 19
 read-only under default, bucket/object under lmaws, and six additional lifecycle
@@ -14,14 +21,15 @@ pairs under the scoped session. Eight match and 18 differ in supported output
 fields or local-state semantics. Four IAM pairs remain skipped/estimated only
 because federated sessions cannot call IAM. All recorded leftovers are zero.
 
-Each engine created one owned bucket and tiny object; both were destroyed and
-independently checked absent with default. SDK ledgers (25 attempt directories)
-and provider state sweepers returned zero; the final bucket inventory also found
-neither test bucket. [Cleanup proof](../evidence/comparison-cleanup-v013.json)
-contains only owned test names and counts, not arbitrary account inventory.
+The retained bucket/object baseline and six new lifecycles are independently
+verified absent with default. Both native and provider sweepers returned zero.
+[Current cleanup proof](../evidence/comparison-cleanup-v013.json) records the
+six lifecycle checks; the earlier bucket proof remains in
+[the baseline record](../evidence/comparison-cleanup-v0110.json). Public records
+contain only owned test names and counts, not arbitrary account inventory.
 
 The v0.1.3 campaign reserves conservative total accounting of
-**$0.02001532500021**, below $0.25, including provider retries and two preflight
+**$0.03503065000042**, below $0.25, including the superseded local-build verification runs and two preflight
 rejects. Provider records reserve a per-attempt allowance; they do not measure
 provider SDK request counts. A 500-request/$0.0025 allowance is
 reserved before each plan because data sources can incur metadata charges.

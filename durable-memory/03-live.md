@@ -41,9 +41,9 @@ absence. Reuse completed native evidence for comparisons to avoid repeating
 writes. The legacy `scripts/test-live.py` hardcodes default-profile writes and is
 incompatible with the current guard; do not use it. Updating/removing it is open.
 
-The current comparison campaign reran all 19 read-only cases and bucket/object
-successfully on both engines with zero leftovers. Its seven matching/13 partial
-or semantic differences, provider bounds and retries are recorded in
-[06-comparisons.md](06-comparisons.md); do not combine its totals with the older
-native baseline. The six lifecycle comparisons are included in the v0.1.3
-campaign evidence.
+The current comparison records cover 26 completed pairs: 19 read-only,
+bucket/object, and the six scoped lifecycles. Eight match fully and 18 retain
+explicit field or imperative/declarative differences; four IAM pairs are skipped.
+The v0.1.3 campaign's conservative total is `$0.03503065000042`, including fourteen
+provider-plan allowances and default-profile checks. All leftovers are zero;
+see [06-comparisons.md](06-comparisons.md) for the accounting limits.

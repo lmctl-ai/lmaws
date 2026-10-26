@@ -37,8 +37,7 @@ The session policy is assembled by the existing tooling at
 `~/.aws/session-tools/scripts/aws-profile-session.py` from that local task policy
 and is re-issued there when a session expires. AWS STS limits the combined
 plaintext inline and managed session policy to 2,048 characters; keep the
-service/action/resource
-patterns concise and scoped to these prefixes. Do not copy account IDs, tokens or
+service/action/resource patterns concise and scoped to these prefixes. Do not copy account IDs, tokens or
 policy contents into this repository, and never use the admin profile to run an
 example. S3 bucket names cannot contain underscores, so S3 always uses `lmaws-`.
 See the [STS federation policy limits](https://docs.aws.amazon.com/cli/latest/reference/sts/get-federation-token.html)
@@ -136,9 +135,12 @@ absence using default. OpenTofu's request counts are not exposed by lmcloud; its
 cost ledger therefore reserves a conservative 500-request upper allowance ($0.0025),
 including tiny storage. This is explicitly an allowance, not measured SDK traffic.
 Reserve this upper allowance before plan for both metadata reads and writes.
-The successful campaign created one SDK bucket/object and one provider bucket/object;
-all were deleted. Total conservative campaign accounting, including retries and
-independent checks, was $0.02001532500021, below the $0.25 hard ceiling.
+The new campaign created six native lifecycle parents and twelve provider
+lifecycle parents across the initial local-build and corrected published-binary
+passes: queues, parameters, tables/items, topics and log groups. All were deleted.
+Two naming preflight rejects created nothing. Conservative accounting is
+$0.03503065000042, below $0.25, including fourteen provider-plan allowances and
+reused-native accounting. Provider request counts are not measured.
 
 ## Sweep and evidence
 
@@ -155,10 +157,11 @@ python3 compare/sweep.py --older-than-hours 0
 Require `leftover_count=0`, `sweeper_leftover_count=0`, and `absent:true` in independent
 default-profile checks. A denied/unknown/network response is never absence. Preserve
 failed comparison state under ignored `compare/runs/`; do not delete it before resolving
-cleanup. No automated sweeper deletes resources. The current comparison campaign
-created one SDK bucket/object and one provider bucket/object; all were independently
-verified absent. Its conservative total was $0.02001532500021, including retries and
-metadata checks. Prices vary by region and time; no Cost Explorer request was made.
+cleanup. No automated sweeper deletes resources. The current six-example campaign's
+native and provider lifecycle resources were all independently verified absent;
+the earlier bucket/object proof remains retained baseline evidence. Its
+conservative total was $0.03503065000042, including both provider verification
+passes and metadata checks. Prices vary by region and time; no Cost Explorer request was made.
 
 Comparison scripts pin lmcloud v0.1.10 for reproducibility. Its provider installer
 and single-number version output work; the former v0.1.9 blockers are resolved.

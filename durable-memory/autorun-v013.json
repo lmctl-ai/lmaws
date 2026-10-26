@@ -1,0 +1,63 @@
+{
+  "release_version": "0.1.3",
+  "live_forced_off": true,
+  "empty_working_directories": true,
+  "fresh_shared_tool_cache": true,
+  "installed_hosts": [
+    {
+      "version": "lmaws 0.1.3",
+      "sha256": "ac7e951adadd9c933905a179d3570c3c4886d942ae9861f3f78fbfc7c07880bc"
+    }
+  ],
+  "examples": [
+    {
+      "example": "before_after",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/before_after.lms",
+      "exit_code": 0,
+      "png_generated": true,
+      "wall_seconds": 19.2848,
+      "live": false
+    },
+    {
+      "example": "queue_pipeline",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms",
+      "exit_code": 0,
+      "png_generated": true,
+      "wall_seconds": 0.6496,
+      "live": false
+    },
+    {
+      "example": "sandbox_lifecycle",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sandbox_lifecycle.lms",
+      "exit_code": 0,
+      "png_generated": true,
+      "wall_seconds": 0.6565,
+      "live": false
+    },
+    {
+      "example": "table_items",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/table_items.lms",
+      "exit_code": 0,
+      "png_generated": true,
+      "wall_seconds": 0.63,
+      "live": false
+    },
+    {
+      "example": "topic_publish",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topic_publish.lms",
+      "exit_code": 0,
+      "png_generated": true,
+      "wall_seconds": 0.6338,
+      "live": false
+    },
+    {
+      "example": "log_retention",
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_retention.lms",
+      "exit_code": 0,
+      "png_generated": true,
+      "wall_seconds": 0.6746,
+      "live": false
+    }
+  ],
+  "passed": 6
+}

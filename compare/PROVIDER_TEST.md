@@ -11,7 +11,7 @@ The shared scratch `TF_PLUGIN_CACHE_DIR` reused the approximately 676 MiB
 installed provider across independent working directories. Scripts pin v0.1.10
 for reproducibility. The provider stays external; it is not bundled in lmaws.
 
-[Campaign evidence](../evidence/comparison-campaign-v0110.json) and
+[Campaign evidence](../evidence/comparison-campaign-v013.json) and
 [RESULTS](RESULTS.md) record the earlier 20 live pairs plus the six newly
 authorized lifecycle pairs in the v0.1.3 campaign: 26 completed pairs total,
 eight matching comparisons and 18 explicit output/local-state differences.
@@ -43,3 +43,12 @@ operations and native category splits remain explicit in `manifest.json`.
 A [fresh-directory autorun](../evidence/comparison-bootstrap-v0110.json)
 installed the exact checksum-verified release, downloaded both helpers and
 initialized/validated the real provider with live mode disabled and no AWS calls.
+
+The v0.1.3 checksum audit found the initial six successful provider runs used a
+local build reporting v0.1.10. Those records are retained but superseded for
+release verification. All six provider sides were rerun with the published
+v0.1.10 Linux x64 asset (SHA256 `5f284718f1c3a3c05cc076712f806e02e6e3ccb821dd6ba0196eefc77ae4549b`),
+reusing native evidence, with zero leftovers. The campaign includes all fourteen
+attempts: six local-build successes, two preflight rejects, six published-binary
+successes. Its conservative total is $0.03503065000042; reused native observations
+are conservatively charged again by the harness, not repeated native writes.

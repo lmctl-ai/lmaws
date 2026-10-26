@@ -1,0 +1,316 @@
+{
+  "recorded_at": 1793039780.008835,
+  "example": "log_retention",
+  "run_id": "r45de82edx836eb502",
+  "profile": "lmaws",
+  "region": "us-east-1",
+  "native": {
+    "schema": "lmaws-cost-v2",
+    "run_id": "r0fe44e8fx750a4abd",
+    "example": "log_retention",
+    "region": "us-east-1",
+    "live": true,
+    "cap_usd": 0.05,
+    "hard_ceiling_usd": 0.25,
+    "total_estimated_usd": 0,
+    "reserved_future_usd": 0,
+    "price_table": {
+      "sqs.request_64kib": 4e-07,
+      "dynamodb.write_1kib": 6.25e-07,
+      "s3.write_or_list_request": 5e-06,
+      "sns.request_64kib": 5e-07,
+      "dynamodb.storage_gb_month": 0.25,
+      "s3.get_or_head_request": 4e-07,
+      "secretsmanager.api_request": 5e-06,
+      "conservative_unknown_api_request": 5e-06,
+      "s3.storage_gb_month": 0.023
+    },
+    "price_metadata": {
+      "sources": [
+        "https://aws.amazon.com/s3/pricing/",
+        "https://aws.amazon.com/sqs/pricing/",
+        "https://aws.amazon.com/sns/pricing/",
+        "https://aws.amazon.com/dynamodb/pricing/",
+        "https://aws.amazon.com/systems-manager/pricing/",
+        "https://aws.amazon.com/secrets-manager/pricing/"
+      ],
+      "price_region": "us-east-1",
+      "free_tier_credits_applied": false,
+      "month_minutes": 43200,
+      "currency": "USD",
+      "unknown_calls": "conservative $5 per million attempts",
+      "estimate_only": true,
+      "as_of": "2026-10-25"
+    },
+    "resources": [
+      {
+        "kind": "log_group",
+        "id": "lmaws_r0fe44e8fx750a4abd_sample",
+        "name": "lmaws_r0fe44e8fx750a4abd_sample",
+        "minutes_alive": 0.030823811417,
+        "stored_bytes_upper_bound": 0,
+        "requests": {
+          "logs.CreateLogGroup": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          },
+          "logs.ListTagsLogGroup": {
+            "billing_units": 4,
+            "requests": 4,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          },
+          "logs.PutRetentionPolicy": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          },
+          "logs.DeleteLogGroup": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          },
+          "logs.DescribeLogGroups": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          }
+        },
+        "storage_unit_price_usd_gb_month": 0,
+        "request_cost_usd": 0,
+        "storage_cost_usd": 0,
+        "cost_subtotal_usd": 0,
+        "tags": {
+          "lmaws_test": "r0fe44e8fx750a4abd"
+        }
+      }
+    ],
+    "rejected_creations": [],
+    "service_requests": {
+      "logs.CreateLogGroup": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      },
+      "logs.ListTagsLogGroup": {
+        "billing_units": 4,
+        "requests": 4,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      },
+      "logs.PutRetentionPolicy": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      },
+      "logs.DeleteLogGroup": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      },
+      "logs.DescribeLogGroups": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      }
+    },
+    "cap_refusals": 0,
+    "leftover_count": 0,
+    "provider_verification": [
+      {
+        "kind": "log_group",
+        "name": "lmaws_r0fe44e8fx750a4abd_sample",
+        "absent": true
+      }
+    ],
+    "sweeper_leftover_count": 0,
+    "profile": "lmaws",
+    "estimated_cost_display": "$0.00000000",
+    "finished_at": "2026-10-26T18:17:32.562606812Z",
+    "independent_readonly_verification": [
+      {
+        "kind": "log_group",
+        "name": "lmaws_r0fe44e8fx750a4abd_sample",
+        "absent": true,
+        "profile": "default",
+        "region": "us-east-1",
+        "requests": 1,
+        "unit_price_usd": "0",
+        "estimated_usd": "0"
+      }
+    ],
+    "independent_verification_estimated_usd": "0",
+    "wall_seconds": 4.606208,
+    "tags_verification": "Host ownership-tag reads before update/delete; independent default-profile absence check after teardown",
+    "outputs_csv": "phase,count\ncreated,1\nretention_days,7\ncleaned,0\n",
+    "example_exit_code": 0,
+    "png_generated": true,
+    "ledger_updates": [
+      {
+        "kind": "log_group",
+        "action": "update:retention_days"
+      }
+    ],
+    "user_test_command": "lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_retention.lms",
+    "status": "passed",
+    "observed_resources": [
+      {
+        "kind": "log_group",
+        "id": "lmaws_r0fe44e8fx750a4abd_sample",
+        "name": "lmaws_r0fe44e8fx750a4abd_sample",
+        "minutes_alive": 0.030823811417,
+        "stored_bytes_upper_bound": 0,
+        "requests": {
+          "logs.CreateLogGroup": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          },
+          "logs.ListTagsLogGroup": {
+            "billing_units": 4,
+            "requests": 4,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          },
+          "logs.PutRetentionPolicy": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          },
+          "logs.DeleteLogGroup": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          },
+          "logs.DescribeLogGroups": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          }
+        },
+        "storage_unit_price_usd_gb_month": 0,
+        "request_cost_usd": 0,
+        "storage_cost_usd": 0,
+        "cost_subtotal_usd": 0,
+        "tags": {
+          "lmaws_test": "r0fe44e8fx750a4abd"
+        }
+      }
+    ]
+  },
+  "lmcloud": {
+    "engine_version": "lmcloud 0.1.10",
+    "engine_sha256": "5f284718f1c3a3c05cc076712f806e02e6e3ccb821dd6ba0196eefc77ae4549b",
+    "config_sha256": "46f74962021e4f329a741065d6b328454be123b70bca69b5ad44b8284e7d1b71",
+    "schema": "lmaws-tofu-ledger-v2",
+    "example": "log_retention",
+    "run_id": "r45de82edx836eb502",
+    "profile": "lmaws",
+    "region": "us-east-1",
+    "live": true,
+    "resources": [
+      {
+        "kind": "log_group",
+        "name": "lmaws_r45de82edx836eb502_sample",
+        "tags": {
+          "lmaws_test": "r45de82edx836eb502"
+        },
+        "request_unit_price_usd_upper_bound": "0.000005",
+        "request_allowance": 500,
+        "minutes_alive_upper_bound": "0.4835294619166234"
+      }
+    ],
+    "price_table": {
+      "s3.request_upper_bound": "0.000005",
+      "sqs.request": "4E-7",
+      "sns.request": "5E-7",
+      "dynamodb.write_1kib": "6.25E-7",
+      "ssm.standard": "0",
+      "logs.empty_group": "0"
+    },
+    "price_method": "Conservative upper bound of 500 provider/verification requests at the maximum table price, reserved before plan; not observed SDK request counts or an invoice measurement; tiny storage included",
+    "cap_usd": "0.05",
+    "request_allowance": 500,
+    "request_unit_price_usd": "0.000005",
+    "total_estimated_usd": "0.0025",
+    "leftover_count": 0,
+    "preflight_absence": [
+      {
+        "kind": "log_group",
+        "name": "lmaws_r45de82edx836eb502_sample",
+        "absent": true,
+        "profile": "default",
+        "region": "us-east-1",
+        "requests": 1,
+        "unit_price_usd": "0",
+        "estimated_usd": "0"
+      }
+    ],
+    "observed_resources": [
+      {
+        "kind": "log_group",
+        "provider_type": "aws_cloudwatch_log_group",
+        "name": "lmaws_r45de82edx836eb502_sample",
+        "parent": "",
+        "tags": {
+          "lmaws_test": "r45de82edx836eb502"
+        },
+        "address": "aws_cloudwatch_log_group.logs"
+      }
+    ],
+    "independent_readonly_verification": [
+      {
+        "kind": "log_group",
+        "name": "lmaws_r45de82edx836eb502_sample",
+        "absent": true,
+        "profile": "default",
+        "region": "us-east-1",
+        "requests": 1,
+        "unit_price_usd": "0",
+        "estimated_usd": "0"
+      }
+    ],
+    "status": "passed",
+    "run_error": "",
+    "cleanup_error": "",
+    "wall_seconds": 29.011775,
+    "outputs": {
+      "estimated_cost": {
+        "sensitive": false,
+        "value": "$0.00",
+        "type": "string"
+      },
+      "example_id": {
+        "sensitive": false,
+        "value": "log_retention",
+        "type": "string"
+      },
+      "resource_count": {
+        "sensitive": false,
+        "value": "1",
+        "type": "string"
+      }
+    }
+  },
+  "leftover_count": 0,
+  "comparison": {
+    "resources": "same observed parent/child types, names and tags after run-ID normalization",
+    "outputs": "same supported fields; unsupported native fields: retention_days",
+    "why": "Retention 7 days; no message API needed. Both engines passed.",
+    "estimated_cost_delta_usd": "0.0025",
+    "wall_delta_seconds": 24.405567
+  }
+}

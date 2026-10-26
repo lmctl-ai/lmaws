@@ -12,12 +12,14 @@ Current maintenance notes:
 
 Current release/comparison evidence:
 
+- [release-v013.json](release-v013.json): five current assets and verified SHA256SUMS.
+- [autorun-v013.json](autorun-v013.json): six fresh-cache, empty-directory offline autoruns.
 - [release-v012.json](release-v012.json): v0.1.2 asset digests and platform proof.
 - [autorun-v012.json](autorun-v012.json): 30 fresh-directory released-native autoruns.
 - [../evidence/live-cost-summary-v013.json](../evidence/live-cost-summary-v013.json): six scoped lifecycle runs and zero-leftover proof.
 
 Canonical external records: [USER_TEST](../docs/USER_TEST.md),
-[live campaign](../evidence/live-cost-campaign-v012.json),
+[live campaign](../evidence/live-cost-summary-v013.json),
 [comparison results](../compare/RESULTS.md),
 [current comparison campaign](../evidence/comparison-campaign-v013.json),
 [provider findings](../compare/PROVIDER_TEST.md).

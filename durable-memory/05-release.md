@@ -1,11 +1,16 @@
 # Releases and remaining work
 
-Published versions: v0.1.0, v0.1.1 and v0.1.2. v0.1.3 is the pending patch release
-for the completed six-example live campaign; update this record only after its tag,
-five assets and SHA256SUMS are published. [Release proof](release-v012.json)
-records five native executables plus SHA256SUMS and verified asset digests.
-[Autorun proof](autorun-v012.json) records all 30 examples from empty working
-directories and a fresh shared cache using that exact released binary.
+Published versions: v0.1.0, v0.1.1, v0.1.2 and **v0.1.3**. The latest tag is
+`40f7fe2ffd7eaca5426d8dc66894ff1c92e9729d`.
+[Release proof](release-v013.json) records all five native asset digests and
+verified SHA256SUMS. [Fresh-cache proof](autorun-v013.json) records all six scoped
+lifecycle examples run offline from empty directories with the released v0.1.3
+binary; no native live writes were repeated. The earlier
+[30-example proof](autorun-v012.json) remains the v0.1.2 baseline.
+Local JVM/native test.sh and all 30 gallery programs passed; the five-platform
+packaging run `40377920161` also completed successfully. Final provider-checksum
+verification evidence and current notes landed after the source tag without
+changing the released runtime.
 
 The `v*` workflow builds/tests JVM and native hosts on Linux x64/ARM64, macOS
 x64/ARM64 and Windows x64, then publishes the five binaries and SHA256SUMS.

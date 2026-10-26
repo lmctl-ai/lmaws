@@ -44,8 +44,8 @@ Unsupported provider list APIs and imperative message operations are documented 
 [manifest.json](manifest.json), not silently replaced by unrelated data.
 
 [PROVIDER_TEST.md](PROVIDER_TEST.md) records successful v0.1.10 provider use.
-The current v0.1.3 campaign completed all 19 read-only pairs, bucket/object,
-and the six previously denied lifecycle writes: eight matching comparisons,
+Current results combine the retained 19 read-only pairs and bucket/object with
+the six newly verified v0.1.3 lifecycle pairs: eight matching comparisons,
 18 supported-output or local-state differences, and four IAM skips. Every
 write pair was deleted and independently verified absent; all recorded
 leftovers are zero. The six new write comparisons use the same lmaws_ name/tag

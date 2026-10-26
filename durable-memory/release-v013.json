@@ -1,0 +1,34 @@
+{
+  "version": "0.1.3",
+  "tag_source": "40f7fe2ffd7eaca5426d8dc66894ff1c92e9729d",
+  "release": {
+    "publishedAt": "2026-10-26T18:39:47Z",
+    "tagName": "v0.1.3",
+    "targetCommitish": "main",
+    "url": "https://github.com/lmctl-ai/lmaws/releases/tag/v0.1.3"
+  },
+  "assets": {
+    "lmaws-linux-arm64": {
+      "sha256": "bbf5ee23e6ce2b278a7dbd508b016461a294188fc89ee10a89c23e9736c83357",
+      "bytes": 73861240
+    },
+    "lmaws-linux-x64": {
+      "sha256": "ac7e951adadd9c933905a179d3570c3c4886d942ae9861f3f78fbfc7c07880bc",
+      "bytes": 76286216
+    },
+    "lmaws-macos-arm64": {
+      "sha256": "5606b66600ab3f8524a66df579bab3f73f0c715193e211286277bfc78250e59e",
+      "bytes": 70417224
+    },
+    "lmaws-macos-x64": {
+      "sha256": "5fce7929459af75e79cfe7d9f81a12198845fdef762cab8875f8bcd35711b055",
+      "bytes": 72271456
+    },
+    "lmaws-windows-x64.exe": {
+      "sha256": "7fbafc637b84a8945357e03928d6736f078ed7ff3eaaf54bbc26ecb560d143f3",
+      "bytes": 73949184
+    }
+  },
+  "sha256sums_verified": true,
+  "linux_x64_version_verified": "lmaws 0.1.3"
+}

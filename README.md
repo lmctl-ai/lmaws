@@ -81,11 +81,14 @@ and OpenTofu each created one run-owned bucket and tiny object; all were deleted
 and independently verified absent with `default`. There are **zero leftovers**.
 
 The [v0.1.3 comparison campaign](evidence/comparison-campaign-v013.json) records
-conservative total accounting of **$0.02001532500021**, below the $0.25 cap,
-including provider retries and two preflight rejects. Provider SDK request counts are
+conservative total accounting of **$0.03503065000042**, below the $0.25 cap,
+including the superseded local-build verification runs and two preflight rejects. Provider SDK request counts are
 opaque, so its 500-request/$0.0025 per-attempt allowance is reserved before plan;
 it is **not a measured AWS charge**. Timings in RESULTS include native rendering
-and multiple provider phases with a shared warm plugin cache. See the
+and multiple provider phases with a shared warm plugin cache. A checksum audit
+caught a local lmcloud build in the initial comparison pass; all six provider
+sides were repeated with the SHA256SUMS-verified release, reusing native evidence.
+The total retains both passes and conservative reused-native accounting. See the
 [current provider notes](compare/PROVIDER_TEST.md) and [cleanup proof](evidence/comparison-cleanup-v013.json).
 
 Per-run ledgers include preflight/tag/verification requests, retries and storage. Prices vary by region and time. [Local test steps and profile model](docs/USER_TEST.md).
