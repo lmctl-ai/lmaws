@@ -1,0 +1,60 @@
+# Access: Read-only; spend reports use Cost Explorer and metrics without mutation.
+# What: Parameterized spend, commitment, transfer and workload reports with a cost ledger.
+# When: Review account spend detail or one optimization topic before taking action.
+# Run: lmctl recipes/spend_detail.lms --period 30 --top 10 --profile default
+# Preview: lmctl recipes/spend_detail.lms --preview
+
+import "./common.lms";
+
+fn _spend_topic(options) {
+  let task = str(get(options, "task", "spend_detail"));
+  if (task == "spend_detail" || task == "all") { return "all"; }
+  assert(contains(["ec2_spend","savings_plans","eip_audit","ebs_audit","bandwidth","lambda_spend","dynamodb_spend"], task));
+  return task;
+}
+
+fn _spend_output(options, topic) {
+  let requested = str(get(options, "output", "data/spend/" + topic));
+  if (get(options, "live", false)) {
+    assert(starts_with(requested, ".lmaws-local/spend/"));
+  }
+  mkdir(requested, true);
+  return requested;
+}
+
+fn recipe_spend(options) {
+  let o = recipe_normalize(options);
+  let topic = _spend_topic(o);
+  if (o.preview) { return recipe_preview(o, topic); }
+  if (o.live) { assert(o.profile == "default"); }
+  let output = _spend_output(o, topic);
+  let program = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let spend = aws.spend(${topic}, ${o.period}, ${o.top}, ${o.cap});
+spend.write(${output});
+end _dsl_
+  let result = recipe_run(program, o);
+  let report = json_parse(read_file(output + "/report.json"));
+  let sections = get(report, "sections", {});
+  let rows = get(sections, topic, get(sections, "services", []));
+  if (!is_array(rows)) { rows = []; }
+  return {"topic":topic,"period":o.period,"top":o.top,"cap":o.cap,"profile":o.profile,"live":o.live,"synthetic":!o.live,"output":output,"rows":rows,"report":report,"result":result};
+}
+
+fn recipe_spend_picture(report, name) {
+  assert(!get(report, "live", false));
+  let output = str(get(report, "output", "data/spend/all"));
+  let chart = output + "/topic_chart.csv";
+  assert(file_exists(chart));
+  mkdir("images");
+  let plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${"images/" + name + ".png"}, 900, 560);
+plot.cmd("set datafile separator ','; set title 'Synthetic spend recipe'; set style data histograms; set style fill solid 0.8; set grid ytics");
+plot.cmd(${"plot '" + chart + "' using 2:xtic(1) title 'USD' lc rgb '#5db7d1'"});
+plot.close();
+end _dsl_
+  let path = temp_file(); savedsl(plot, path);
+  let r = system(concat(dsl_cli(plot), ["--dsl", path]), {timeoutMs:120000});
+  remove_file(path); assert(r.code == 0);
+  println("images/" + name + ".png");
+  return "images/" + name + ".png";
+}
