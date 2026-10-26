@@ -1,0 +1,101 @@
+{
+  "profile": "per-example",
+  "region": "us-east-1",
+  "local_only": true,
+  "oidc": false,
+  "cloud_credentials_in_ci": false,
+  "total_estimated_usd": "0.0000127250002100239478",
+  "write_profile": "lmaws",
+  "read_profile": "default",
+  "iam_live_skipped": [
+    "identity",
+    "read_only_audit",
+    "roles",
+    "service_matrix"
+  ],
+  "whole_run_cap_usd": "0.25",
+  "example_default_cap_usd": "0.05",
+  "examples": [
+    {
+      "example": "before_after",
+      "estimated_usd": "0.000004",
+      "display": "$0.00000400",
+      "evidence": "evidence/live-cost-before_after-r76627f89x0f3a49dd.json",
+      "resource_kinds": [
+        "queue"
+      ],
+      "resource_names": [
+        "lmaws_r76627f89x0f3a49dd_audit"
+      ],
+      "leftover_count": 0
+    },
+    {
+      "example": "log_retention",
+      "estimated_usd": "0",
+      "display": "$0.00000000",
+      "evidence": "evidence/live-cost-log_retention-r0fe44e8fx750a4abd.json",
+      "resource_kinds": [
+        "log_group"
+      ],
+      "resource_names": [
+        "lmaws_r0fe44e8fx750a4abd_sample"
+      ],
+      "leftover_count": 0
+    },
+    {
+      "example": "queue_pipeline",
+      "estimated_usd": "0.0000036",
+      "display": "$0.00000360",
+      "evidence": "evidence/live-cost-queue_pipeline-r434f8fcex43b4458e.json",
+      "resource_kinds": [
+        "queue"
+      ],
+      "resource_names": [
+        "lmaws_r434f8fcex43b4458e_pipeline"
+      ],
+      "leftover_count": 0
+    },
+    {
+      "example": "sandbox_lifecycle",
+      "estimated_usd": "0",
+      "display": "$0.00000000",
+      "evidence": "evidence/live-cost-sandbox_lifecycle-r0c1b5e33x66744d8b.json",
+      "resource_kinds": [
+        "parameter"
+      ],
+      "resource_names": [
+        "lmaws_r0c1b5e33x66744d8b_lifecycle"
+      ],
+      "leftover_count": 0
+    },
+    {
+      "example": "table_items",
+      "estimated_usd": "6.250002100239478E-7",
+      "display": "$0.00000063",
+      "evidence": "evidence/live-cost-table_items-r10de7334x933a47ef.json",
+      "resource_kinds": [
+        "table"
+      ],
+      "resource_names": [
+        "lmaws_r10de7334x933a47ef_sample"
+      ],
+      "leftover_count": 0
+    },
+    {
+      "example": "topic_publish",
+      "estimated_usd": "0.0000045",
+      "display": "$0.00000450",
+      "evidence": "evidence/live-cost-topic_publish-rae595e31x72b24f0c.json",
+      "resource_kinds": [
+        "topic"
+      ],
+      "resource_names": [
+        "lmaws_rae595e31x72b24f0c_sample"
+      ],
+      "leftover_count": 0
+    }
+  ],
+  "failed_examples": [],
+  "leftover_count": 0,
+  "independent_verification_estimated_usd": "0.0000013"
+}

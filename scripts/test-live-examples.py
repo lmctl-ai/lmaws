@@ -3,7 +3,8 @@
 import argparse,json,os,pathlib,shutil,subprocess,tempfile,decimal,time
 from verify_absence import verify
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-p=argparse.ArgumentParser();p.add_argument('--host',default='target/lmaws');p.add_argument('--example');p.add_argument('--skip-example',action='append',default=[]);p.add_argument('--read-only',action='store_true');p.add_argument('--write-only',action='store_true');p.add_argument('--continue-on-error',action='store_true');args=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--summary',default='live-cost-summary-v013.json');p.add_argument('--host',default='target/lmaws');p.add_argument('--example');p.add_argument('--skip-example',action='append',default=[]);p.add_argument('--read-only',action='store_true');p.add_argument('--write-only',action='store_true');p.add_argument('--continue-on-error',action='store_true');args=p.parse_args()
+if pathlib.Path(args.summary).name!=args.summary or not args.summary.endswith('.json'):p.error('--summary must be a JSON filename')
 if os.environ.get('LMAWS_LIVE')!='1':raise SystemExit('Set LMAWS_LIVE=1 explicitly on your own local machine')
 if os.environ.get('CI','').lower() in ('1','true','yes') or os.environ.get('GITHUB_ACTIONS')=='true':raise SystemExit('Live examples are forbidden in CI')
 host=pathlib.Path(args.host).resolve();assert host.is_file(),host
@@ -23,7 +24,7 @@ runner=shutil.which('lmscript');assert runner
 # A private launcher gives the compiler the exact tested host; no release cache substitution.
 base=pathlib.Path(tempfile.mkdtemp(prefix='lmaws-live-examples-'));bin_dir=base/'bin';bin_dir.mkdir();(bin_dir/'lmaws').symlink_to(host)
 env['PATH']=str(bin_dir)+os.pathsep+env['PATH']
-(ROOT/'evidence').mkdir(exist_ok=True);total=sum((decimal.Decimal(str(json.loads(f.read_text()).get('total_estimated_usd',0))) for f in (ROOT/'evidence').glob('live-cost-*.json') if f.name.startswith('live-cost-') and not f.name.startswith('live-cost-summary')),decimal.Decimal(0));results=[];failed_cases=[]
+(ROOT/'evidence').mkdir(exist_ok=True);total=decimal.Decimal(0);results=[];failed_cases=[]
 for name in examples:
  profile='lmaws' if name in writes else 'default'
  env['AWS_PROFILE']=profile;env['AWS_DEFAULT_PROFILE']=profile
@@ -58,16 +59,19 @@ for name in examples:
  for resource in record['resources']:resource['tags']={'lmaws_test':record['run_id']}
  record['tags_verification']='Host ownership-tag reads before update/delete; independent default-profile absence check after teardown'
  amount=decimal.Decimal(str(record['total_estimated_usd']));assert amount<=decimal.Decimal(record['cap_usd'] if isinstance(record['cap_usd'],str) else str(record['cap_usd']))
- total+=amount;assert total<=decimal.Decimal('0.25')
+ total+=amount+decimal.Decimal(record['independent_verification_estimated_usd']);assert total<=decimal.Decimal('0.25')
  assert 'estimated cost: '+record['estimated_cost_display'] in result.stdout
  png=work/'images'/(name+'.png');assert png.read_bytes().startswith(bytes.fromhex('89504e470d0a1a0a'))
  # Persist scenario intent without copying payloads, account IDs or secret values.
  ledger=pathlib.Path(record['ledger']);events=[json.loads(line) for line in ledger.read_text().splitlines()]
  touched=[dict(kind=e['kind'],action=e['action']) for e in events if e.get('event')=='updated']
- record.update(example_exit_code=result.returncode,png_generated=True,ledger_updates=touched,whole_batch_estimated_so_far_usd=str(total),user_test_command='lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/'+name+'.lms')
+ for suffix,key in [('csv','outputs_csv'),('count','outputs_count')]:
+  output=work/'data'/(name+'.'+suffix)
+  if output.exists():record[key]=output.read_text().strip() if suffix=='count' else output.read_text()
+ record.update(example_exit_code=result.returncode,png_generated=True,ledger_updates=touched,whole_batch_estimated_so_far_usd=str(total),user_test_command='lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/'+name+'.lms')
  evidence_path.write_text(json.dumps(record,indent=2)+'\n',encoding='utf-8')
  item=dict(example=name,estimated_usd=str(amount),display=record['estimated_cost_display'],evidence=str(evidence_path.relative_to(ROOT)),resource_kinds=[r['kind'] for r in record['resources']],resource_names=[r['name'] for r in record['resources']],leftover_count=0)
  results.append(item);print(json.dumps(item),flush=True)
 summary=dict(profile='per-example',region='us-east-1',local_only=True,oidc=False,cloud_credentials_in_ci=False,total_estimated_usd=str(total),write_profile='lmaws',read_profile='default',iam_live_skipped=sorted(iam),whole_run_cap_usd='0.25',example_default_cap_usd='0.05',examples=results,failed_examples=failed_cases,leftover_count=0)
-(ROOT/'evidence'/('live-cost-summary-readonly-v012.json' if args.read_only else 'live-cost-summary-v012.json')).write_text(json.dumps(summary,indent=2)+'\n',encoding='utf-8')
+(ROOT/'evidence'/args.summary).write_text(json.dumps(summary,indent=2)+'\n',encoding='utf-8')
 print('PASS' if not failed_cases else 'INCOMPLETE',len(results),'live examples; estimated cost: $'+str(total)+'; leftovers: 0; private logs:',base)

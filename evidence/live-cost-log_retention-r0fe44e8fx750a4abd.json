@@ -1,0 +1,159 @@
+{
+  "schema": "lmaws-cost-v2",
+  "run_id": "r0fe44e8fx750a4abd",
+  "example": "log_retention",
+  "region": "us-east-1",
+  "live": true,
+  "cap_usd": 0.05,
+  "hard_ceiling_usd": 0.25,
+  "total_estimated_usd": 0,
+  "reserved_future_usd": 0,
+  "price_table": {
+    "sqs.request_64kib": 4e-07,
+    "dynamodb.write_1kib": 6.25e-07,
+    "s3.write_or_list_request": 5e-06,
+    "sns.request_64kib": 5e-07,
+    "dynamodb.storage_gb_month": 0.25,
+    "s3.get_or_head_request": 4e-07,
+    "secretsmanager.api_request": 5e-06,
+    "conservative_unknown_api_request": 5e-06,
+    "s3.storage_gb_month": 0.023
+  },
+  "price_metadata": {
+    "sources": [
+      "https://aws.amazon.com/s3/pricing/",
+      "https://aws.amazon.com/sqs/pricing/",
+      "https://aws.amazon.com/sns/pricing/",
+      "https://aws.amazon.com/dynamodb/pricing/",
+      "https://aws.amazon.com/systems-manager/pricing/",
+      "https://aws.amazon.com/secrets-manager/pricing/"
+    ],
+    "price_region": "us-east-1",
+    "free_tier_credits_applied": false,
+    "month_minutes": 43200,
+    "currency": "USD",
+    "unknown_calls": "conservative $5 per million attempts",
+    "estimate_only": true,
+    "as_of": "2026-10-25"
+  },
+  "resources": [
+    {
+      "kind": "log_group",
+      "id": "lmaws_r0fe44e8fx750a4abd_sample",
+      "name": "lmaws_r0fe44e8fx750a4abd_sample",
+      "minutes_alive": 0.030823811417,
+      "stored_bytes_upper_bound": 0,
+      "requests": {
+        "logs.CreateLogGroup": {
+          "billing_units": 1,
+          "requests": 1,
+          "unit_price_usd": 0,
+          "estimated_usd": 0
+        },
+        "logs.ListTagsLogGroup": {
+          "billing_units": 4,
+          "requests": 4,
+          "unit_price_usd": 0,
+          "estimated_usd": 0
+        },
+        "logs.PutRetentionPolicy": {
+          "billing_units": 1,
+          "requests": 1,
+          "unit_price_usd": 0,
+          "estimated_usd": 0
+        },
+        "logs.DeleteLogGroup": {
+          "billing_units": 1,
+          "requests": 1,
+          "unit_price_usd": 0,
+          "estimated_usd": 0
+        },
+        "logs.DescribeLogGroups": {
+          "billing_units": 1,
+          "requests": 1,
+          "unit_price_usd": 0,
+          "estimated_usd": 0
+        }
+      },
+      "storage_unit_price_usd_gb_month": 0,
+      "request_cost_usd": 0,
+      "storage_cost_usd": 0,
+      "cost_subtotal_usd": 0,
+      "tags": {
+        "lmaws_test": "r0fe44e8fx750a4abd"
+      }
+    }
+  ],
+  "rejected_creations": [],
+  "service_requests": {
+    "logs.CreateLogGroup": {
+      "billing_units": 1,
+      "requests": 1,
+      "unit_price_usd": 0,
+      "estimated_usd": 0
+    },
+    "logs.ListTagsLogGroup": {
+      "billing_units": 4,
+      "requests": 4,
+      "unit_price_usd": 0,
+      "estimated_usd": 0
+    },
+    "logs.PutRetentionPolicy": {
+      "billing_units": 1,
+      "requests": 1,
+      "unit_price_usd": 0,
+      "estimated_usd": 0
+    },
+    "logs.DeleteLogGroup": {
+      "billing_units": 1,
+      "requests": 1,
+      "unit_price_usd": 0,
+      "estimated_usd": 0
+    },
+    "logs.DescribeLogGroups": {
+      "billing_units": 1,
+      "requests": 1,
+      "unit_price_usd": 0,
+      "estimated_usd": 0
+    }
+  },
+  "cap_refusals": 0,
+  "leftover_count": 0,
+  "provider_verification": [
+    {
+      "kind": "log_group",
+      "name": "lmaws_r0fe44e8fx750a4abd_sample",
+      "absent": true
+    }
+  ],
+  "sweeper_leftover_count": 0,
+  "profile": "lmaws",
+  "ledger": "/home/mma/repos/dsl/lmaws/ledgers/lmaws-r0fe44e8fx750a4abd.jsonl",
+  "estimated_cost_display": "$0.00000000",
+  "finished_at": "2026-10-26T18:17:32.562606812Z",
+  "independent_readonly_verification": [
+    {
+      "kind": "log_group",
+      "name": "lmaws_r0fe44e8fx750a4abd_sample",
+      "absent": true,
+      "profile": "default",
+      "region": "us-east-1",
+      "requests": 1,
+      "unit_price_usd": "0",
+      "estimated_usd": "0"
+    }
+  ],
+  "independent_verification_estimated_usd": "0",
+  "wall_seconds": 4.606208,
+  "tags_verification": "Host ownership-tag reads before update/delete; independent default-profile absence check after teardown",
+  "outputs_csv": "phase,count\ncreated,1\nretention_days,7\ncleaned,0\n",
+  "example_exit_code": 0,
+  "png_generated": true,
+  "ledger_updates": [
+    {
+      "kind": "log_group",
+      "action": "update:retention_days"
+    }
+  ],
+  "user_test_command": "lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_retention.lms"
+}
