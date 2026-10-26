@@ -1026,6 +1026,8 @@ LMAWS_NATIVE=1 ./test.sh
 
 The native build uses the GraalVM distribution selected by `JAVA_HOME`; release CI builds Linux, macOS and Windows binaries. Windows users need the Microsoft Visual C++ runtime. macOS Intel uses GraalVM CE 25.0.1, the final upstream build for that architecture; other release builds use CE 25.0.2.
 
+After a release is published, `python3 scripts/release-proof.py` downloads its assets, verifies SHA256SUMS, the five expected binaries, Linux linkage and the offline self-test of the linux-x64 binary, and writes proof.json (edit the version and the expected counts at its top for each release).
+
 ## Examples
 
 Each example writes its image to `images/<name>.png` in the current directory and includes an assertion. Copy any command into an empty directory:
