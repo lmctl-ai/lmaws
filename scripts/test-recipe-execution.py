@@ -215,6 +215,15 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertEqual(doctor_report["guardrail_deny_count"], 2)
         self.assertIn("estimated cost: $0.00", doctor_res.stdout)
 
+        # The admin profile is reserved for the grant recipe; every inventory,
+        # audit, sandbox, and policy helper rejects it before host execution.
+        refused_admin = self.run_script(
+            ROOT / "recipes" / "inventory_tables.lms",
+            "--profile", "admin", "--output", str(self.work / "refused_inventory_admin")
+        )
+        self.assertNotEqual(refused_admin.returncode, 0)
+        self.assertFalse((self.work / "refused_inventory_admin.json").exists())
+
     def test_permission_builder_recipes_and_simulator_guards(self) -> None:
         sp_out = self.work / "session_policy"
         sp_res = self.run_script(ROOT / "recipes" / "session_policy.lms", "--domain", "example.com", "--output", str(sp_out))
