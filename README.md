@@ -755,8 +755,6 @@ The native build uses the GraalVM distribution selected by `JAVA_HOME`; release 
 
 Each example writes its image to `images/<name>.png` in the current directory and includes an assertion. Copy any command into an empty directory:
 
-- **leftover_report** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/leftover_report.lms` — synthetic leftover age and recovery-proof report by default; running this example costs about $0.00. ![leftover_report](docs/images/leftover_report.png)
-- **find_lmaws_resources** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/find_lmaws_resources.lms` — synthetic account prefix discovery by default; running this example costs about $0.00. ![find_lmaws_resources](docs/images/find_lmaws_resources.png)
 - **inventory** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-inventory-r71d606a0xcaf04f53.json)). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/inventory/inventory.lms`
 - **buckets** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/buckets.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-buckets-r957ab3d1xc5e247e7.json)). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/buckets/buckets.lms`
 - **instances** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/instances.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-instances-ra4a54d9fxb3054905.json)). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/instances/instances.lms`
