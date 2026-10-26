@@ -13,6 +13,8 @@ public final class CloudHost implements AutoCloseable {
     private final Map<Session,Ec2Compute> compute=new IdentityHashMap<>();
     private final List<Ec2Compute.SpotRun> spots=new ArrayList<>();
     private final List<WebRun> webRuns=new ArrayList<>();
+    private final List<LambdaFunction> lambdaFunctions=new ArrayList<>();
+    private final List<EventRule> eventRules=new ArrayList<>();
     private boolean closed;
     private CostLedger billing;
     private Session measured;
@@ -113,6 +115,18 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","run",List.of("string","string"),"Run",(c,s,a)->{Sandbox run=new Sandbox(session(s).backend,text(a[0]),Path.of(text(a[1])),session(s).cost);runs.add(run);return Value.object("Run",run);});
         r.method("Cloud","web_find",List.of("string","string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(WebRun.find(session(s).backend,text(a[0]),text(a[1])),c)));
         r.method("Cloud","web_stack",List.of("string","string","string"),"Web",(c,s,a)->{if(!webRuns.isEmpty())throw VmException.host("one web run per host program");var v=session(s);WebRun run=new WebRun(v.backend,v.cost,text(a[0]),text(a[1]),text(a[2]));webRuns.add(run);return Value.object("Web",run);});
+        r.method("Cloud","lambda_function",List.of("string","string","string","string","string","int","int"),"Lambda",
+                (c,s,a)->{ Session v=session(s); if(!v.backend.isDemo()) throw VmException.host("Lambda deployment is fake-transport only until the lmaws_lambda_exec grant is live");
+                    LambdaFunction fn=new LambdaFunction(text(a[0]),text(a[1]),text(a[2]),text(a[3]),text(a[4]),a[5].asInt()>Integer.MAX_VALUE?Integer.MAX_VALUE:(int)a[5].asInt(),a[6].asInt()>Integer.MAX_VALUE?Integer.MAX_VALUE:(int)a[6].asInt(),v.cost.runId()); lambdaFunctions.add(fn); return Value.object("Lambda",fn); });
+        r.method("Cloud","event_rule",List.of("string","string"),"EventRule",
+                (c,s,a)->{ Session v=session(s); if(!v.backend.isDemo()) throw VmException.host("EventBridge deployment is fake-transport only until the lmaws grant is live"); EventRule rule=new EventRule(text(a[0]),text(a[1]),v.cost.runId()); eventRules.add(rule); return Value.object("EventRule",rule); });
+        r.method("Lambda","status",List.of(),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).status()));
+        r.method("Lambda","url",List.of("string"),"string",(c,s,a)->Value.ofString(((LambdaFunction)s.asObject()).url(text(a[0]))));
+        r.method("Lambda","invoke",List.of("string"),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).invoke(text(a[0]))));
+        r.method("Lambda","delete",List.of(),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).delete()));
+        r.method("EventRule","status",List.of(),"Row",(c,s,a)->rowValue(c,((EventRule)s.asObject()).status()));
+        r.method("EventRule","target",List.of("string"),"Row",(c,s,a)->rowValue(c,((EventRule)s.asObject()).target(text(a[0]))));
+        r.method("EventRule","delete",List.of(),"Row",(c,s,a)->rowValue(c,((EventRule)s.asObject()).delete()));
         r.method("Web","step",List.of("string","string"),"Row",(c,s,a)->rowValue(c,((WebRun)s.asObject()).step(text(a[0]),text(a[1]))));
         r.method("Web","status",List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(((WebRun)s.asObject()).status(),c)));
         r.method("Web","leftovers",List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(((WebRun)s.asObject()).leftovers(),c)));
