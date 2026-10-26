@@ -11,7 +11,7 @@ final class LedgerCleanupChecks {
     private static Path ledger(Path directory,String run,String name,Instant created)throws Exception {Path p=directory.resolve("lmaws-"+run+".jsonl");Files.writeString(p,Jsons.encodeRaw(event("intent",name,run,name,created))+"\n"+Jsons.encodeRaw(event("created",name,run,name,created))+"\n");return p;}
     static void run() {
         try {
-            Path dir=Files.createTempDirectory("lmaws-recovery-proof-");String run="rproof",name="lmaws_rproof_queue";Instant now=Instant.now(),old=now.minus(Duration.ofHours(72));Path file=ledger(dir,run,name,old);
+            Path dir=Files.createTempDirectory("lmaws-recovery-proof-").toRealPath();String run="rproof",name="lmaws_rproof_queue";Instant now=Instant.now(),old=now.minus(Duration.ofHours(72));Path file=ledger(dir,run,name,old);
             Map<String,String> row=new LinkedHashMap<>(Map.of("kind","queue","name",name,"id",name,"created_at",old.toString(),"lmaws_test","true","run_id",run));
             var candidate=LedgerCleanup.plan(List.of(row),dir,"lmaws",24,now);check(candidate.size()==1&&candidate.get(0).row().get("eligible_for_delete").equals("true"),"valid proof was not eligible");
             for(var change:List.of(Map.of("lmaws_test","false"),Map.of("run_id","other"),Map.of("name","lmaws_rproof_other"))) {var bad=new LinkedHashMap<>(row);bad.putAll(change);check(!LedgerCleanup.plan(List.of(bad),dir,"lmaws",24,now).get(0).row().get("eligible_for_delete").equals("true"),"unowned candidate became eligible");}
@@ -19,14 +19,24 @@ final class LedgerCleanupChecks {
             check(LedgerCleanup.plan(List.of(row),dir,"different",0,now).isEmpty(),"foreign prefix was adopted");
             try(RunLease active=RunLease.owner(file)){check(!LedgerCleanup.plan(List.of(row),dir,"lmaws",0,now).get(0).row().get("eligible_for_delete").equals("true"),"active run was swept");try{RunLease.recovery(file);throw new AssertionError("active run lock ignored");}catch(IllegalStateException expected){}}
             check(LedgerCleanup.plan(List.of(row),dir,"lmaws",0,now).get(0).row().get("eligible_for_delete").equals("true"),"released run remained locked");
+            if (!System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win")) {
+                Path alias=dir.resolveSibling(dir.getFileName()+"-alias");
+                try {
+                    Files.createSymbolicLink(alias,dir);
+                    check(LedgerCleanup.plan(List.of(row),dir,"lmaws",0,now).get(0).row().get("eligible_for_delete").equals("true"),"canonical temp directory accepted");
+                    try { LedgerCleanup.plan(List.of(row),alias,"lmaws",0,now); throw new AssertionError("symlink ledger directory accepted"); }
+                    catch (IllegalStateException expected) { check(expected.getMessage().contains("symlink ledger paths"),"symlink rejection reason"); }
+                } catch (UnsupportedOperationException ignored) { }
+                finally { Files.deleteIfExists(alias); }
+            }
             Files.writeString(file,"{broken",StandardOpenOption.APPEND);try{LedgerCleanup.plan(List.of(row),dir,"lmaws",0,now);throw new AssertionError("torn proof accepted");}catch(RuntimeException expected){}
-            Path noIntent=Files.createTempDirectory("lmaws-no-intent-");Files.writeString(noIntent.resolve("lmaws-unproven.jsonl"),Jsons.encodeRaw(event("created",name,run,name,old))+"\n");try{LedgerCleanup.plan(List.of(row),noIntent,"lmaws",0,now);throw new AssertionError("unconfirmed resource adopted");}catch(RuntimeException expected){}
+            Path noIntent=Files.createTempDirectory("lmaws-no-intent-").toRealPath();Files.writeString(noIntent.resolve("lmaws-unproven.jsonl"),Jsons.encodeRaw(event("created",name,run,name,old))+"\n");try{LedgerCleanup.plan(List.of(row),noIntent,"lmaws",0,now);throw new AssertionError("unconfirmed resource adopted");}catch(RuntimeException expected){}
         }catch(Exception e){throw new IllegalStateException(e);}
     }
     public static void main(String[] args)throws Exception {
         run();
         if(!"lmaws".equals(AwsBackend.activeProfile())||!"1".equals(System.getenv("LMAWS_LIVE")))throw new IllegalStateException("demo recovery check needs explicit test flags");
-        Path dir=Files.createTempDirectory("lmaws-demo-recovery-");String run="rrecover",name="lmaws_rrecover_queue";
+        Path dir=Files.createTempDirectory("lmaws-demo-recovery-").toRealPath();String run="rrecover",name="lmaws_rrecover_queue";
         // Explicit demo=true: no AWS client or credential provider is ever constructed.
         try(AwsBackend backend=new AwsBackend("us-east-1",true)) {
             backend.create("queue",name,"",run);ledger(dir,run,name,Instant.now().minusSeconds(1));

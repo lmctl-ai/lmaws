@@ -11,7 +11,7 @@ public final class AccountSearchChecks {
 
     public static void run() {
         Path dir;
-        try { dir = Files.createTempDirectory("lmaws-prefix-check-"); }
+        try { dir = Files.createTempDirectory("lmaws-prefix-check-").toRealPath(); }
         catch (Exception e) { throw new IllegalStateException(e); }
         try (AwsBackend backend = new AwsBackend("us-east-1", true)) {
             List<Map<String, String>> rows = backend.findPrefix("lmaws");

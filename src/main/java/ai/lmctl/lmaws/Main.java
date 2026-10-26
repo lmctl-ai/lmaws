@@ -7,9 +7,9 @@ import java.util.*;
 import java.io.*;
 
 public final class Main {
-    public static final String VERSION="0.1.7";
+    public static final String VERSION="0.1.9";
     private static final String HELP="""
-        lmaws 0.1.7 — AWS SDK for Java v2 scripting host
+        lmaws 0.1.9 — AWS SDK for Java v2 scripting host
         usage: lmaws [--dry-run] [--apply] --dsl FILE | --dsl-schema [--json] | --dsl-signatures [--without-std]
                lmaws --version | --notices | --help | --self-test
                lmaws --sweep LEDGER_DIR --older-than-hours N

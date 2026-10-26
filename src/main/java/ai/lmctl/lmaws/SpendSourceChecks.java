@@ -35,7 +35,7 @@ public final class SpendSourceChecks {
             byte[] bytes=cbor?asCbor(software.amazon.awssdk.protocols.jsoncore.JsonNodeParser.create().parse(response)):response.getBytes(StandardCharsets.UTF_8);exchange.getResponseHeaders().set("Content-Type",cbor?"application/cbor":response.startsWith("<")?"text/xml":"application/x-amz-json-1.1");
             exchange.sendResponseHeaders(code,bytes.length);try(var out=exchange.getResponseBody()){out.write(bytes);}
         });server.start();
-        Path dir=Files.createTempDirectory("lmaws-spend-http-");URI endpoint=URI.create("http://127.0.0.1:"+server.getAddress().getPort());var credentials=StaticCredentialsProvider.create(AwsBasicCredentials.create("test","test"));
+        Path dir=Files.createTempDirectory("lmaws-spend-http-").toRealPath();URI endpoint=URI.create("http://127.0.0.1:"+server.getAddress().getPort());var credentials=StaticCredentialsProvider.create(AwsBasicCredentials.create("test","test"));
         LocalDate end=LocalDate.now(ZoneOffset.UTC);int assertions=0;
         try{
             CostLedger ledger=new CostLedger("transport","transport","us-east-1",dir.resolve("full.jsonl"),new BigDecimal("0.25"),false);

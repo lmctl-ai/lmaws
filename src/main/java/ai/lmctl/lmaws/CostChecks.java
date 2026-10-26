@@ -10,7 +10,7 @@ public final class CostChecks {
     private CostChecks() {}
 
     public static void run() throws Exception {
-        Path dir = Files.createTempDirectory("lmaws-cost-");
+        Path dir = Files.createTempDirectory("lmaws-cost-").toRealPath();
         Path log = dir.resolve("lmaws-cost-check.jsonl");
         CostLedger ledger = new CostLedger("cost01", "cost-check", "us-east-1", log,
                 new BigDecimal("0.05"), true);

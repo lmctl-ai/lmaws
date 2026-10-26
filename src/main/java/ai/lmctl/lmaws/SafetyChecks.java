@@ -9,7 +9,7 @@ public final class SafetyChecks {
     private SafetyChecks() {}
 
     public static void run() throws Exception {
-        Path dir = Files.createTempDirectory("lmaws-safety-");
+        Path dir = Files.createTempDirectory("lmaws-safety-").toRealPath();
         AwsBackend backend = new AwsBackend("us-east-1", true);
         Sandbox box = new Sandbox(backend, "check01", dir);
         Map<String, String> resource = box.create("parameter", "sample", "secret-value");
@@ -37,7 +37,7 @@ public final class SafetyChecks {
         catch (IllegalArgumentException expected) { invalidRejected = true; }
         check(invalidRejected, "invalid prefixed name rejected");
         for(String kind:java.util.List.of("bucket","queue","topic","parameter","table","log_group")) {
-            Path own=Files.createTempDirectory("lmaws-demo-"+kind+"-");
+            Path own=Files.createTempDirectory("lmaws-demo-"+kind+"-").toRealPath();
             try(Sandbox cycle=new Sandbox(backend,"cycle01",own)) {
                 Map<String,String> made=cycle.create(kind,"fixture","secret-not-returned");
                 check(!made.containsValue("secret-not-returned"),"payload excluded");
@@ -48,7 +48,7 @@ public final class SafetyChecks {
             }
             check(Sandbox.leftovers(own,0).isEmpty(),"cycle has no leftovers");
         }
-        try(Sandbox namespaces=new Sandbox(backend,"names01",Files.createTempDirectory("lmaws-namespaces-"))) {
+        try(Sandbox namespaces=new Sandbox(backend,"names01",Files.createTempDirectory("lmaws-namespaces-").toRealPath())) {
             namespaces.create("queue","shared","x");
             namespaces.create("parameter","shared","x");
             check(namespaces.remaining()==2,"service namespaces are independent");

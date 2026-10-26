@@ -5,9 +5,9 @@ Topics: all, ec2_spend, savings_plans, eip_audit, ebs_audit, bandwidth,
 lambda_spend and dynamodb_spend. One report is the sole cost session per host
 program. Default examples use deterministic fixtures, never credentials.
 
-The host now has 82 own signatures (154 including the 72 implicit std entries).
+The host now has 86 own signatures (158 including the 72 implicit std entries).
 AWS SDK remains 2.57.3; Cost Explorer, Savings Plans and Pricing add three JARs
-to the 54 pinned runtime artifacts. New SDK reads use URLConnection, no retries,
+to the 55 pinned runtime artifacts. New SDK reads use URLConnection, no retries,
 request pacing, pagination bounds, cached grouped queries and no AWS CLI.
 
 CE pages cost $0.01 in the primary billing view; GetMetricData counts metrics
@@ -28,7 +28,7 @@ resource costs require opt-in and only cover 14 days; the tool never enables it.
 EBS/snapshot/run-rate and workload prices are reference estimates, not invoices.
 
 Local checks: 115 numeric/privacy/cap controls, 32 JVM SDK loopback controls plus native SDK wire validation,
-12 API gate checks, all eight spend scripts and 12 synthetic figures. Managed/native gates passed, including all 85 examples; publication follows
+12 API gate checks, all eight spend scripts and 12 synthetic figures. Managed/native gates passed, including all 87 examples; publication follows
 the ordinary local gate. Live validation details remain
 private; only synthetic evidence belongs in this repository.
 

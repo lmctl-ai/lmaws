@@ -61,6 +61,19 @@ The typed API covers inventory and owned test flows for buckets, EC2 instances, 
 
 The native release targets five platforms and uses a 4096 MB memory budget. Linux binaries require glibc 2.35 or newer; Windows requires the standard Microsoft Visual C++ runtime. The host and examples are MIT licensed; the AWS SDK for Java v2 is Apache-2.0.
 
+## Account prefix utilities
+
+These read-only utilities use synthetic fixtures by default and keep live output
+private. Their public pictures contain no account identifiers or real resources.
+
+| Picture | Command and estimate |
+|---|---|
+| <img src="docs/images/find_lmaws_resources.png" width="440" alt="Synthetic lmaws prefix resource discovery"> | `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/find_lmaws_resources.lms`<br>running this example costs about $0.00 in synthetic mode |
+| <img src="docs/images/leftover_report.png" width="440" alt="Synthetic aged leftover report"> | `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/leftover_report.lms`<br>running this example costs about $0.00 in synthetic mode |
+
+Live discovery requires explicit local approval and the existing profile gates;
+no public picture is generated from live account data; live figures stay in the ignored local directory.
+
 ## Recipes
 
 <!-- RECIPES:START -->

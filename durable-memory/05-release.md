@@ -1,11 +1,8 @@
 # Releases and remaining work
 
-Published versions: v0.1.0, v0.1.1, v0.1.2, v0.1.3, v0.1.4, v0.1.5 and **v0.1.6**.
-v0.1.5 added EC2 compute recipes and the `lmaws-ec2` spot nano lifecycle; v0.1.6
-adds customer-managed `lmaws_` IAM policy management (`iam_policy_lint`,
-`iam_policy_get`, `iam_policy_versions`, `iam_policy_put`, `iam_policy_delete`)
-and the `policy_lint` and `grant_session_policy` recipes, and live-applied the
-`lmaws_session` managed policy (`v2`, 4,839 compact characters, 0 lint findings).
+Published releases verified through v0.1.3. Tags v0.1.4 through v0.1.7 failed
+packaging checks and must not be described as published binaries. v0.1.9 is the
+pending spend-report patch, preserving concurrent compute/IAM work.
 [Release proof](release-v013.json) records the v0.1.3 five native asset digests and
 verified SHA256SUMS. [Fresh-cache proof](autorun-v013.json) records all six scoped
 lifecycle examples run offline from empty directories with the released v0.1.3
@@ -16,7 +13,7 @@ packaging run `40377920161` also completed successfully. Final provider-checksum
 verification evidence and current notes landed after the source tag without
 changing the released runtime.
 
-The `v*` workflow builds/tests JVM and native hosts on Linux x64/ARM64, macOS
+The manual `ci` workflow must be dispatched with a `v*` tag ref. It builds/tests JVM and native hosts on Linux x64/ARM64, macOS
 x64/ARM64 and Windows x64, then publishes the five binaries and SHA256SUMS.
 GraalVM CE is pinned to 25.0.2 except macOS Intel at 25.0.1 (the available Intel
 release). Linux requires glibc >=2.35; Windows requires the VC++ runtime.
@@ -36,5 +33,6 @@ Genuinely open items:
 - Replace/remove `scripts/test-live.py`, whose legacy default-profile write smoke
   conflicts with the current lmaws-only mutation policy. Use USER_TEST instead.
 - Any service expansion must preserve name/tag/ledger ownership, explicit profile
-  guards, capped estimates, redaction and credential-free fake CI. Current API
-  intentionally omits IAM, compute and networking writes; they are not shipped.
+  guards, capped estimates, redaction and credential-free fake CI. Current code
+  includes guarded compute and customer-managed IAM policy operations; these
+  require their documented explicit approval and ownership checks.

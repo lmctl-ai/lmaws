@@ -13,7 +13,7 @@ public final class SpendChecks {
     private static void eq(String actual,String expected,String message){check(SpendReport.known(actual)&&new BigDecimal(actual).subtract(new BigDecimal(expected)).abs().compareTo(new BigDecimal("0.000001"))<0,message+" actual="+actual);}
     private static CostLedger ledger(Path dir,String name,String cap)throws Exception{return new CostLedger(name,name,"us-east-1",dir.resolve(name+".jsonl"),new BigDecimal(cap),false);}
     public static void run() throws Exception {
-        checks=0;Path dir=Files.createTempDirectory("lmaws-spend-check-");LocalDate end=LocalDate.of(2026,10,26);
+        checks=0;Path dir=Files.createTempDirectory("lmaws-spend-check-").toRealPath();LocalDate end=LocalDate.of(2026,10,26);
         CostLedger ledger=ledger(dir,"all","0.25");
         SpendReport all;try(var source=new SpendFakeSource(ledger)){all=SpendReport.collect(source,"all",end,30,10,ledger);}
         eq(all.summary().get("total_spend_usd").toString(),"123.60","account-wide total sums all daily services");
