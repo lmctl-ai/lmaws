@@ -1155,6 +1155,16 @@ public final class AwsBackend implements AutoCloseable {
     Ec2Client ec2Client() { return ec2(); }
     SsmClient ssmClient() { return ssm(); }
     CloudWatchClient cloudWatchClient() { return cloudwatch(); }
+    StsClient stsClientForDoctor() { return sts(); }
+    S3Client s3ClientForDoctor() { return s3(); }
+    SqsClient sqsClientForDoctor() { return sqs(); }
+    DynamoDbClient ddbClientForDoctor() { return ddb(); }
+    SsmClient ssmClientForDoctor() { return ssm(); }
+    Ec2Client ec2ClientForDoctor() { return ec2(); }
+
+    public List<Map<String, String>> sessionDoctor() {
+        return CredentialProcess.sessionDoctor(this);
+    }
 
     private void tagBucket(String id,String runId) {
         s3().putBucketTagging(x -> x.bucket(id).tagging(t -> t.tagSet(Tag.builder().key("lmaws_test").value(runId).build())));

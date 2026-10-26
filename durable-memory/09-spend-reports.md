@@ -5,7 +5,7 @@ Topics: all, ec2_spend, savings_plans, eip_audit, ebs_audit, bandwidth,
 lambda_spend and dynamodb_spend. One report is the sole cost session per host
 program. Default examples use deterministic fixtures, never credentials.
 
-The host now has 92 own signatures (164 including the 72 implicit std entries).
+The host now has 93 own signatures (165 including the 72 implicit std entries).
 AWS SDK remains 2.57.3; Cost Explorer, Savings Plans and Pricing add three JARs
 to the 57 pinned runtime artifacts. New SDK reads use URLConnection, no retries,
 request pacing, pagination bounds, cached grouped queries and no AWS CLI.

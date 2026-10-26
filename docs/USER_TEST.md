@@ -1,4 +1,4 @@
-# Local AWS profile test procedure (v0.1.6)
+# Local AWS profile test procedure (v0.1.9)
 
 READY FOR USER TEST. All 26 live native/lmcloud pairs completed using lmcloud
 v0.1.10 and AWS provider 5.100.0: eight comparisons match and 18 retain explicit
@@ -225,3 +225,37 @@ restricted to policy names matching `^lmaws_[a-z0-9_-]{1,64}$`.
   AWS_PROFILE=admin LMAWS_ADMIN_GRANT=1 lmctl recipes/grant_session_policy.lms --live --apply --profile admin --policy-name lmaws_session --policy-file ~/.aws/session-tools/tasks/iam-snapshots/lmaws-managed-policy.json
   ```
   `lmaws_session` (`v2`, 4,839 compact characters, 20 statements, 0 lint findings) has been applied live and verified byte-for-byte via `iam_policy_get` and `iam_policy_versions`.
+
+## Native `credential_process` and `session_doctor` (v0.1.9)
+
+`lmaws --credential-process <mode>` replaces the legacy `aws-profile-session.py` (`aws sts get-federation-token`) helper so `lmaws` has zero `aws` CLI dependency. It is the second documented exception to the `admin` profile guard: it reads ONLY the static `admin` profile from `~/.aws/credentials` and `~/.aws/config` (ignoring ambient environment variables, web identity, container, and EC2 metadata sources) to call STS `GetCallerIdentity` and `GetFederationToken` (`awsspot-local-<mode>`, default duration 3,600s), caches the token in memory and in a `0600` file under the user cache directory until 5 minutes before expiry, and creates no AWS resources and changes no IAM permissions:
+
+- `default`: `arn:aws:iam::aws:policy/ReadOnlyAccess` + inline `DenySecretValueRetrieval` (`<= 2048` chars)
+- `lmaws`, `lmaws-ec2`, `lmaws-web`: `arn:aws:iam::<account>:policy/lmaws_session` (no inline policy)
+
+Install the native binary at `~/.local/bin/lmaws` on Linux/macOS and `%USERPROFILE%\.local\bin\lmaws.exe` (`C:\Users\<user>\.local\bin\lmaws.exe`) on Windows, then configure `~/.aws/config`:
+
+```ini
+[default]
+region = us-east-1
+credential_process = lmaws --credential-process default
+
+[profile lmaws]
+region = us-east-1
+credential_process = lmaws --credential-process lmaws
+
+[profile lmaws-ec2]
+region = us-east-1
+credential_process = lmaws --credential-process lmaws-ec2
+
+[profile lmaws-web]
+region = us-east-1
+credential_process = lmaws --credential-process lmaws-web
+```
+
+Verify profile session resolution, `0600` cache expiry/TTL, caller identity, and dry-run/read-only effective permission & guardrail probes without creating any resources:
+
+```sh
+lmctl recipes/session_doctor.lms --live --profile lmaws
+lmctl recipes/session_doctor.lms --live --profile default
+```

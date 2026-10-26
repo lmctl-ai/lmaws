@@ -112,8 +112,12 @@ def handle(h, action, p):
             h.xml("<DescribeInstancesResponse><reservationSet>" + "".join("<item><instancesSet>%s</instancesSet></item>" % x for x in items) + "</reservationSet></DescribeInstancesResponse>")
         elif action == "RunInstances":
             t = p["InstanceType"][0]
-            assert t in NANO, "non-nano type reached RunInstances: " + t
             specs = tagspecs(p)
+            if p.get("DryRun", [""])[0].lower() == "true":
+                if t in NANO and specs.get("instance", {}).get("lmaws_test"):
+                    return h.ec2_error("DryRunOperation", "Request would have succeeded, but DryRun flag is set.") or True
+                return h.ec2_error("UnauthorizedOperation", "You are not authorized to perform this operation.") or True
+            assert t in NANO, "non-nano type reached RunInstances: " + t
             for kind in ("instance", "volume", "network-interface", "spot-instances-request"):
                 assert specs.get(kind, {}).get("lmaws_test"), ("missing lmaws_test tag at creation", kind, specs)
             assert p["InstanceMarketOptions.MarketType"][0] == "spot"
@@ -146,6 +150,10 @@ def handle(h, action, p):
             h.xml("<TerminateInstancesResponse><instancesSet><item><instanceId>%s</instanceId><currentState><code>32</code><name>shutting-down</name></currentState></item></instancesSet></TerminateInstancesResponse>" % i)
         elif action == "CreateSecurityGroup":
             name = p["GroupName"][0]; tags = tagspecs(p).get("security-group", {})
+            if p.get("DryRun", [""])[0].lower() == "true":
+                if name.startswith("lmaws_") and tags.get("lmaws_test"):
+                    return h.ec2_error("DryRunOperation", "Request would have succeeded, but DryRun flag is set.") or True
+                return h.ec2_error("UnauthorizedOperation", "You are not authorized to perform this operation.") or True
             assert name.startswith("lmaws_") and tags.get("lmaws_test"), ("security group without lmaws name/tag", name, tags)
             g = "sg-0aa%013d" % (len(State.groups) + 1)
             State.groups[g] = dict(name=name, tags=tags, vpc=p["VpcId"][0], busy=True)

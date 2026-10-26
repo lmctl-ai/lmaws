@@ -35,6 +35,20 @@ class Fake(http.server.BaseHTTPRequestHandler):
             self.sns(action,{**query,**form})
         elif action in ("GetPolicy","GetPolicyVersion","ListPolicyVersions","CreatePolicy","CreatePolicyVersion","DeletePolicyVersion","DeletePolicy"):
             self.iam_policy(action,{**query,**form})
+        elif action=="GetFederationToken":
+            q={**query,**form}
+            fname=q.get("Name",[""])[0];dur=int(q.get("DurationSeconds",["3600"])[0])
+            if fname=="awsspot-local-fail":
+                return self.send_bytes(403,"text/xml",b"<ErrorResponse><Error><Type>Sender</Type><Code>AccessDenied</Code><Message>TOP_SECRET_SENTINEL</Message></Error></ErrorResponse>")
+            assert fname in ("awsspot-local-default","awsspot-local-lmaws","awsspot-local-lmaws-ec2","awsspot-local-lmaws-web"),fname
+            assert 900<=dur<=129600,dur
+            if fname=="awsspot-local-default":
+                assert q.get("PolicyArns.member.1.arn",[""])[0]=="arn:aws:iam::aws:policy/ReadOnlyAccess",q
+                assert "DenySecretValueRetrieval" in q.get("Policy",[""])[0],q
+            else:
+                assert q.get("PolicyArns.member.1.arn",[""])[0]=="arn:aws:iam::000000000000:policy/lmaws_session",q
+                assert "Policy" not in q,q
+            self.xml("<GetFederationTokenResponse><GetFederationTokenResult><Credentials><AccessKeyId>ASIAFAKECREDPROC</AccessKeyId><SecretAccessKey>FAKESECRETCREDPROC</SecretAccessKey><SessionToken>FAKETOKENCREDPROC</SessionToken><Expiration>2099-01-01T00:00:00Z</Expiration></Credentials></GetFederationTokenResult></GetFederationTokenResponse>")
         elif action=="GetCallerIdentity": self.xml("<GetCallerIdentityResponse><GetCallerIdentityResult><Account>000000000000</Account><Arn>arn:aws:iam::000000000000:user/fake</Arn><UserId>fake</UserId></GetCallerIdentityResult></GetCallerIdentityResponse>")
         elif urllib.parse.urlsplit(self.path).path.startswith("/lmaws-"): return self.s3(query,body)
         elif action=="GetBucketTagging" or "tagging" in query: self.send_bytes(200,"application/xml",b'<Tagging xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><TagSet><Tag><Key>lmaws_test</Key><Value>queue01</Value></Tag></TagSet></Tagging>')
@@ -332,6 +346,36 @@ def run(host):
             execute('iam-lifecycle',iam_script,0,extra_env={"AWS_PROFILE":"admin","LMAWS_ADMIN_GRANT":"1"},extra_flags=["--apply"])
             attached_del=execute('iam-delete-attached-refused','let cloud = aws.region("us-east-1"); cloud.iam_policy_delete("lmaws_attached_test", true);',3,extra_env={"AWS_PROFILE":"admin","LMAWS_ADMIN_GRANT":"1"},extra_flags=["--apply"])
             assert "attached to 1 entity/entities" in attached_del.stdout+attached_del.stderr
+
+            # Credential-process CLI + session_doctor fake transport checks
+            test_aws_dir=work/"aws_cfg";test_cache_dir=work/"cred_cache"
+            test_aws_dir.mkdir();test_cache_dir.mkdir()
+            (test_aws_dir/"credentials").write_text("[admin]\naws_access_key_id = AKIAFAKEADMIN\naws_secret_access_key = SECRETFAKEADMIN\n")
+            (test_aws_dir/"config").write_text("[default]\nregion = us-east-1\ncredential_process = lmaws --credential-process default\n[profile lmaws]\nregion = us-east-1\ncredential_process = lmaws --credential-process lmaws\n[profile lmaws-ec2]\nregion = us-east-1\ncredential_process = lmaws --credential-process lmaws-ec2\n[profile lmaws-web]\nregion = us-east-1\ncredential_process = lmaws --credential-process lmaws-web\n")
+            cp_env=dict(env,LMAWS_TEST_AWS_DIR=str(test_aws_dir),LMAWS_CREDENTIAL_CACHE_DIR=str(test_cache_dir))
+            for mode in ("default","lmaws"):
+                cp_res=subprocess.run(host_prefix+["--credential-process",mode],cwd=work,env=cp_env,text=True,encoding="utf-8",capture_output=True,timeout=60)
+                assert cp_res.returncode==0,(mode,cp_res.stdout,cp_res.stderr)
+                assert cp_res.stderr==""
+                cp_json=json.loads(cp_res.stdout)
+                assert cp_json["Version"]==1 and cp_json["AccessKeyId"]=="ASIAFAKECREDPROC" and cp_json["Expiration"]=="2099-01-01T00:00:00Z"
+            req_count_before=len(Fake.requests)
+            cp_cached=subprocess.run(host_prefix+["--credential-process","lmaws"],cwd=work,env=cp_env,text=True,encoding="utf-8",capture_output=True,timeout=60)
+            assert cp_cached.returncode==0 and len(Fake.requests)==req_count_before,"disk 0600 cache should avoid STS call"
+            cp_bad_src=subprocess.run(host_prefix+["--credential-process","lmaws","--source-profile","lmaws"],cwd=work,env=cp_env,text=True,encoding="utf-8",capture_output=True,timeout=60)
+            assert cp_bad_src.returncode==1 and cp_bad_src.stdout=="" and cp_bad_src.stderr.strip()=="AWS scoped profile unavailable; check the explicit admin source profile."
+
+            doctor_script="\n".join([
+                'let cloud = aws.region("us-east-1");',
+                'let rows = cloud.session_doctor();',
+                'check(rows.len() == 12);',
+                'check(rows.filter("kind", "profile").len() == 4);',
+                'check(rows.filter("kind", "probe").len() == 8);',
+                'check(rows.filter("status", "allowed").len() == 6);',
+                'check(rows.filter("status", "denied_by_guardrail").len() == 2);',
+            ])
+            execute('session-doctor',doctor_script,0,extra_env={"AWS_PROFILE":"lmaws","LMAWS_TEST_AWS_DIR":str(test_aws_dir),"LMAWS_CREDENTIAL_CACHE_DIR":str(test_cache_dir)})
+
             assert Fake.ever=={'queue','bucket','topic','parameter','table','log_group'},Fake.ever
             ec2_proof=fake_ec2.tests(execute,env)
             assert all(request[5].startswith('127.0.0.1:') for request in Fake.requests),'non-loopback HTTP host'

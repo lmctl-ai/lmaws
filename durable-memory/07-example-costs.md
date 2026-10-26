@@ -9,12 +9,21 @@ Sweeping (`lmaws --sweep DIR --older-than-hours 0` or `Cloud.sweep`) is local,
 dry-run only; it never authorizes deletion of discovered account resources.
 
 Real resource mutations require `LMAWS_LIVE=1` and active profile `lmaws` (service
-sandboxes) or `lmaws-ec2` (EC2 spot nano sandbox) in `us-east-1`. The only
-exception is customer-managed `lmaws_` IAM policy mutation (`iam_policy_put` and
-`iam_policy_delete`), which requires `AWS_PROFILE=admin`, `LMAWS_ADMIN_GRANT=1`,
-`--apply` (`LMAWS_APPLY=1`), `LMAWS_LIVE=1`, and a policy name matching
-`^lmaws_[a-z0-9_-]{1,64}$`. The `admin` profile is refused for every other
-mutating call, and `lmaws`/`lmaws-ec2` are refused for IAM policy writes.
+sandboxes) or `lmaws-ec2` (EC2 spot nano sandbox) in `us-east-1`. There are two
+documented exceptions where the `admin` profile is permitted (`admin` is refused
+for every other mutating call):
+1. Customer-managed `lmaws_` IAM policy mutation (`iam_policy_put` and
+   `iam_policy_delete`), which requires `AWS_PROFILE=admin`, `LMAWS_ADMIN_GRANT=1`,
+   `--apply` (`LMAWS_APPLY=1`), `LMAWS_LIVE=1`, and a policy name matching
+   `^lmaws_[a-z0-9_-]{1,64}$`. `lmaws`/`lmaws-ec2` are refused for IAM policy writes.
+2. Federated session credential issuance (`lmaws --credential-process <mode>` for
+   `default`, `lmaws`, `lmaws-ec2`, `lmaws-web`), which reads ONLY the static
+   `admin` profile from shared credentials/config (ignoring ambient environment
+   variables, web identity, container, and EC2 metadata sources) to call STS
+   `GetCallerIdentity` and `GetFederationToken` (`awsspot-local-<mode>`, 3,600s
+   default duration, cached in memory and in a `0600` file under the user cache
+   directory until 5 minutes before expiry); it creates no AWS resources and
+   changes no permissions.
 Inline STS session policies are capped at 2,048 characters, whereas customer-managed
 IAM policies allow up to 6,144 compact characters. Before any `iam_policy_put`,
 `IamPolicies.lint` verifies valid JSON, compact length `<= 6144`,

@@ -38,5 +38,7 @@ CloudWatch metrics. See [spend reports](09-spend-reports.md). From v0.1.5, EC2
 compute inventory/spot sandbox methods (`Ec2Compute`) add 18 own signatures; from
 v0.1.6, customer-managed `lmaws_` IAM policy management (`IamPolicies`) adds five
 own signatures (`iam_policy_lint`, `iam_policy_get`, `iam_policy_versions`,
-`iam_policy_put`, `iam_policy_delete`) The current merged API, including account recovery and web-stack methods, has
-92 own / 164 total signatures.
+`iam_policy_put`, `iam_policy_delete`); `CredentialProcess` adds
+`lmaws --credential-process <mode>` on the CLI and `session_doctor` on `Cloud`.
+The current merged API, including account recovery, web-stack and session-doctor methods, has
+93 own / 165 total signatures.

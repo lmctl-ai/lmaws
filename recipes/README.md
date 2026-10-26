@@ -58,6 +58,7 @@ println("matched rows:",len(report.rows));
 | [`inventory_roles.lms`](inventory_roles.lms) | Inspect bounded roles metadata (synthetic only; federated IAM cases skipped live) | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_roles [--live] | $0.00 synthetic; live capped request estimate in ledger |
 | [`inventory_security_groups.lms`](inventory_security_groups.lms) | Inspect bounded security groups metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_security_groups [--live] | $0.00 synthetic; live capped request estimate in ledger |
 | [`policy_lint.lms`](policy_lint.lms) | Validate and lint an IAM managed policy JSON document offline against lmaws guardrails | Read-only | --file POLICY.json --top 20 --output data/policy_lint | $0.00 offline lint |
+| [`session_doctor.lms`](session_doctor.lms) | Inspect profile session types, 0600 credential cache expiry and dry-run/read-only permission probes | Read-only | --profile lmaws --region us-east-1 --top 20 --output data/session_doctor [--live] | $0.00 synthetic; live read and EC2 DryRun probes create no resources; cap $0.05 |
 
 ## Inventory
 
@@ -184,6 +185,15 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 Example: [`examples/recipe_policy_lint.lms`](../examples/recipe_policy_lint.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/iam_policy.lms`; function `recipe_policy_lint`.
+
+### session_doctor
+
+![Inspect profile session types, 0600 credential cache expiry and dry-run/read-only permission probes](../docs/images/recipe_session_doctor.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_session_doctor.lms`
+
+Example: [`examples/recipe_session_doctor.lms`](../examples/recipe_session_doctor.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/iam_policy.lms`; function `recipe_session_doctor`.
 
 ### inventory
 

@@ -2,7 +2,9 @@
 
 Published releases verified through v0.1.3. Tags v0.1.4 through v0.1.7 failed
 packaging checks and must not be described as published binaries. v0.1.9 is the
-pending spend-report patch, preserving concurrent compute/IAM work.
+pending patch, preserving concurrent compute, IAM policy (`lmaws_session` `v2`
+live-applied), native `lmaws --credential-process <mode>` + `session_doctor`,
+account recovery, web-stack and spend-report work.
 [Release proof](release-v013.json) records the v0.1.3 five native asset digests and
 verified SHA256SUMS. [Fresh-cache proof](autorun-v013.json) records all six scoped
 lifecycle examples run offline from empty directories with the released v0.1.3

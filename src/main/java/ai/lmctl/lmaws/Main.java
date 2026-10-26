@@ -11,14 +11,19 @@ public final class Main {
     private static final String HELP="""
         lmaws 0.1.9 — AWS SDK for Java v2 scripting host
         usage: lmaws [--dry-run] [--apply] --dsl FILE | --dsl-schema [--json] | --dsl-signatures [--without-std]
+               lmaws --credential-process <default|lmaws|lmaws-ec2|lmaws-web> [--duration SECONDS] [--no-cache]
                lmaws --version | --notices | --help | --self-test
                lmaws --sweep LEDGER_DIR --older-than-hours N
         DSL context: aws.demo() (offline) or aws.region(\"\") (default profile/region).
         Live writes require AWS_PROFILE=lmaws (or lmaws-ec2 for the spot nano sandbox),
         a new ledger, prefixed names and ownership tags.
-        Exception: lmaws_ customer-managed IAM policy writes (iam_policy_put/iam_policy_delete)
-        require AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1, LMAWS_LIVE=1 and --apply (LMAWS_APPLY=1);
-        the admin profile is refused for every other mutating call.
+        Exceptions for the admin profile (refused for every other mutating call):
+        1. lmaws_ customer-managed IAM policy writes (iam_policy_put/iam_policy_delete)
+           require AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1, LMAWS_LIVE=1 and --apply (LMAWS_APPLY=1).
+        2. lmaws --credential-process <mode> reads ONLY the static admin source profile
+           from shared credentials/config (ignoring ambient env/web-identity/container/IMDS)
+           to call STS GetCallerIdentity and GetFederationToken (awsspot-local-<mode>, 3600s,
+           0600 file cache until 5m before expiry); it creates no resources and changes no permissions.
         Every run is cleaned up on success and failure. --sweep is always read-only.
         LMAWS_MAX_MEMORY_MB: positive whole MiB, default 4096; bounded heap and VM data.
         LMAWS_MAX_COST_USD: default 0.05, hard whole-run ceiling 0.25.
@@ -60,6 +65,7 @@ public final class Main {
         return "operation failed ("+e.getClass().getSimpleName()+")";
     }
     static int run(String[] args) throws Exception {
+        if(Arrays.asList(args).contains("--credential-process")) return CredentialProcess.runCli(args);
         String[] requested=args;
         if(Arrays.asList(args).contains("--dry-run") || Arrays.asList(args).contains("--apply") || Arrays.asList(args).contains("--live") || Arrays.asList(args).contains("--profile") || Arrays.asList(args).contains("--region")) {
             List<String> remaining=new ArrayList<>();
@@ -94,7 +100,7 @@ public final class Main {
             if(Arrays.equals(args,new String[]{"--dsl-signatures","--without-std"})){registry.hostSignatures().forEach(System.out::println);return 0;}
             if(Arrays.equals(args,new String[]{"--dsl-signatures"})){registry.signatures().forEach(System.out::println);return 0;}
             if(args.length==4&&args[0].equals("--sweep")&&args[2].equals("--older-than-hours")){System.out.println(Jsons.encode(Sandbox.leftovers(Path.of(args[1]),Long.parseLong(args[3]))));return 0;}
-            if(Arrays.equals(args,new String[]{"--self-test"})){SafetyChecks.run();WebStackChecks.run();CostChecks.run();AccountSearchChecks.run();LedgerCleanupChecks.run();SpendChecks.run();IamPolicyChecks.run();SelfTest.main(new String[0]);return 0;}
+            if(Arrays.equals(args,new String[]{"--self-test"})){SafetyChecks.run();WebStackChecks.run();CostChecks.run();AccountSearchChecks.run();LedgerCleanupChecks.run();SpendChecks.run();IamPolicyChecks.run();CredentialProcessChecks.run();SelfTest.main(new String[0]);return 0;}
             if(args.length!=2||!args[0].equals("--dsl")){System.err.print(HELP);return 2;}
             RuntimeBudget.configure(bytes,requested);
             Path input=Path.of(args[1]);if(Files.size(input)>Math.min(bytes/4,64L*1024*1024))throw VmException.run("LMAWS_MAX_MEMORY_MB bytecode input exceeds memory budget");

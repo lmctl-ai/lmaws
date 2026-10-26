@@ -1,0 +1,442 @@
+# Synthetic-only: Inspect profile session types, 0600 credential cache expiry and dry-run/read-only permission probes.
+# This picture-first example always disables live AWS and apply, even if inherited.
+# Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_session_doctor.lms
+# Generated standalone example from recipes/lib/iam_policy.lms
+let recipe_budget={reserved_units:0};
+fn recipe_env(key,fallback) { let value=getenv(key,""); if(value=="") {return fallback;} return value; }
+fn recipe_normalize(options) {
+  let defaults = {period:num(recipe_env("LMAWS_RECIPE_PERIOD","30")),top:num(recipe_env("LMAWS_RECIPE_TOP","10")),prefix:recipe_env("LMAWS_RECIPE_PREFIX","lmaws"),policy:recipe_env("LMAWS_RECIPE_POLICY","lmaws_session"),file:recipe_env("LMAWS_RECIPE_FILE",""),region:recipe_env("AWS_REGION",recipe_env("AWS_DEFAULT_REGION","us-east-1")),profile:recipe_env("AWS_PROFILE",recipe_env("AWS_DEFAULT_PROFILE","default")),live:false,apply:false,preview:false,output:"data/recipe",task:"queues",cap:num(recipe_env("LMAWS_MAX_COST_USD","0.05")),older_hours:0,filter_prefix:false,output_explicit:false,cap_explicit:recipe_env("LMAWS_MAX_COST_USD","")!="",ledger_dir:recipe_env("LMAWS_LEDGER_DIR",".lmaws-local/recipes/ledgers"),tag_key:"Project",tag_value:"",instance:"",hours:24,types:"t4g.nano,t3.nano",timeout_ms:300000};
+  let o=merge(defaults,options);
+  if(has_key(options,"output") && !has_key(options,"output_explicit")) {o.output_explicit=true;}
+  if(has_key(options,"cap") && !has_key(options,"cap_explicit")) {o.cap_explicit=true;}
+  assert(is_number(o.period) && o.period>=1 && o.period<=365 && floor(o.period)==o.period);
+  assert(is_number(o.top) && o.top>=1 && o.top<=1000 && floor(o.top)==o.top);
+  assert(is_number(o.cap) && o.cap>=0 && o.cap<=0.25);
+  assert(is_number(o.older_hours) && o.older_hours>=0 && floor(o.older_hours)==o.older_hours);
+  o.output=replace_all(str(o.output),"\\","/");
+  o.ledger_dir=replace_all(str(o.ledger_dir),"\\","/");
+  assert(regex_test(o.ledger_dir,"^[A-Za-z0-9_./: ~-]+$"));
+  assert(o.profile=="default" || o.profile=="lmaws" || o.profile=="lmaws-ec2" || o.profile=="admin");
+  assert(regex_test(str(o.policy),"^lmaws_[a-z0-9_-]{1,64}$"));
+  assert(is_number(o.hours) && o.hours>=1 && o.hours<=720 && floor(o.hours)==o.hours);
+  assert(is_number(o.timeout_ms) && o.timeout_ms>=1000 && o.timeout_ms<=900000);
+  assert(regex_test(str(o.tag_key),"^[A-Za-z0-9_.:/=+@ -]{0,128}$") && regex_test(str(o.tag_value),"^[A-Za-z0-9_.:/=+@ -]{0,256}$"));
+  assert(regex_test(str(o.types),"^[a-z0-9]+[.][a-z0-9]+(,[a-z0-9]+[.][a-z0-9]+)*$"));
+  assert(regex_test(o.region,"^[a-z]{2}(-[a-z]+)+-[0-9]+$"));
+  assert(regex_test(o.output,"^[A-Za-z0-9_./: ~-]+$"));
+  assert(is_string(o.prefix) && len(o.prefix)<=128);
+  return o;
+}
+fn recipe_options(argv) {
+  let o={}; let i=0;
+  while(i<len(argv)) {
+    let key=argv[i];
+    if(key=="--live") {o.live=true;}
+    else if(key=="--apply" || key=="--delete") {o.apply=true;}
+    else if(key=="--preview" || key=="--dry-run") {o.preview=true;}
+    else {
+      assert(i+1<len(argv));i=i+1;let value=argv[i];
+      if(key=="--period" || key=="--days") {o.period=num(value);}
+      else if(key=="--top" || key=="--top-n") {o.top=num(value);}
+      else if(key=="--cap") {o.cap=num(value);o.cap_explicit=true;}
+      else if(key=="--older-hours") {o.older_hours=num(value);}
+      else if(key=="--prefix") {o.prefix=value;o.filter_prefix=true;}
+      else if(key=="--policy" || key=="--policy-name") {o.policy=value;}
+      else if(key=="--file" || key=="--policy-file") {o.file=value;}
+      else if(key=="--region") {o.region=value;}
+      else if(key=="--profile") {o.profile=value;}
+      else if(key=="--output") {o.output=value;o.output_explicit=true;}
+      else if(key=="--ledger-dir") {o.ledger_dir=value;}
+      else if(key=="--task") {o.task=value;}
+      else if(key=="--tag-key") {o.tag_key=value;}
+      else if(key=="--tag-value") {o.tag_value=value;}
+      else if(key=="--instance") {o.instance=value;}
+      else if(key=="--hours") {o.hours=num(value);}
+      else if(key=="--types") {o.types=value;}
+      else {println("Unknown recipe argument:",key);assert(false);}
+    }
+    i=i+1;
+  }
+  return recipe_normalize(o);
+}
+fn recipe_run(program, options) {
+  let o=recipe_normalize(options);
+  assert(!o.preview);
+  if(o.live) {
+    let units=ceil(o.cap*100000000);
+    if(recipe_budget.reserved_units+units>25000000) {println("Recipe whole-run cap exceeded; reduce per-recipe caps before another live call.");assert(false);}
+    recipe_budget.reserved_units=recipe_budget.reserved_units+units;
+  }
+  mkdir(dirname(o.output),true);
+  let bytecode=temp_file();savedsl(program,bytecode);
+  let command=dsl_cli(program);
+  let settings={AWS_PROFILE:o.profile,AWS_DEFAULT_PROFILE:o.profile,AWS_REGION:o.region,AWS_DEFAULT_REGION:o.region,LMAWS_LIVE:o.live ? "1":"0",LMAWS_APPLY:o.apply ? "1":"0",LMAWS_SPEND_LIVE:o.live ? "1":"0",LMAWS_MAX_COST_USD:str(o.cap),LMAWS_LEDGER_DIR:o.ledger_dir,LMAWS_EVIDENCE_DIR:".lmaws-local/recipes/evidence"};
+  let previous={};
+  for(key in keys(settings)) {previous[key]=getenv(key,"");set_env(key,settings[key]);}
+  let cli_args=o.apply ? ["--apply","--dsl",bytecode] : ["--dsl",bytecode];
+  let argv=concat(command,cli_args);
+  if(getenv("OS","")!="Windows_NT") {let pre=["env"];for(key in keys(settings)) {push(pre,key+"="+str(settings[key]));}argv=concat(pre,argv);}
+  else if(o.live) {for(key in keys(settings)) {if(getenv(key,"")!=str(settings[key])) {println("Live recipes on Windows: set "+key+"="+str(settings[key])+" in the parent environment first.");assert(false);}}}
+  let r=system(argv,{timeoutMs:o.timeout_ms});
+  for(key in keys(previous)) {set_env(key,previous[key]);}
+  remove_file(bytecode);
+  if(r.code!=0) {println("Recipe host failed; see the host's sanitized diagnostic.");println(r.stderr);}
+  let found=false;
+  for(line in lines(r.stdout)) {
+    if(starts_with(line,"Cost Explorer requests:") || starts_with(line,"CloudWatch metric requests:") || starts_with(line,"CloudWatch metric units:") || starts_with(line,"IAM policy lint:") || starts_with(line,"IAM policy diff") || starts_with(line,"  + ") || starts_with(line,"  ~ ") || starts_with(line,"  - ") || starts_with(line,"  = ")) {println(line);}
+    if(starts_with(line,"estimated cost: $")) {println(line);found=true;}
+  }
+  if(!found && r.code!=0) {println("estimated cost: $"+str(o.cap)+" (reserved upper bound; host receipt unavailable)");}
+  assert(r.code==0);
+  assert(found);
+  return r;
+}
+fn recipe_preview(options,task) {
+  let o=recipe_normalize(options);
+  println(json_stringify({task:task,region:o.region,profile:o.profile,prefix:o.prefix,period:o.period,top:o.top,live:o.live,apply:o.apply,preview:true},2));
+  println("estimated cost: $0.00");
+  return {rows:[],preview:true};
+}
+fn recipe_select(rows,options) {
+  let o=recipe_normalize(options);let selected=[];
+  for(row in rows) {
+    if(len(selected)<o.top) {push(selected,row);}
+  }
+  return selected;
+}
+fn recipe_cost_line(report) {
+  let answer="estimated cost: $0.00";
+  let result=get(report,"result",{});
+  for(line in lines(str(get(result,"stdout","")))) {
+    if(starts_with(line,"estimated cost: $")) {answer=line;}
+  }
+  return answer;
+}
+fn recipe_picture(rows,title,name) {
+  assert(regex_test(name,"^[a-z][a-z0-9_]*$"));
+  mkdir("images");mkdir("data");
+  let counts={};let max_count=1;
+  for(row in rows) {
+    let label=str(get(row,"kind",get(row,"task","matching resources")));
+    label=replace_all(label,"_"," ");
+    label=regex_replace(label,"[^A-Za-z0-9 .-]","","g");
+    counts[label]=get(counts,label,0)+1;
+    if(counts[label]>max_count) {max_count=counts[label];}
+  }
+  let data="label,count\n";
+  for(label in keys(counts)) {data=data+label+","+str(counts[label])+"\n";}
+  if(len(rows)==0) {data=data+"no matches,0\n";}
+  let chart_title="Synthetic recipe: "+replace_all(name,"_"," ");
+  write_file("data/"+name+".csv",data);
+  let chart=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${"images/"+name+".png"},900,560);
+plot.cmd(${"set datafile separator ','; set title '"+chart_title+"'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.6; set yrange [0:"+str(max_count+1)+"]; set grid ytics; set xtics rotate by -30"});
+plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});
+plot.close();
+end _dsl_
+  let code=temp_file();savedsl(chart,code);let r=system(concat(dsl_cli(chart),["--dsl",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
+  println("images/"+name+".png");
+}
+
+
+fn recipe_policy_template() {
+  return {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Sid: "Reads",
+        Effect: "Allow",
+        Action: [
+          "sts:GetCallerIdentity",
+          "s3:ListAllMyBuckets",
+          "ec2:Describe*",
+          "sqs:ListQueues",
+          "sns:ListTopics",
+          "dynamodb:ListTables",
+          "logs:DescribeLogGroups",
+          "ssm:DescribeParameters",
+          "route53:List*",
+          "route53:GetHostedZone",
+          "route53:GetChange",
+          "cloudfront:List*",
+          "cloudfront:Get*",
+          "acm:ListCertificates",
+          "acm:DescribeCertificate",
+          "acm:ListTagsForCertificate"
+        ],
+        Resource: "*"
+      },
+      {
+        Sid: "PublicParams",
+        Effect: "Allow",
+        Action: "ssm:GetParameter",
+        Resource: "arn:aws:ssm:*::parameter/aws/service/*"
+      },
+      {
+        Sid: "NamedTestResources",
+        Effect: "Allow",
+        Action: ["s3:*", "sqs:*", "sns:*", "dynamodb:*", "ssm:*", "logs:*"],
+        Resource: [
+          "arn:aws:s3:::lmaws-*",
+          "arn:aws:s3:::lmaws-*/*",
+          "arn:aws:sqs:*:*:lmaws-*",
+          "arn:aws:sqs:*:*:lmaws_*",
+          "arn:aws:sns:*:*:lmaws-*",
+          "arn:aws:sns:*:*:lmaws_*",
+          "arn:aws:dynamodb:*:*:table/lmaws-*",
+          "arn:aws:dynamodb:*:*:table/lmaws_*",
+          "arn:aws:ssm:*:*:parameter/lmaws-*",
+          "arn:aws:ssm:*:*:parameter/lmaws_*",
+          "arn:aws:logs:*:*:log-group:lmaws-*",
+          "arn:aws:logs:*:*:log-group:lmaws_*"
+        ],
+        Condition: {StringEquals: {"aws:ResourceAccount": "${aws:PrincipalAccount}"}}
+      },
+      {
+        Sid: "RunTagged",
+        Effect: "Allow",
+        Action: "ec2:RunInstances",
+        Resource: [
+          "arn:aws:ec2:*:*:instance/*",
+          "arn:aws:ec2:*:*:volume/*",
+          "arn:aws:ec2:*:*:network-interface/*",
+          "arn:aws:ec2:*:*:spot-instances-request/*"
+        ],
+        Condition: {Null: {"aws:RequestTag/lmaws_test": "false"}}
+      },
+      {
+        Sid: "Route53Names",
+        Effect: "Allow",
+        Action: "route53:ChangeResourceRecordSets",
+        Resource: "arn:aws:route53:::hostedzone/*",
+        Condition: {
+          "ForAllValues:StringLike": {
+            "route53:ChangeResourceRecordSetsNormalizedRecordNames": [
+              "lmaws-*.example.com",
+              "_*.lmaws-*.example.com"
+            ]
+          }
+        }
+      },
+      {
+        Sid: "NanoOnly",
+        Effect: "Deny",
+        Action: "ec2:RunInstances",
+        Resource: "arn:aws:ec2:*:*:instance/*",
+        Condition: {StringNotEquals: {"ec2:InstanceType": ["t3.nano", "t4g.nano"]}}
+      },
+      {
+        Sid: "SgMustBeTagged",
+        Effect: "Deny",
+        Action: "ec2:CreateSecurityGroup",
+        Resource: "arn:aws:ec2:*:*:security-group/*",
+        Condition: {Null: {"aws:RequestTag/lmaws_test": "true"}}
+      },
+      {
+        Sid: "OnlyUsEast1",
+        Effect: "Deny",
+        NotAction: ["sts:*", "s3:*", "route53:*", "cloudfront:*", "acm:*"],
+        Resource: "*",
+        Condition: {StringNotEquals: {"aws:RequestedRegion": "us-east-1"}}
+      }
+    ]
+  };
+}
+
+fn recipe_policy_document(options) {
+  let path = str(get(options, "file", ""));
+  if (path != "") {
+    assert(file_exists(path));
+    return read_file(path);
+  }
+  return json_stringify(recipe_policy_template(), 2);
+}
+
+fn recipe_policy_lint(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "policy_lint"); }
+  o.live = false;
+  o.apply = false;
+  let output = str(o.output);
+  let doc = recipe_policy_document(o);
+  let raw = output + ".lint.raw.json";
+  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_lint");
+let lint = cloud.iam_policy_lint(${doc});
+file_write(${raw}, lint.json());
+end _dsl_
+  let result = recipe_run(p, o);
+  let lint_obj = json_parse(read_file(raw));
+  remove_file(raw);
+  assert(str(get(lint_obj, "valid", "false")) == "true");
+  let statements = json_parse(str(get(lint_obj, "statements", "[]")));
+  let rows = [];
+  for (stmt in statements) {
+    push(rows, {
+      sid: str(get(stmt, "sid", "")),
+      effect: str(get(stmt, "effect", "")),
+      kind: str(get(stmt, "category", "statement")),
+      valid: str(get(stmt, "valid", "true")),
+      detail: str(get(stmt, "detail", "")),
+      count: 1
+    });
+  }
+  let report = {
+    valid: str(get(lint_obj, "valid", "false")) == "true",
+    compact_length: num(get(lint_obj, "compact_length", "0")),
+    max_length: num(get(lint_obj, "max_length", "6144")),
+    inline_limit: num(get(lint_obj, "inline_limit", "2048")),
+    exceeds_inline_limit: str(get(lint_obj, "exceeds_inline_limit", "false")) == "true",
+    version: str(get(lint_obj, "version", "")),
+    statement_count: num(get(lint_obj, "statement_count", "0")),
+    allow_read_statements: num(get(lint_obj, "allow_read_statements", "0")),
+    allow_scoped_statements: num(get(lint_obj, "allow_scoped_statements", "0")),
+    deny_statements: num(get(lint_obj, "deny_statements", "0")),
+    findings: json_parse(str(get(lint_obj, "findings", "[]"))),
+    checks_performed: json_parse(str(get(lint_obj, "checks_performed", "[]"))),
+    summary: str(get(lint_obj, "summary", "")),
+    synthetic: str(get(o, "file", "")) == "",
+    rows: recipe_select(rows, o),
+    output_file: output + ".json"
+  };
+  mkdir(dirname(output), true);
+  write_file(output + ".json", json_stringify(report, 2));
+  write_csv(output + ".csv", report.rows);
+  return merge(report, {result: result});
+}
+
+fn recipe_grant_session_policy(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "grant_session_policy"); }
+  if (o.apply) {
+    assert(o.live);
+    assert(o.profile == "admin");
+    assert(getenv("LMAWS_ADMIN_GRANT", "") == "1");
+  }
+  let output = str(o.output);
+  let policy_name = str(o.policy);
+  let doc = recipe_policy_document(o);
+  let put_raw = output + ".put.raw.json";
+  let get_raw = output + ".get.raw.json";
+  let ver_raw = output + ".versions.raw.json";
+  let do_apply = o.live && o.apply;
+  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_grant_session_policy");
+let put_res = cloud.iam_policy_put(${policy_name}, ${doc}, ${do_apply});
+let get_res = cloud.iam_policy_get(${policy_name});
+let ver_rows = cloud.iam_policy_versions(${policy_name});
+file_write(${put_raw}, put_res.json());
+file_write(${get_raw}, get_res.json());
+file_write(${ver_raw}, ver_rows.json());
+end _dsl_
+  let result = recipe_run(p, o);
+  let put_obj = json_parse(read_file(put_raw));
+  let get_obj = json_parse(read_file(get_raw));
+  let ver_list = json_parse(read_file(ver_raw));
+  remove_file(put_raw);
+  remove_file(get_raw);
+  remove_file(ver_raw);
+  let diff_rows = json_parse(str(get(put_obj, "statement_diffs", "[]")));
+  let report = {
+    policy: policy_name,
+    arn: str(get(put_obj, "arn", "")),
+    applied: str(get(put_obj, "applied", "false")) == "true",
+    action: str(get(put_obj, "action", "dry_run")),
+    version_id: str(get(put_obj, "version_id", "")),
+    deleted_version_id: str(get(put_obj, "deleted_version_id", "")),
+    compact_length: num(get(put_obj, "compact_length", "0")),
+    max_length: num(get(put_obj, "max_length", "6144")),
+    inline_limit: num(get(put_obj, "inline_limit", "2048")),
+    statement_count: num(get(put_obj, "statement_count", "0")),
+    lint_valid: str(get(put_obj, "lint_valid", "false")) == "true",
+    lint_summary: str(get(put_obj, "lint_summary", "")),
+    diff_summary: str(get(put_obj, "diff_summary", "")),
+    added_count: num(get(put_obj, "added_count", "0")),
+    modified_count: num(get(put_obj, "modified_count", "0")),
+    removed_count: num(get(put_obj, "removed_count", "0")),
+    unchanged_count: num(get(put_obj, "unchanged_count", "0")),
+    policy_exists: str(get(get_obj, "exists", "false")) == "true",
+    default_version_id: str(get(get_obj, "default_version_id", "")),
+    version_count: num(get(get_obj, "version_count", "0")),
+    versions: ver_list,
+    synthetic: !o.live,
+    rows: recipe_select(diff_rows, o),
+    output_file: output + ".json"
+  };
+  mkdir(dirname(output), true);
+  write_file(output + ".json", json_stringify(report, 2));
+  write_csv(output + ".csv", report.rows);
+  return merge(report, {result: result});
+}
+
+fn recipe_session_doctor(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "session_doctor"); }
+  let output = str(o.output);
+  let raw = output + ".doctor.raw.json";
+  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_session_doctor");
+let doctor_rows = cloud.session_doctor();
+file_write(${raw}, doctor_rows.json());
+end _dsl_
+  let result = recipe_run(p, o);
+  let parsed = json_parse(read_file(raw));
+  remove_file(raw);
+  let rows = [];
+  let profile_rows = [];
+  let probe_rows = [];
+  let allowed_count = 0;
+  let guardrail_deny_count = 0;
+  let denied_count = 0;
+  for (item in parsed) {
+    let row_kind = str(get(item, "kind", "probe"));
+    let status = str(get(item, "status", "unknown"));
+    if (row_kind == "profile") {
+      push(profile_rows, item);
+    } else {
+      push(probe_rows, item);
+      if (status == "allowed") { allowed_count = allowed_count + 1; }
+      else if (status == "denied_by_guardrail") { guardrail_deny_count = guardrail_deny_count + 1; }
+      else { denied_count = denied_count + 1; }
+    }
+    push(rows, {
+      name: str(get(item, "name", "")),
+      profile: str(get(item, "profile", "")),
+      session_type: str(get(item, "session_type", "")),
+      helper: str(get(item, "helper", "")),
+      expiry: str(get(item, "expiry", "")),
+      ttl_seconds: num(get(item, "ttl_seconds", "0")),
+      method: str(get(item, "method", "")),
+      status: status,
+      kind: row_kind == "profile" ? "profile_" + status : "probe_" + status,
+      detail: str(get(item, "detail", "")),
+      count: 1
+    });
+  }
+  let report = {
+    active_profile: str(o.profile),
+    region: str(o.region),
+    profile_count: len(profile_rows),
+    probe_count: len(probe_rows),
+    allowed_count: allowed_count,
+    guardrail_deny_count: guardrail_deny_count,
+    denied_count: denied_count,
+    profiles: profile_rows,
+    probes: probe_rows,
+    synthetic: !o.live,
+    rows: recipe_select(rows, o),
+    output_file: output + ".json"
+  };
+  mkdir(dirname(output), true);
+  write_file(output + ".json", json_stringify(report, 2));
+  write_csv(output + ".csv", report.rows);
+  return merge(report, {result: result});
+}
+
+let options=recipe_options(ARGV);
+options.live=false;options.apply=false;options.preview=false;options.profile="default";
+options.task="session_doctor";options.output="data/recipe_session_doctor";
+let report=recipe_session_doctor(options);
+assert(is_array(report.rows));
+recipe_picture(report.rows,"Inspect profile session types, 0600 credential cache expiry and dry-run/read-only permission probes","recipe_session_doctor");
+println(recipe_cost_line(report));

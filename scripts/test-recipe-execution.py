@@ -201,6 +201,16 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertNotEqual(refused_no_grant.returncode, 0)
         self.assertFalse((self.work / "refused_no_grant.json").exists())
 
+        doctor_out = self.work / "session_doctor"
+        doctor_res = self.run_script(ROOT / "recipes" / "session_doctor.lms", "--top", "20", "--output", str(doctor_out))
+        self.assertEqual(doctor_res.returncode, 0, doctor_res.stdout + doctor_res.stderr)
+        doctor_report = json.loads(doctor_out.with_suffix(".json").read_text(encoding="utf-8"))
+        self.assertEqual(doctor_report["profile_count"], 4)
+        self.assertEqual(doctor_report["probe_count"], 8)
+        self.assertEqual(doctor_report["allowed_count"], 6)
+        self.assertEqual(doctor_report["guardrail_deny_count"], 2)
+        self.assertIn("estimated cost: $0.00", doctor_res.stdout)
+
 
 
 if __name__ == "__main__":
