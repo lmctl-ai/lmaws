@@ -20,6 +20,10 @@ public final class Main {
         LMAWS_MAX_COST_USD: default 0.05, hard whole-run ceiling 0.25.
         aws.example(name) selects local profile live mode only when LMAWS_LIVE=1;
         examples record prices, requests, minutes, teardown, sweeper and cost evidence.
+        Read-only spend: aws.spend(topic, days, top_n, cap); synthetic by default.
+        Real spend requires LMAWS_SPEND_LIVE=1, LMAWS_LIVE=1 and AWS_PROFILE=default.
+        CE pages cost about $0.01; GetMetricData counts requested metrics; cap <=$0.25.
+        Real spend exports stay under ignored .lmaws-local/spend; no AWS CLI is used.
         No OIDC or AWS credentials in CI; CI uses loopback fakes only.
         --dry-run uses demo sessions: no AWS requests; local reports/ledgers still write.
         LMAWS_LIVE=1 is required for real-account writes; read-only inventories use the
@@ -68,7 +72,7 @@ public final class Main {
             if(Arrays.equals(args,new String[]{"--dsl-signatures","--without-std"})){registry.hostSignatures().forEach(System.out::println);return 0;}
             if(Arrays.equals(args,new String[]{"--dsl-signatures"})){registry.signatures().forEach(System.out::println);return 0;}
             if(args.length==4&&args[0].equals("--sweep")&&args[2].equals("--older-than-hours")){System.out.println(Jsons.encode(Sandbox.leftovers(Path.of(args[1]),Long.parseLong(args[3]))));return 0;}
-            if(Arrays.equals(args,new String[]{"--self-test"})){SafetyChecks.run();CostChecks.run();SelfTest.main(new String[0]);return 0;}
+            if(Arrays.equals(args,new String[]{"--self-test"})){SafetyChecks.run();CostChecks.run();SpendChecks.run();SelfTest.main(new String[0]);return 0;}
             if(args.length!=2||!args[0].equals("--dsl")){System.err.print(HELP);return 2;}
             RuntimeBudget.configure(bytes,requested);
             Path input=Path.of(args[1]);if(Files.size(input)>Math.min(bytes/4,64L*1024*1024))throw VmException.run("LMAWS_MAX_MEMORY_MB bytecode input exceeds memory budget");

@@ -9,6 +9,7 @@ public final class CloudHost implements AutoCloseable {
     public static final List<String> INVENTORIES=List.of("identity","buckets","instances","vpcs","security_groups","tables","queues","topics","functions","log_groups","alarms","zones","secrets","parameters","clusters","roles");
     private final List<Session> clients=new ArrayList<>();
     private final List<Sandbox> runs=new ArrayList<>();
+    private final Map<SpendReport,CostLedger> spendLedgers=new IdentityHashMap<>();
     private boolean closed;
     private CostLedger billing;
     private Session measured;
@@ -26,6 +27,7 @@ public final class CloudHost implements AutoCloseable {
     }
     private Session open(String region,boolean demo) {return open(region,demo,"script",false);}
     private Session open(String region,boolean demo,String name,boolean example) {
+        if(!spendLedgers.isEmpty())throw VmException.host("spend must be the sole cost-capped report/session in its host program");
         boolean offline=demo || Boolean.getBoolean("lmaws.dryRun");
         String selected=region;
         if(selected==null || selected.isBlank())selected=offline?"us-east-1":software.amazon.awssdk.regions.providers.DefaultAwsRegionProviderChain.builder().build().getRegion().id();
@@ -53,6 +55,40 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","sweep",List.of("int"),"Rows",(c,s,a)->Value.object("Rows",new Rows(Sandbox.leftovers(session(s).cost.path().toAbsolutePath().getParent(),a[0].asInt()),c)));
         r.method("Cloud","is_demo",List.of(),"bool",(c,s,a)->Value.ofBool(session(s).backend.isDemo()));
         r.method("Cloud","example_run",List.of(),"Run",(c,s,a)->{Session v=session(s);Sandbox run=new Sandbox(v.backend,v.cost.runId(),v.cost.path(),v.cost);runs.add(run);return Value.object("Run",run);});
+        r.method("Cloud","spend",List.of("string","int","int","float"),"Spend",(c,s,a)->{
+            if(billing!=null||!spendLedgers.isEmpty())throw VmException.host("spend must be the sole cost-capped report/session in its host program");
+            String topic=text(a[0]);long days=a[1].asInt(),top=a[2].asInt();double cap=a[3].asFloat();
+            if(days<1||days>366||top<1||top>100||!Double.isFinite(cap)||cap<0||cap>0.25)throw VmException.host("spend: days 1..366, top 1..100 and cap $0..$0.25 required");
+            boolean requested="1".equals(System.getenv("LMAWS_SPEND_LIVE"))&&!Boolean.getBoolean("lmaws.dryRun");
+            boolean fakeHttp=requested&&!System.getenv().getOrDefault("LMAWS_ENDPOINT","").isBlank();
+            boolean live=requested&&!fakeHttp;
+            if(live&&(!"1".equals(System.getenv("LMAWS_LIVE"))||!"default".equals(AwsBackend.activeProfile())))throw VmException.host("live spend requires LMAWS_LIVE=1 and AWS_PROFILE=default");
+            String ci=System.getenv().getOrDefault("CI","");
+            if(live&&(ci.equalsIgnoreCase("true")||ci.equals("1")||ci.equalsIgnoreCase("yes")))throw VmException.host("live spend is forbidden in CI");
+            Path dir=live?Path.of(".lmaws-local","spend","ledgers"):Path.of("data","spend-ledgers");
+            if(live)SpendOutputs.createPrivate(dir);
+            String runId="spend"+java.util.UUID.randomUUID().toString().replace("-","");
+            CostLedger ledger=new CostLedger(runId,topic,"us-east-1",dir.resolve(runId+".jsonl"),java.math.BigDecimal.valueOf(cap),live);
+            java.time.LocalDate end=live?java.time.LocalDate.now(java.time.ZoneOffset.UTC):java.time.LocalDate.of(2026,10,26);
+            SpendReport report;
+            try(SpendSource source=requested?new SpendAwsSource(ledger):new SpendFakeSource(ledger)){
+                report=SpendReport.collect(source,topic,end,(int)days,(int)top,ledger);
+            }
+            c.charge(256L+report.json().getBytes(java.nio.charset.StandardCharsets.UTF_8).length*2L);
+            spendLedgers.put(report,ledger);return Value.object("Spend",report);
+        });
+        r.method("Spend","section",List.of("string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(((SpendReport)s.asObject()).section(text(a[0])),c)));
+        r.method("Spend","json",List.of(),"string",(c,s,a)->Value.ofString(((SpendReport)s.asObject()).json()));
+        r.method("Spend","write",List.of("string"),"void",(c,s,a)->{
+            SpendReport report=(SpendReport)s.asObject();Path dir=Path.of(text(a[0]));
+            if(spendLedgers.get(report).live())SpendOutputs.createPrivate(dir);
+            report.write(dir);return Value.none();
+        });
+        r.method("Spend","is_demo",List.of(),"bool",(c,s,a)->Value.ofBool(!spendLedgers.get((SpendReport)s.asObject()).live()));
+        r.method("Spend","estimated_cost",List.of(),"float",(c,s,a)->Value.ofFloat(((SpendReport)s.asObject()).estimatedCost().doubleValue()));
+        r.method("Spend","ce_requests",List.of(),"int",(c,s,a)->Value.ofInt(spendLedgers.get((SpendReport)s.asObject()).ceRequests()));
+        r.method("Spend","metric_requests",List.of(),"int",(c,s,a)->Value.ofInt(spendLedgers.get((SpendReport)s.asObject()).metricRequests()));
+        r.method("Spend","metric_units",List.of(),"int",(c,s,a)->Value.ofInt(spendLedgers.get((SpendReport)s.asObject()).metricUnits()));
         r.method("Cloud","demo",List.of(),"Cloud",(c,s,a)->Value.object("Cloud",open("us-east-1",true)));
         r.method("Cloud","region",List.of("string"),"Cloud",(c,s,a)->Value.object("Cloud",open(text(a[0]),false)));
         for(String inventory:INVENTORIES) r.method("Cloud",inventory,List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.inventory(inventory),c)));
@@ -84,6 +120,11 @@ public final class CloudHost implements AutoCloseable {
         for(var run:runs.reversed())try{run.close();}catch(RuntimeException e){failure=e;}
         if(measured!=null)try{finishEvidence(measured);}catch(RuntimeException e){if(failure==null)failure=e;}
         for(var client:clients)try{client.backend.close();}catch(RuntimeException e){if(failure==null)failure=e;}
+        for(CostLedger ledger:spendLedgers.values()){
+            System.out.println("Cost Explorer requests: "+ledger.ceRequests());
+            System.out.println("CloudWatch metric requests: "+ledger.metricRequests()+" (metric units: "+ledger.metricUnits()+")");
+            System.out.println("estimated cost: "+ledger.displayCost());
+        }
         closed=true;
         if(failure!=null)throw failure;
     }
