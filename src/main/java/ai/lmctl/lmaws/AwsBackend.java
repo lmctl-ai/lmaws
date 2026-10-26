@@ -62,6 +62,7 @@ import software.amazon.awssdk.services.iam.model.Policy;
 import software.amazon.awssdk.services.iam.model.PolicyVersion;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.ListFunctionsRequest;
+import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.route53.Route53Client;
 import software.amazon.awssdk.services.route53.model.ListHostedZonesRequest;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -76,6 +77,9 @@ import software.amazon.awssdk.services.s3.model.CreateBucketConfiguration;
 import software.amazon.awssdk.services.s3.model.Tag;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
+import software.amazon.awssdk.services.s3.model.NotificationConfiguration;
+import software.amazon.awssdk.services.s3.model.LambdaFunctionConfiguration;
+import software.amazon.awssdk.services.s3.model.Event;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.secretsmanager.model.ListSecretsRequest;
 import software.amazon.awssdk.services.sns.SnsClient;
@@ -484,6 +488,45 @@ public final class AwsBackend implements AutoCloseable {
             default -> throw new IllegalArgumentException("unsupported create kind: " + k);
         }
         out.put("created", Instant.now().toString()); out.put("run_id", runId); return out;
+    }
+
+    Map<String,String> createLambda(String name,String role,String runtime,String handler,String source,int memory,int timeout,String runId) {
+        requireWriteEnabled(); requireName(name); requireRunId(runId);
+        if (demo) return row("kind","lambda","id","arn:aws:lambda:local:000000000000:function:"+name,"name",name,"run_id",runId,"state","active");
+        String roleArn = role.startsWith("arn:") ? role : "arn:aws:iam::" + sts().getCallerIdentity().account() + ":role/" + role;
+        byte[] zip = LambdaFunction.sourceZip(handler, source);
+        var response = lambda().createFunction(x -> x.functionName(name).role(roleArn).runtime(software.amazon.awssdk.services.lambda.model.Runtime.fromValue(runtime)).handler(handler).memorySize(memory).timeout(timeout).code(c -> c.zipFile(SdkBytes.fromByteArray(zip))).publish(true).tags(Map.of("lmaws_test",runId)));
+        return row("kind","lambda","id",response.functionArn(),"name",name,"arn",response.functionArn(),"run_id",runId,"state","active");
+    }
+    Map<String,String> invokeLambda(String arn,String payload) {
+        if (demo) return row("status","200","function_name",arn,"request_id","fake-invoke","payload",payload,"cold_start","false");
+        var response=lambda().invoke(x -> x.functionName(arn).payload(SdkBytes.fromUtf8String(payload)).invocationType("RequestResponse"));
+        return row("status",Integer.toString(response.statusCode()),"function_name",arn,"request_id",response.executedVersion()==null?"":response.executedVersion(),"payload",response.payload()==null?"":response.payload().asUtf8String());
+    }
+    String lambdaUrl(String arn,String reason) {
+        if (reason==null||reason.isBlank()) throw new IllegalArgumentException("public Function URL auth NONE requires an explicit reason");
+        if (demo) return "https://"+last(arn)+".lambda-url.local/";
+        var r=lambda().createFunctionUrlConfig(x -> x.functionName(arn).authType("NONE")); return r.functionUrl();
+    }
+    Map<String,String> deleteLambda(String arn,String runId) {
+        requireWriteEnabled(); if (demo) return row("kind","lambda","id",arn,"state","deleted");
+        lambda().deleteFunction(x -> x.functionName(arn)); return row("kind","lambda","id",arn,"state","deleted","run_id",runId);
+    }
+    Map<String,String> tableTtl(String table,String attribute) {
+        requireWriteEnabled(); requireName(table); if(attribute==null||!attribute.matches("[A-Za-z0-9_-]{1,255}")) throw new IllegalArgumentException("invalid DynamoDB TTL attribute");
+        if(!demo) ddb().updateTimeToLive(x -> x.tableName(table).timeToLiveSpecification(t -> t.attributeName(attribute).enabled(true)));
+        return row("kind","dynamodb_ttl","table",table,"attribute",attribute,"enabled","true");
+    }
+    Map<String,String> tableItem(String table,String key,String value) {
+        requireWriteEnabled(); requireName(table); if(key==null||key.isBlank()||key.length()>1024) throw new IllegalArgumentException("invalid DynamoDB item key");
+        if(!demo) ddb().putItem(x -> x.tableName(table).item(Map.of("pk",AttributeValue.builder().s(key).build(),"value",AttributeValue.builder().s(value==null?"":value).build())));
+        return row("kind","dynamodb_item","table",table,"pk",key,"value",value==null?"":value);
+    }
+    Map<String,String> s3Notification(String bucket,String lambdaArn,String eventName) {
+        requireWriteEnabled(); requireName(bucket); if(lambdaArn==null||!lambdaArn.contains(":function:lmaws")) throw new IllegalArgumentException("S3 notification target must be an lmaws Lambda ARN");
+        if(eventName==null||!eventName.matches("s3:ObjectCreated:(Put|Post|Copy|CompleteMultipartUpload|\\*)")) throw new IllegalArgumentException("unsupported S3 notification event");
+        if(!demo) s3().putBucketNotificationConfiguration(x -> x.bucket(bucket).notificationConfiguration(NotificationConfiguration.builder().lambdaFunctionConfigurations(LambdaFunctionConfiguration.builder().lambdaFunctionArn(lambdaArn).events(Event.fromValue(eventName)).build()).build()));
+        return row("kind","s3_notification","bucket",bucket,"lambda_arn",lambdaArn,"event",eventName,"state","active");
     }
 
     public void update(String kind, String id, String key, String value) {
