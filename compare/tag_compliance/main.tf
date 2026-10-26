@@ -8,7 +8,9 @@ terraform {
   }
 }
 provider "aws" { region = "us-east-1" }
-data "aws_instances" "all" {}
+data "aws_instances" "all" {
+  instance_state_names = ["pending", "running", "shutting-down", "stopping", "stopped", "terminated"]
+}
 data "aws_instance" "details" {
   for_each    = toset(data.aws_instances.all.ids)
   instance_id = each.value

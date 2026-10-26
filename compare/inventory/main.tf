@@ -8,7 +8,9 @@ terraform {
   }
 }
 provider "aws" { region = "us-east-1" }
-data "aws_instances" "all" {}
+data "aws_instances" "all" {
+  instance_state_names = ["pending", "running", "shutting-down", "stopping", "stopped", "terminated"]
+}
 data "aws_vpcs" "all" {}
 data "aws_security_groups" "all" {}
 output "example_id" { value = "inventory" }

@@ -16,6 +16,9 @@ for native_cost,campaign_cost,cap in [(Decimal('0.049'),Decimal('0'),Decimal('0.
  try:check_comparison_budget(native_cost,campaign_cost,cap,True)
  except RuntimeError:pass
  else:raise AssertionError('combined native/provider budget was allowed to exceed its cap')
+try:check_comparison_budget(Decimal('0'),Decimal('0.248'),Decimal('0.05'),False)
+except RuntimeError:pass
+else:raise AssertionError('paid metadata reads escaped the shared provider allowance')
 run='r1234abcdx5678abcd'
 plan={'resource_changes':[{'mode':'managed','type':'aws_sqs_queue','change':{'actions':['create'],'after':{'name':'lmaws_'+run+'_audit','tags':{'lmaws_test':run}}}}]}
 assert runtime.assert_owned(plan,run,True)[0]['kind']=='queue'

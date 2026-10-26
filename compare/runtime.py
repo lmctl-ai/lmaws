@@ -99,11 +99,11 @@ def main():
     if any(r.get('mode')=='managed' for r in old.get('resources',[])) or state_resources(old):raise RuntimeError('existing state retains resources; preserve it and run its own teardown')
     shutil.copyfile(args.config,infra/'main.tf')
     (infra/'run.auto.tfvars.json').write_text(json.dumps({'run_id':run_id}))
-    provider_cache=Path(os.getenv('LMAWS_COMPARE_PROVIDER_CACHE',str(Path.cwd()/'.provider-cache'))).resolve();provider_cache.mkdir(parents=True,exist_ok=True)
+    provider_cache=Path(os.getenv('LMAWS_COMPARE_PROVIDER_CACHE') or os.getenv('TF_PLUGIN_CACHE_DIR') or str(Path.cwd()/'.provider-cache')).resolve();provider_cache.mkdir(parents=True,exist_ok=True)
     env=dict(os.environ,TF_PLUGIN_CACHE_DIR=str(provider_cache),AWS_PROFILE=profile,AWS_DEFAULT_PROFILE=profile,AWS_REGION='us-east-1',AWS_DEFAULT_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',AWS_MAX_ATTEMPTS='2',TF_INPUT='0',TF_IN_AUTOMATION='1',TF_VAR_run_id=run_id)
     for k in ('AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN','AWS_SECURITY_TOKEN','AWS_WEB_IDENTITY_TOKEN_FILE','AWS_ROLE_ARN','AWS_ROLE_SESSION_NAME','AWS_CONTAINER_CREDENTIALS_RELATIVE_URI','AWS_CONTAINER_CREDENTIALS_FULL_URI','TF_LOG','TF_LOG_PROVIDER','TF_LOG_PATH'):env.pop(k,None)
     engine_version=subprocess.run([args.host,'--version'],text=True,capture_output=True,timeout=15).stdout.strip()
-    ledger={'engine_version':engine_version,'schema':'lmaws-tofu-ledger-v2','example':args.name,'run_id':run_id,'profile':profile,'region':'us-east-1','live':live,'resources':[],'events':[],'price_table':{k:str(v) for k,v in PRICES.items()},'price_method':'Conservative allowance of 500 requests at the maximum table price, not observed SDK request counts or an invoice measurement; tiny storage included in allowance','cap_usd':str(cap),'request_allowance':500,'request_unit_price_usd':'0.000005','total_estimated_usd':'0','leftover_count':0}
+    ledger={'engine_version':engine_version,'schema':'lmaws-tofu-ledger-v2','example':args.name,'run_id':run_id,'profile':profile,'region':'us-east-1','live':live,'resources':[],'events':[],'price_table':{k:str(v) for k,v in PRICES.items()},'price_method':'Conservative upper bound of 500 provider/verification requests at the maximum table price, reserved before plan; not observed SDK request counts or an invoice measurement; tiny storage included','cap_usd':str(cap),'request_allowance':500,'request_unit_price_usd':'0.000005','total_estimated_usd':'0','leftover_count':0}
     archive=Path(os.getenv('LMAWS_COMPARE_LEDGER_DIR','comparison-ledgers'))/(args.name+'-'+run_id+'.json')
     archive.parent.mkdir(parents=True,exist_ok=True)
     archive_fd=os.open(archive,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600);os.close(archive_fd)
@@ -128,21 +128,21 @@ def main():
     try:
         lock_fd=os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
         previous=Decimal(str(load(campaign).get('estimated_usd','0')))
-        if is_write and live and (ALLOWANCE>cap or previous+ALLOWANCE>Decimal('0.25')):raise RuntimeError('cost cap refused the next provider creation')
+        if live and (ALLOWANCE>cap or previous+ALLOWANCE>Decimal('0.25')):raise RuntimeError('cost cap refused the next provider creation')
         event('opened')
         phase('init');phase('validate')
         if not live:
             status='validated_offline'
         else:
+            # Data sources can issue charged metadata calls during plan. Reserve
+            # the conservative request bound before plan for both read/write runs.
+            estimated=ALLOWANCE;ledger['total_estimated_usd']=str(estimated)
+            write(campaign,{'estimated_usd':str(previous+estimated),'hard_ceiling_usd':'0.25'})
             phase('plan');plan=load('plan.json');planned=assert_owned(plan,run_id,is_write)
             ledger['resources']=planned;event('planned',resource_count=len(planned))
             if is_write:
                 ledger['preflight_absence']=verify(planned,timeout_seconds=0)
                 event('preflight_absent')
-            # Reserve before apply, and persist before the first cloud mutation.
-            if is_write:
-                estimated=ALLOWANCE;ledger['total_estimated_usd']=str(estimated)
-                write(campaign,{'estimated_usd':str(previous+estimated),'hard_ceiling_usd':'0.25'})
             attempted=True;event('apply_started');phase('apply');phase('inspect')
             snapshot=load('snapshot.json');ledger['observed_resources']=state_resources(snapshot)
             event('observed');status='passed'
