@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Loopback EC2 Query fixture for WebCompute capacity fallback."""
-import http.server, os, pathlib, subprocess, tempfile, threading, urllib.parse, shutil
+import http.server, os, pathlib, subprocess, tempfile, threading, urllib.parse, shutil, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 class Fake(http.server.BaseHTTPRequestHandler):
-    requests=[]; launches=0; describes=0
+    requests=[]; launches=0; describes=0; unsupported="--unsupported-zone" in sys.argv
     def log_message(self,*args): pass
     def do_POST(self):
         raw=self.rfile.read(int(self.headers.get("Content-Length","0"))); q=urllib.parse.parse_qs(raw.decode(errors="replace")); action=q.get("Action",[""])[0]; Fake.requests.append((action,q,raw))
@@ -14,7 +14,7 @@ class Fake(http.server.BaseHTTPRequestHandler):
         elif action=="RunInstances":
             Fake.launches+=1
             if Fake.launches==1:
-                body=b'<Response><Errors><Error><Code>InsufficientInstanceCapacity</Code><Message>capacity unavailable</Message></Error></Errors><RequestId>fixture</RequestId></Response>'; self.send_response(400); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+                code="Unsupported" if Fake.unsupported else "InsufficientInstanceCapacity";message="Your requested instance type is not supported in your requested Availability Zone" if Fake.unsupported else "capacity unavailable";body=("<Response><Errors><Error><Code>"+code+"</Code><Message>"+message+"</Message></Error></Errors><RequestId>fixture</RequestId></Response>").encode(); self.send_response(400); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
             else: self.reply('<RunInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><instancesSet><item><instanceId>i-0123456789abcdef0</instanceId><instanceState><name>running</name></instanceState><ipAddress>198.51.100.7</ipAddress><subnetId>subnet-5678abcd</subnetId><spotInstanceRequestId>sir-0123456789abcdef0</spotInstanceRequestId></item></instancesSet></RunInstancesResponse>')
         elif action=="DescribeInstances":
             Fake.describes+=1

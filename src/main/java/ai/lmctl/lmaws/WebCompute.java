@@ -70,7 +70,12 @@ final class WebCompute {
                 .blockDeviceMappings(BlockDeviceMapping.builder().deviceName("/dev/xvda").ebs(EbsBlockDevice.builder().volumeSize(volumeGiB).volumeType(VolumeType.GP3).deleteOnTermination(true).encrypted(true).build()).build())
                 .tagSpecifications(tagSpec(ResourceType.INSTANCE, runId, WebStack.resourceName(runId, "app")),tagSpec(ResourceType.VOLUME, runId, WebStack.resourceName(runId, "app-volume")),tagSpec(ResourceType.NETWORK_INTERFACE, runId, WebStack.resourceName(runId, "app-eni")),tagSpec(ResourceType.SPOT_INSTANCES_REQUEST, runId, WebStack.resourceName(runId, "spot"))));
     }
-    private static boolean capacityCode(Ec2Exception e){String c=e.awsErrorDetails()==null?"":e.awsErrorDetails().errorCode();return Set.of("InsufficientInstanceCapacity","InsufficientInstanceCapacityInAvailabilityZone","InsufficientSpotInstanceCapacity").contains(c);}
+    private static boolean capacityCode(Ec2Exception e){
+        if(e.awsErrorDetails()==null)return false;
+        String code=e.awsErrorDetails().errorCode(),message=e.awsErrorDetails().errorMessage();
+        return Set.of("InsufficientInstanceCapacity","InsufficientInstanceCapacityInAvailabilityZone","InsufficientSpotInstanceCapacity").contains(code)
+            ||("Unsupported".equals(code)&&message!=null&&message.toLowerCase(java.util.Locale.ROOT).contains("not supported in your requested availability zone"));
+    }
     private List<String> candidateSubnets(Ec2Client ec2,String vpc,String requested){LinkedHashSet<String> out=new LinkedHashSet<>();out.add(requested);for(var s:ec2.describeSubnets(x->x.filters(Filter.builder().name("vpc-id").values(vpc).build(),Filter.builder().name("map-public-ip-on-launch").values("true").build())).subnets())if(!requested.equals(s.subnetId()))out.add(s.subnetId());return out.stream().limit(6).toList();}
     private String publicAmi(String type){String n=type.equals("t4g.nano")?"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64":"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64";return backend.ssmClient().getParameter(x->x.name(n)).parameter().value();}
 
