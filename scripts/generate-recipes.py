@@ -20,6 +20,17 @@ for name,function,category,what in [('idle_instances','recipe_idle','Idle and wa
 for name,what in [('spend_detail','Review account spend detail and optimization signals'),('ec2_spend','Break down EC2 compute spend and current resource signals'),('savings_plans','Review Savings Plans and Reserved Instance utilization and coverage'),('eip_audit','Review idle public IPv4 allocations and estimated run-rate'),('ebs_audit','Review EBS attachments and snapshot retention signals'),('bandwidth','Break down billed transfer categories and network counters'),('lambda_spend','Review Lambda usage and spend signals'),('dynamodb_spend','Review DynamoDB usage and spend signals')]:
  ITEMS.append(dict(name=name,category='Cost and spend',task=name,library='spend',function='recipe_spend',what=what,access='Read-only',cost='Synthetic actual $0.00; live CE $0.01/request plus metrics; default/hard cap $0.25'))
 
+COMPUTE_ARGS='--region us-east-1 --profile default --output data/NAME [--live]'
+for name,what,access,cost,args,run in [
+ ('fleet_status','Discover tagged instances: state, type, addresses and root-storage policy','Read-only','$0.00 synthetic; live EC2 Describe calls are free; cap $0.05','--tag-key Project --tag-value VALUE '+COMPUTE_ARGS,'--tag-key Project'),
+ ('cpu_credits','CPU credit balance, usage, surplus and headroom of burstable instances, without SSH','Read-only','$0.00 synthetic; live CloudWatch statistics about $0.00005 per instance; cap $0.05','--tag-key Project --tag-value VALUE --instance ID --hours 24 '+COMPUTE_ARGS,'--tag-key Project --hours 24'),
+ ('eip_map','Map Elastic IPs to instances, flag idle ones, report pinned addresses (never releases)','Read-only','$0.00 synthetic; live Describe calls are free; cap $0.05','--tag-key Project '+COMPUTE_ARGS,''),
+ ('ami_lookup','Latest Ubuntu 24.04 and Amazon Linux 2023 AMIs (arm64, x86_64) from public SSM parameters','Read-only with the lmaws-ec2 profile','$0.00 (public SSM parameters are free)',COMPUTE_ARGS.replace('--profile default','--profile lmaws-ec2'),''),
+ ('spot_prices','Spot price history per AZ for nano types, cheapest AZ and saving vs On-Demand','Read-only','$0.00 synthetic; live Describe calls are free; cap $0.05','--types t4g.nano,t3.nano --hours 3 '+COMPUTE_ARGS,'--types t4g.nano,t3.nano'),
+ ('ebs_roots','EBS volumes, attachments, root DeleteOnTermination and the AZ lock, as a report','Read-only','$0.00 synthetic; live Describe calls are free; cap $0.05',COMPUTE_ARGS,''),
+ ('spot_nano_lifecycle','Launch one tagged no-public-IP spot nano, check it, terminate it and prove zero leftovers','Write with the lmaws-ec2 profile','Synthetic $0.00; live about $0.0005 (spot nano minutes + 8 GiB gp3); cap $0.05',COMPUTE_ARGS.replace('--profile default','--profile lmaws-ec2').replace('data/NAME','.lmaws-local/compute/spot_nano_lifecycle').replace('[--live]','[--live --apply]'),'--live --apply --profile lmaws-ec2')]:
+ ITEMS.append(dict(name=name,category='Compute and fleet',task=name,library='compute',function='recipe_'+name,what=what,access=access,cost=cost,args=args.replace('NAME',name),run=run))
+
 def flatten(path,seen=None):
  seen=set() if seen is None else seen
  path=path.resolve()
@@ -40,8 +51,9 @@ def generate(check=False):
   if item['library']=='spend':args='--period 30 --top 10 --region us-east-1 --profile default --cap 0.25 [--live] [--output PRIVATE_DIR]'
   if item['library']=='prefix':args+=' --ledger-dir .lmaws-local/recipes/ledgers --older-hours 0'
   if item['access'].startswith('Write'):args=args.replace('--profile default','--profile lmaws')+' [--apply]'
-  when={'Identity and access posture':'Before a posture review; IAM-dependent recipes remain synthetic for federated profiles','Inventory':'Before a change or when reviewing current service coverage','Cost and spend':'When investigating a billing period or prioritizing savings opportunities','Idle and waste detection':'When triaging stopped resources; confirm age and usage before action','Tag and naming compliance':'Before enforcing tag or naming policies; review unknown metadata','Leftover search and cleanup by prefix':'After a test run or shutdown to review names and local ledger records','Safe lifecycle sandboxes':'Before a service integration, validate a disposable create/cleanup path'}[item['category']]
-  header='\n'.join('# '+k+': '+v for k,v in [('Access',item['access']),('What',item['what']),('When',when),('Run','lmctl recipes/'+name+'.lms '+('--task queue ' if name=='lifecycle' else '')+'--top 10'),('Preview','lmctl recipes/'+name+'.lms --preview'),('Arguments',args),('Typical-cost',item['cost']),('Category',item['category']),('Library',lib),('Function',item['function']),('Example',example)])
+  if 'args' in item:args=item['args']
+  when={'Identity and access posture':'Before a posture review; IAM-dependent recipes remain synthetic for federated profiles','Inventory':'Before a change or when reviewing current service coverage','Cost and spend':'When investigating a billing period or prioritizing savings opportunities','Idle and waste detection':'When triaging stopped resources; confirm age and usage before action','Tag and naming compliance':'Before enforcing tag or naming policies; review unknown metadata','Leftover search and cleanup by prefix':'After a test run or shutdown to review names and local ledger records','Safe lifecycle sandboxes':'Before a service integration, validate a disposable create/cleanup path','Compute and fleet':'When reviewing a small EC2 fleet without SSH or the aws CLI, or proving a disposable spot lifecycle'}[item['category']]
+  header='\n'.join('# '+k+': '+v for k,v in [('Access',item['access']),('What',item['what']),('When',when),('Run',('lmctl recipes/'+name+'.lms '+item['run']).strip() if 'run' in item else 'lmctl recipes/'+name+'.lms '+('--task queue ' if name=='lifecycle' else '')+'--top 10'),('Preview','lmctl recipes/'+name+'.lms --preview'),('Arguments',args),('Typical-cost',item['cost']),('Category',item['category']),('Library',lib),('Function',item['function']),('Example',example)])
   body='\nimport "./lib/'+item['library']+'.lms";\nlet options=recipe_options(ARGV);\n'
   if name not in ['inventory','lifecycle']:
    body+='options.task='+repr(item['task']).replace("'",'"')+';\n'
@@ -57,7 +69,8 @@ def generate(check=False):
   exheader='# Synthetic-only: '+item['what']+'.\n# This picture-first example always disables live AWS and apply, even if inherited.\n# Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/'+example+'.lms\n'
   exbody='import "../recipes/lib/'+item['library']+'.lms";\nlet options=recipe_options(ARGV);\noptions.live=false;options.apply=false;options.preview=false;options.profile="default";\noptions.task="'+item['task']+'";options.output="data/'+example+'";\nlet report='+item['function']+'(options);\nassert(is_array(report.rows));\n'
   if item['library']=='lifecycle':exbody+='assert(len(report.rows)==1 && report.rows[0].remaining==0);\nreport.rows[0].name="owned synthetic '+item['task']+'";\n'
-  exbody+='recipe_picture(report.rows,"'+item['what']+'","'+example+'");\n'
+  if item['library']=='compute':exbody+='recipe_compute_picture(report,"'+item['task']+'","'+example+'");\n'
+  else:exbody+='recipe_picture(report.rows,"'+item['what']+'","'+example+'");\n'
   if item['library']=='spend':
    exbody=exbody.replace('let report=recipe_spend(options);','options.cap=0.25;\nlet report=recipe_spend(options);')
    exbody=exbody.replace('recipe_picture(report.rows,"'+item['what']+'","'+example+'");','recipe_spend_picture(report,"'+example+'");')

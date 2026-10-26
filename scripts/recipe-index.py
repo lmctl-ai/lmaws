@@ -24,6 +24,7 @@ CATEGORIES = [
     "Tag and naming compliance",
     "Leftover search and cleanup by prefix",
     "Safe lifecycle sandboxes",
+    "Compute and fleet",
 ]
 KEYS = ("category", "what", "access", "when", "run", "preview", "arguments", "typical-cost", "example", "function", "library")
 HEADER_RE = re.compile(r"^\s*(?://|#)\s*([A-Za-z][A-Za-z0-9_ -]*):\s*(.*?)\s*$")
@@ -78,8 +79,8 @@ def read_recipe(path: Path) -> Recipe:
             meta.setdefault("function", function_names[0])
     if not meta["function"].strip():
         raise ValueError(f"{path}: function metadata is empty")
-    if meta["access"] not in {"Read-only", "Write with the lmaws profile"}:
-        raise ValueError(f"{path}: access must be Read-only or Write with the lmaws profile")
+    if meta["access"] not in {"Read-only", "Write with the lmaws profile", "Read-only with the lmaws-ec2 profile", "Write with the lmaws-ec2 profile"}:
+        raise ValueError(f"{path}: access must be Read-only or Write with the lmaws/lmaws-ec2 profile")
     if meta["category"] not in CATEGORIES:
         raise ValueError(f"{path}: unknown category {meta['category']!r}")
     return Recipe(path.relative_to(ROOT), meta)

@@ -122,6 +122,18 @@ println("matched rows:",len(report.rows));
 | [`sandbox_table.lms`](sandbox_table.lms) | Create and tear down one owned table with its run ledger | Write with the lmaws profile | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile lmaws --output data/sandbox_table [--live] [--apply] | Synthetic $0.00; live generally below $0.0001; cap $0.05 |
 | [`sandbox_topic.lms`](sandbox_topic.lms) | Create and tear down one owned topic with its run ledger | Write with the lmaws profile | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile lmaws --output data/sandbox_topic [--live] [--apply] | Synthetic $0.00; live generally below $0.0001; cap $0.05 |
 
+## Compute and fleet
+
+| File | What it does | Access | Arguments | Typical cost |
+|---|---|---|---|---|
+| [`ami_lookup.lms`](ami_lookup.lms) | Latest Ubuntu 24.04 and Amazon Linux 2023 AMIs (arm64, x86_64) from public SSM parameters | Read-only with the lmaws-ec2 profile | --region us-east-1 --profile lmaws-ec2 --output data/ami_lookup [--live] | $0.00 (public SSM parameters are free) |
+| [`cpu_credits.lms`](cpu_credits.lms) | CPU credit balance, usage, surplus and headroom of burstable instances, without SSH | Read-only | --tag-key Project --tag-value VALUE --instance ID --hours 24 --region us-east-1 --profile default --output data/cpu_credits [--live] | $0.00 synthetic; live CloudWatch statistics about $0.00005 per instance; cap $0.05 |
+| [`ebs_roots.lms`](ebs_roots.lms) | EBS volumes, attachments, root DeleteOnTermination and the AZ lock, as a report | Read-only | --region us-east-1 --profile default --output data/ebs_roots [--live] | $0.00 synthetic; live Describe calls are free; cap $0.05 |
+| [`eip_map.lms`](eip_map.lms) | Map Elastic IPs to instances, flag idle ones, report pinned addresses (never releases) | Read-only | --tag-key Project --region us-east-1 --profile default --output data/eip_map [--live] | $0.00 synthetic; live Describe calls are free; cap $0.05 |
+| [`fleet_status.lms`](fleet_status.lms) | Discover tagged instances: state, type, addresses and root-storage policy | Read-only | --tag-key Project --tag-value VALUE --region us-east-1 --profile default --output data/fleet_status [--live] | $0.00 synthetic; live EC2 Describe calls are free; cap $0.05 |
+| [`spot_nano_lifecycle.lms`](spot_nano_lifecycle.lms) | Launch one tagged no-public-IP spot nano, check it, terminate it and prove zero leftovers | Write with the lmaws-ec2 profile | --region us-east-1 --profile lmaws-ec2 --output .lmaws-local/compute/spot_nano_lifecycle [--live --apply] | Synthetic $0.00; live about $0.0005 (spot nano minutes + 8 GiB gp3); cap $0.05 |
+| [`spot_prices.lms`](spot_prices.lms) | Spot price history per AZ for nano types, cheapest AZ and saving vs On-Demand | Read-only | --types t4g.nano,t3.nano --hours 3 --region us-east-1 --profile default --output data/spot_prices [--live] | $0.00 synthetic; live Describe calls are free; cap $0.05 |
+
 ## Picture-first examples
 
 Each recipe points at an offline synthetic example so its output can be previewed safely.
@@ -467,3 +479,66 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 Example: [`examples/recipe_sandbox_topic.lms`](../examples/recipe_sandbox_topic.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/lifecycle.lms`; function `recipe_lifecycle`.
+
+### ami_lookup
+
+![Latest Ubuntu 24.04 and Amazon Linux 2023 AMIs (arm64, x86_64) from public SSM parameters](../docs/images/recipe_ami_lookup.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_ami_lookup.lms`
+
+Example: [`examples/recipe_ami_lookup.lms`](../examples/recipe_ami_lookup.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_ami_lookup`.
+
+### cpu_credits
+
+![CPU credit balance, usage, surplus and headroom of burstable instances, without SSH](../docs/images/recipe_cpu_credits.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_cpu_credits.lms`
+
+Example: [`examples/recipe_cpu_credits.lms`](../examples/recipe_cpu_credits.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_cpu_credits`.
+
+### ebs_roots
+
+![EBS volumes, attachments, root DeleteOnTermination and the AZ lock, as a report](../docs/images/recipe_ebs_roots.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_ebs_roots.lms`
+
+Example: [`examples/recipe_ebs_roots.lms`](../examples/recipe_ebs_roots.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_ebs_roots`.
+
+### eip_map
+
+![Map Elastic IPs to instances, flag idle ones, report pinned addresses (never releases)](../docs/images/recipe_eip_map.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_eip_map.lms`
+
+Example: [`examples/recipe_eip_map.lms`](../examples/recipe_eip_map.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_eip_map`.
+
+### fleet_status
+
+![Discover tagged instances: state, type, addresses and root-storage policy](../docs/images/recipe_fleet_status.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_fleet_status.lms`
+
+Example: [`examples/recipe_fleet_status.lms`](../examples/recipe_fleet_status.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_fleet_status`.
+
+### spot_nano_lifecycle
+
+![Launch one tagged no-public-IP spot nano, check it, terminate it and prove zero leftovers](../docs/images/recipe_spot_nano_lifecycle.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_spot_nano_lifecycle.lms`
+
+Example: [`examples/recipe_spot_nano_lifecycle.lms`](../examples/recipe_spot_nano_lifecycle.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_spot_nano_lifecycle`.
+
+### spot_prices
+
+![Spot price history per AZ for nano types, cheapest AZ and saving vs On-Demand](../docs/images/recipe_spot_prices.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_spot_prices.lms`
+
+Example: [`examples/recipe_spot_prices.lms`](../examples/recipe_spot_prices.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_spot_prices`.

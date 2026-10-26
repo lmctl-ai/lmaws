@@ -187,6 +187,18 @@ println("matched rows:",len(report.rows));
 | [`sandbox_table.lms`](recipes/sandbox_table.lms) | Create and tear down one owned table with its run ledger | Write with the lmaws profile | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile lmaws --output data/sandbox_table [--live] [--apply] | Synthetic $0.00; live generally below $0.0001; cap $0.05 |
 | [`sandbox_topic.lms`](recipes/sandbox_topic.lms) | Create and tear down one owned topic with its run ledger | Write with the lmaws profile | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile lmaws --output data/sandbox_topic [--live] [--apply] | Synthetic $0.00; live generally below $0.0001; cap $0.05 |
 
+### Compute and fleet
+
+| File | What it does | Access | Arguments | Typical cost |
+|---|---|---|---|---|
+| [`ami_lookup.lms`](recipes/ami_lookup.lms) | Latest Ubuntu 24.04 and Amazon Linux 2023 AMIs (arm64, x86_64) from public SSM parameters | Read-only with the lmaws-ec2 profile | --region us-east-1 --profile lmaws-ec2 --output data/ami_lookup [--live] | $0.00 (public SSM parameters are free) |
+| [`cpu_credits.lms`](recipes/cpu_credits.lms) | CPU credit balance, usage, surplus and headroom of burstable instances, without SSH | Read-only | --tag-key Project --tag-value VALUE --instance ID --hours 24 --region us-east-1 --profile default --output data/cpu_credits [--live] | $0.00 synthetic; live CloudWatch statistics about $0.00005 per instance; cap $0.05 |
+| [`ebs_roots.lms`](recipes/ebs_roots.lms) | EBS volumes, attachments, root DeleteOnTermination and the AZ lock, as a report | Read-only | --region us-east-1 --profile default --output data/ebs_roots [--live] | $0.00 synthetic; live Describe calls are free; cap $0.05 |
+| [`eip_map.lms`](recipes/eip_map.lms) | Map Elastic IPs to instances, flag idle ones, report pinned addresses (never releases) | Read-only | --tag-key Project --region us-east-1 --profile default --output data/eip_map [--live] | $0.00 synthetic; live Describe calls are free; cap $0.05 |
+| [`fleet_status.lms`](recipes/fleet_status.lms) | Discover tagged instances: state, type, addresses and root-storage policy | Read-only | --tag-key Project --tag-value VALUE --region us-east-1 --profile default --output data/fleet_status [--live] | $0.00 synthetic; live EC2 Describe calls are free; cap $0.05 |
+| [`spot_nano_lifecycle.lms`](recipes/spot_nano_lifecycle.lms) | Launch one tagged no-public-IP spot nano, check it, terminate it and prove zero leftovers | Write with the lmaws-ec2 profile | --region us-east-1 --profile lmaws-ec2 --output .lmaws-local/compute/spot_nano_lifecycle [--live --apply] | Synthetic $0.00; live about $0.0005 (spot nano minutes + 8 GiB gp3); cap $0.05 |
+| [`spot_prices.lms`](recipes/spot_prices.lms) | Spot price history per AZ for nano types, cheapest AZ and saving vs On-Demand | Read-only | --types t4g.nano,t3.nano --hours 3 --region us-east-1 --profile default --output data/spot_prices [--live] | $0.00 synthetic; live Describe calls are free; cap $0.05 |
+
 ### Picture-first examples
 
 Each recipe points at an offline synthetic example so its output can be previewed safely.
@@ -533,6 +545,69 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 Example: [`examples/recipe_sandbox_topic.lms`](examples/recipe_sandbox_topic.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/lifecycle.lms`; function `recipe_lifecycle`.
 
+#### ami_lookup
+
+![Latest Ubuntu 24.04 and Amazon Linux 2023 AMIs (arm64, x86_64) from public SSM parameters](docs/images/recipe_ami_lookup.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_ami_lookup.lms`
+
+Example: [`examples/recipe_ami_lookup.lms`](examples/recipe_ami_lookup.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_ami_lookup`.
+
+#### cpu_credits
+
+![CPU credit balance, usage, surplus and headroom of burstable instances, without SSH](docs/images/recipe_cpu_credits.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_cpu_credits.lms`
+
+Example: [`examples/recipe_cpu_credits.lms`](examples/recipe_cpu_credits.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_cpu_credits`.
+
+#### ebs_roots
+
+![EBS volumes, attachments, root DeleteOnTermination and the AZ lock, as a report](docs/images/recipe_ebs_roots.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_ebs_roots.lms`
+
+Example: [`examples/recipe_ebs_roots.lms`](examples/recipe_ebs_roots.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_ebs_roots`.
+
+#### eip_map
+
+![Map Elastic IPs to instances, flag idle ones, report pinned addresses (never releases)](docs/images/recipe_eip_map.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_eip_map.lms`
+
+Example: [`examples/recipe_eip_map.lms`](examples/recipe_eip_map.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_eip_map`.
+
+#### fleet_status
+
+![Discover tagged instances: state, type, addresses and root-storage policy](docs/images/recipe_fleet_status.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_fleet_status.lms`
+
+Example: [`examples/recipe_fleet_status.lms`](examples/recipe_fleet_status.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_fleet_status`.
+
+#### spot_nano_lifecycle
+
+![Launch one tagged no-public-IP spot nano, check it, terminate it and prove zero leftovers](docs/images/recipe_spot_nano_lifecycle.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_spot_nano_lifecycle.lms`
+
+Example: [`examples/recipe_spot_nano_lifecycle.lms`](examples/recipe_spot_nano_lifecycle.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_spot_nano_lifecycle`.
+
+#### spot_prices
+
+![Spot price history per AZ for nano types, cheapest AZ and saving vs On-Demand](docs/images/recipe_spot_prices.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_spot_prices.lms`
+
+Example: [`examples/recipe_spot_prices.lms`](examples/recipe_spot_prices.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_spot_prices`.
+
 <!-- RECIPES:END -->
 
 ## API
@@ -551,6 +626,12 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 | `run.bucket(name)`, `queue(name)`, `topic(name)` | Create owned storage/messaging resources |
 | `run.parameter(name,value)`, `table(name)`, `log_group(name)` | Create owned standard parameters, on-demand tables and log groups |
 | `run.put(resource,key,value)`, `cleanup()`, `remaining()` | Update owned resources, tear down, inspect outstanding resources |
+| `cloud.ec2_instances(tagKey,tagValue)`, `addresses()`, `volumes()`, `subnets()` | EC2 fleet, Elastic IP, EBS and subnet Rows (empty tag value = any instance with that tag key) |
+| `cloud.cpu_credits(idsCsv,hours)`, `spot_prices(typesCsv,hours)`, `instance_status(id)` | Burstable credit metrics, latest spot price per AZ, state and status checks |
+| `cloud.public_parameter("/aws/service/...")` | Public SSM parameter (for example the latest AMI id) |
+| `cloud.spot_run()` then `spot.security_group(vpc)`, `launch(type,ami,subnet,sg,maxPrice)` | One run-owned t4g.nano/t3.nano one-time spot sandbox, tagged `lmaws_test` at creation, no public IPv4 |
+| `spot.wait_state(id,state,s)`, `wait_status_ok(id,s)`, `stop/start/terminate(id)` | Bounded waits; actions only on this run's tagged instances |
+| `spot.teardown()`, `verify()`, `leftovers()`, `estimated_cost()`, `cloud.spot_recover(runId)` | Teardown (also on every failure), provider proof, account leftover search, cost |
 
 ```lmscript
 mkdir("data");
@@ -569,7 +650,7 @@ assert(r.code == 0);
 
 For `run.put`, `key` is the S3 object key or DynamoDB `pk`; queue/topic/parameter writes use `value` as the message or parameter value, and log groups accept `key="retention_days"`.
 
-v0.1.3 writes are limited to those six resource kinds. Compute, networking, IAM, ECS, Lambda, DNS and Secrets Manager are metadata-only.
+Writes are limited to those six resource kinds plus, from v0.1.5, one run-owned spot nano sandbox (instance, its root volume and network interface, one security group) under `AWS_PROFILE=lmaws-ec2`. Other compute, networking, IAM, ECS, Lambda, DNS and Secrets Manager calls are metadata-only.
 
 ## Cost per example
 
@@ -577,7 +658,7 @@ Every example prints a final `estimated cost: $...` line. The original metadata/
 
 Each ledger refuses the next creation above the example cap of $0.05 or the whole-run hard ceiling of $0.25. Evidence is stored as `evidence/live-cost-<example>-<run-id>.json`; successful entries include the price table, requests, resources and leftover count. Nineteen read-only examples retain measured $0.00 evidence. The seven write/lifecycle examples are run once with `AWS_PROFILE=lmaws`; each successful lifecycle has a measured price-table estimate and is independently verified absent with the read-only `default` profile. The four IAM-dependent examples are intentionally skipped and labelled **estimated, not measured live**.
 
-Profiles: `default` is READ-ONLY; **only `AWS_PROFILE=lmaws` may mutate**, in `us-east-1`. The host rejects real create/update/delete calls under any other active profile. No OIDC, IAM edits, credential/profile edits or alternate identity are used. The federated session policy at `~/.aws/session-tools/tasks/iam-snapshots/local-lmaws-session.json` is re-issued by `~/.aws/session-tools/scripts/aws-profile-session.py`; its combined plaintext inline/managed policy is limited to 2,048 characters and scopes resources to `lmaws_` / `lmaws-` names plus `lmaws_test` tags. Do not put account IDs or policy contents in this public repository.
+Profiles: `default` is READ-ONLY; **only `AWS_PROFILE=lmaws` (service sandboxes) or `lmaws-ec2` (the spot nano sandbox) may mutate**, in `us-east-1`. The host rejects real create/update/delete calls under any other active profile. No OIDC, IAM edits, credential/profile edits or alternate identity are used. The federated session policy at `~/.aws/session-tools/tasks/iam-snapshots/local-lmaws-session.json` is re-issued by `~/.aws/session-tools/scripts/aws-profile-session.py`; its combined plaintext inline/managed policy is limited to 2,048 characters and scopes resources to `lmaws_` / `lmaws-` names plus `lmaws_test` tags. Do not put account IDs or policy contents in this public repository.
 
 The v0.1.3 native campaign added six successful lifecycle runs and independent
 default-profile absence checks: measured estimates total $0.00001272500021 for

@@ -1,4 +1,4 @@
-# Local AWS profile test procedure (v0.1.3)
+# Local AWS profile test procedure (v0.1.5)
 
 READY FOR USER TEST. All 26 live native/lmcloud pairs completed using lmcloud
 v0.1.10 and AWS provider 5.100.0: eight comparisons match and 18 retain explicit
@@ -176,3 +176,31 @@ The new eight spend examples are synthetic by default. See
 [SPEND_REPORT.md](SPEND_REPORT.md) for the separate default-profile live opt-in,
 private output directory, CE/metric query cap and pricing assumptions. Never
 commit real report contents or pictures; this guide contains no live spend values.
+
+## Compute recipes and the spot nano lifecycle (v0.1.5)
+
+Read-only compute recipes use `default`; the AMI lookup and the lifecycle use the separate
+`lmaws-ec2` federated profile (EC2 spot nano only, us-east-1, `lmaws_test` tags at creation; see
+[durable-memory/10-compute.md](../durable-memory/10-compute.md)). From a checkout or with the
+released host on PATH:
+
+```sh
+lmctl recipes/fleet_status.lms --live --profile default --tag-key Project --tag-value YOUR_PROJECT
+lmctl recipes/cpu_credits.lms --live --profile default --tag-key Project --tag-value YOUR_PROJECT --hours 24
+lmctl recipes/eip_map.lms --live --profile default
+lmctl recipes/spot_prices.lms --live --profile default --types t4g.nano,t3.nano --hours 3
+lmctl recipes/ebs_roots.lms --live --profile default
+lmctl recipes/ami_lookup.lms --live --profile lmaws-ec2
+lmctl recipes/spot_nano_lifecycle.lms --preview
+lmctl recipes/spot_nano_lifecycle.lms --live --apply --profile lmaws-ec2   # run once
+```
+
+Expected lifecycle output: the plan (cheapest eligible AZs, max price at most On-Demand), the
+attempts (a capacity refusal falls back to the next candidate), running within seconds, status
+checks ok in about two minutes, `stop: UnsupportedOperation` (one-time spot instances cannot be
+stopped), terminated, the spot cost (well below $0.05) and `leftovers: 0`. Reports, ledgers and
+evidence stay in the git-ignored `.lmaws-local/`. If EC2 leaves the one-time request
+active after termination and the session policy does not allow `ec2:CancelSpotInstanceRequests`,
+the recipe reports `denied by the session policy` and exits nonzero; rerun teardown later with
+`cloud.spot_recover("<run id>")` (needs the local spot ledger). Never use these recipes against
+instances that do not carry this run's `lmaws_test` tag; the host refuses them.

@@ -1,0 +1,524 @@
+# Access: Read-only with the lmaws-ec2 profile
+# What: Latest Ubuntu 24.04 and Amazon Linux 2023 AMIs (arm64, x86_64) from public SSM parameters
+# When: When reviewing a small EC2 fleet without SSH or the aws CLI, or proving a disposable spot lifecycle
+# Run: lmctl recipes/ami_lookup.lms
+# Preview: lmctl recipes/ami_lookup.lms --preview
+# Arguments: --region us-east-1 --profile lmaws-ec2 --output data/ami_lookup [--live]
+# Typical-cost: $0.00 (public SSM parameters are free)
+# Category: Compute and fleet
+# Library: recipes/lib/compute.lms
+# Function: recipe_ami_lookup
+# Example: recipe_ami_lookup
+# Generated standalone entry; reusable source: recipes/lib/compute.lms
+let recipe_budget={reserved_units:0};
+fn recipe_env(key,fallback) { let value=getenv(key,""); if(value=="") {return fallback;} return value; }
+fn recipe_normalize(options) {
+  let defaults = {period:num(recipe_env("LMAWS_RECIPE_PERIOD","30")),top:num(recipe_env("LMAWS_RECIPE_TOP","10")),prefix:recipe_env("LMAWS_RECIPE_PREFIX","lmaws"),region:recipe_env("AWS_REGION",recipe_env("AWS_DEFAULT_REGION","us-east-1")),profile:recipe_env("AWS_PROFILE",recipe_env("AWS_DEFAULT_PROFILE","default")),live:false,apply:false,preview:false,output:"data/recipe",task:"queues",cap:num(recipe_env("LMAWS_MAX_COST_USD","0.05")),older_hours:0,filter_prefix:false,output_explicit:false,cap_explicit:recipe_env("LMAWS_MAX_COST_USD","")!="",ledger_dir:recipe_env("LMAWS_LEDGER_DIR",".lmaws-local/recipes/ledgers"),tag_key:"Project",tag_value:"",instance:"",hours:24,types:"t4g.nano,t3.nano",timeout_ms:300000};
+  let o=merge(defaults,options);
+  if(has_key(options,"output") && !has_key(options,"output_explicit")) {o.output_explicit=true;}
+  if(has_key(options,"cap") && !has_key(options,"cap_explicit")) {o.cap_explicit=true;}
+  assert(is_number(o.period) && o.period>=1 && o.period<=365 && floor(o.period)==o.period);
+  assert(is_number(o.top) && o.top>=1 && o.top<=1000 && floor(o.top)==o.top);
+  assert(is_number(o.cap) && o.cap>=0 && o.cap<=0.25);
+  assert(is_number(o.older_hours) && o.older_hours>=0 && floor(o.older_hours)==o.older_hours);
+  o.output=replace_all(str(o.output),"\\","/");
+  o.ledger_dir=replace_all(str(o.ledger_dir),"\\","/");
+  assert(regex_test(o.ledger_dir,"^[A-Za-z0-9_./: -]+$"));
+  assert(o.profile=="default" || o.profile=="lmaws" || o.profile=="lmaws-ec2");
+  assert(is_number(o.hours) && o.hours>=1 && o.hours<=720 && floor(o.hours)==o.hours);
+  assert(is_number(o.timeout_ms) && o.timeout_ms>=1000 && o.timeout_ms<=900000);
+  assert(regex_test(str(o.tag_key),"^[A-Za-z0-9_.:/=+@ -]{0,128}$") && regex_test(str(o.tag_value),"^[A-Za-z0-9_.:/=+@ -]{0,256}$"));
+  assert(regex_test(str(o.types),"^[a-z0-9]+[.][a-z0-9]+(,[a-z0-9]+[.][a-z0-9]+)*$"));
+  assert(regex_test(o.region,"^[a-z]{2}(-[a-z]+)+-[0-9]+$"));
+  assert(regex_test(o.output,"^[A-Za-z0-9_./: -]+$"));
+  assert(is_string(o.prefix) && len(o.prefix)<=128);
+  return o;
+}
+fn recipe_options(argv) {
+  let o={}; let i=0;
+  while(i<len(argv)) {
+    let key=argv[i];
+    if(key=="--live") {o.live=true;}
+    else if(key=="--apply") {o.apply=true;}
+    else if(key=="--preview" || key=="--dry-run") {o.preview=true;}
+    else {
+      assert(i+1<len(argv));i=i+1;let value=argv[i];
+      if(key=="--period" || key=="--days") {o.period=num(value);}
+      else if(key=="--top" || key=="--top-n") {o.top=num(value);}
+      else if(key=="--cap") {o.cap=num(value);o.cap_explicit=true;}
+      else if(key=="--older-hours") {o.older_hours=num(value);}
+      else if(key=="--prefix") {o.prefix=value;o.filter_prefix=true;}
+      else if(key=="--region") {o.region=value;}
+      else if(key=="--profile") {o.profile=value;}
+      else if(key=="--output") {o.output=value;o.output_explicit=true;}
+      else if(key=="--ledger-dir") {o.ledger_dir=value;}
+      else if(key=="--task") {o.task=value;}
+      else if(key=="--tag-key") {o.tag_key=value;}
+      else if(key=="--tag-value") {o.tag_value=value;}
+      else if(key=="--instance") {o.instance=value;}
+      else if(key=="--hours") {o.hours=num(value);}
+      else if(key=="--types") {o.types=value;}
+      else {println("Unknown recipe argument:",key);assert(false);}
+    }
+    i=i+1;
+  }
+  return recipe_normalize(o);
+}
+fn recipe_run(program, options) {
+  let o=recipe_normalize(options);
+  assert(!o.preview);
+  if(o.live) {
+    let units=ceil(o.cap*100000000);
+    if(recipe_budget.reserved_units+units>25000000) {println("Recipe whole-run cap exceeded; reduce per-recipe caps before another live call.");assert(false);}
+    recipe_budget.reserved_units=recipe_budget.reserved_units+units;
+  }
+  mkdir(dirname(o.output),true);
+  let bytecode=temp_file();savedsl(program,bytecode);
+  let command=dsl_cli(program);
+  let settings={AWS_PROFILE:o.profile,AWS_DEFAULT_PROFILE:o.profile,AWS_REGION:o.region,AWS_DEFAULT_REGION:o.region,LMAWS_LIVE:o.live ? "1":"0",LMAWS_SPEND_LIVE:o.live ? "1":"0",LMAWS_MAX_COST_USD:str(o.cap),LMAWS_LEDGER_DIR:o.ledger_dir,LMAWS_EVIDENCE_DIR:".lmaws-local/recipes/evidence"};
+  let previous={};
+  for(key in keys(settings)) {previous[key]=getenv(key,"");set_env(key,settings[key]);}
+  let argv=concat(command,["--dsl",bytecode]);
+  if(getenv("OS","")!="Windows_NT") {let pre=["env"];for(key in keys(settings)) {push(pre,key+"="+str(settings[key]));}argv=concat(pre,argv);}
+  else if(o.live) {for(key in keys(settings)) {if(getenv(key,"")!=str(settings[key])) {println("Live recipes on Windows: set "+key+"="+str(settings[key])+" in the parent environment first.");assert(false);}}}
+  let r=system(argv,{timeoutMs:o.timeout_ms});
+  for(key in keys(previous)) {set_env(key,previous[key]);}
+  remove_file(bytecode);
+  if(r.code!=0) {println("Recipe host failed; see the host's sanitized diagnostic.");println(r.stderr);}
+  let found=false;
+  for(line in lines(r.stdout)) {
+    if(starts_with(line,"Cost Explorer requests:") || starts_with(line,"CloudWatch metric requests:") || starts_with(line,"CloudWatch metric units:")) {println(line);}
+    if(starts_with(line,"estimated cost: $")) {println(line);found=true;}
+  }
+  if(!found && r.code!=0) {println("estimated cost: $"+str(o.cap)+" (reserved upper bound; host receipt unavailable)");}
+  assert(r.code==0);
+  assert(found);
+  return r;
+}
+fn recipe_preview(options,task) {
+  let o=recipe_normalize(options);
+  println(json_stringify({task:task,region:o.region,profile:o.profile,prefix:o.prefix,period:o.period,top:o.top,live:o.live,apply:o.apply,preview:true},2));
+  println("estimated cost: $0.00");
+  return {rows:[],preview:true};
+}
+fn recipe_select(rows,options) {
+  let o=recipe_normalize(options);let selected=[];
+  for(row in rows) {
+    if(len(selected)<o.top) {push(selected,row);}
+  }
+  return selected;
+}
+fn recipe_cost_line(report) {
+  let answer="estimated cost: $0.00";
+  let result=get(report,"result",{});
+  for(line in lines(str(get(result,"stdout","")))) {
+    if(starts_with(line,"estimated cost: $")) {answer=line;}
+  }
+  return answer;
+}
+fn recipe_picture(rows,title,name) {
+  assert(regex_test(name,"^[a-z][a-z0-9_]*$"));
+  mkdir("images");mkdir("data");
+  let counts={};let max_count=1;
+  for(row in rows) {
+    let label=str(get(row,"kind",get(row,"task","matching resources")));
+    label=replace_all(label,"_"," ");
+    label=regex_replace(label,"[^A-Za-z0-9 .-]","","g");
+    counts[label]=get(counts,label,0)+1;
+    if(counts[label]>max_count) {max_count=counts[label];}
+  }
+  let data="label,count\n";
+  for(label in keys(counts)) {data=data+label+","+str(counts[label])+"\n";}
+  if(len(rows)==0) {data=data+"no matches,0\n";}
+  let chart_title="Synthetic recipe: "+replace_all(name,"_"," ");
+  write_file("data/"+name+".csv",data);
+  let chart=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${"images/"+name+".png"},900,560);
+plot.cmd(${"set datafile separator ','; set title '"+chart_title+"'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.6; set yrange [0:"+str(max_count+1)+"]; set grid ytics; set xtics rotate by -30"});
+plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});
+plot.close();
+end _dsl_
+  let code=temp_file();savedsl(chart,code);let r=system(concat(dsl_cli(chart),["--dsl",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
+  println("images/"+name+".png");
+}
+
+
+fn _compute_output(o, name) {
+  let out = str(o.output);
+  if (o.live && !o.output_explicit) { out = ".lmaws-local/compute/" + name; }
+  mkdir(dirname(out), true);
+  return out;
+}
+fn _compute_r(x, digits) { let f = pow(10, digits); return round(x * f) / f; }
+fn _compute_save(o, out, report) {
+  write_file(out + ".json", json_stringify(report, 2));
+  write_csv(out + ".csv", report.rows);
+  return report;
+}
+fn _compute_find(rows, key, value) {
+  for (row in rows) { if (str(get(row, key, "")) == value) { return row; } }
+  return {};
+}
+
+fn recipe_burst_spec(type) {
+  let parts = split(type, ".");
+  if (len(parts) != 2 || !contains(["t2","t3","t3a","t4g"], parts[0])) { return {burstable:false}; }
+  let size = parts[1];
+  let table = {nano:[2,5], micro:[2,10], small:[2,20], medium:[2,20], large:[2,30], xlarge:[4,40], "2xlarge":[8,40]};
+  if (!has_key(table, size)) { return {burstable:false}; }
+  let spec = table[size];
+  let earn = spec[0] * spec[1] * 60 / 100;
+  return {burstable:true, vcpus:spec[0], baseline_pct:spec[1], earn_per_hour:earn, max_balance:earn * 24};
+}
+
+fn recipe_fleet_status(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "fleet_status"); }
+  let out = _compute_output(o, "fleet_status");
+  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_fleet_status");
+file_write(${out + ".instances.raw.json"}, cloud.ec2_instances(${o.tag_key}, ${o.tag_value}).json());
+file_write(${out + ".addresses.raw.json"}, cloud.addresses().json());
+end _dsl_
+  let result = recipe_run(p, o);
+  let addresses = json_parse(read_file(out + ".addresses.raw.json"));
+  let rows = [];
+  for (i in json_parse(read_file(out + ".instances.raw.json"))) {
+    let eip = _compute_find(addresses, "instance", get(i, "id", ""));
+    let keep = get(i, "root_delete_on_termination", "") == "false";
+    push(rows, {kind:"instance", name:get(i,"name",""), role:get(i,"role",""), state:get(i,"state",""), type:get(i,"type",""), az:get(i,"az",""),
+      private_ip:get(i,"private_ip",""), public_ip:get(i,"public_ip",""), elastic_ip:get(eip,"public_ip",""), market:get(i,"market",""),
+      root_size_gib:get(i,"root_size_gib",""), root_type:get(i,"root_type",""),
+      storage_policy: get(i,"root_volume","")=="" ? "no root volume attached" : (keep ? "root kept when the instance terminates" : "root deleted when the instance terminates")});
+  }
+  return merge(_compute_save(o, out, {rows:recipe_select(rows, o), instance_count:len(rows), synthetic:!o.live, tag_key:o.tag_key, tag_value:o.tag_value, read_only:true}), {result:result, output_file:out + ".json"});
+}
+
+fn recipe_cpu_credits(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "cpu_credits"); }
+  let out = _compute_output(o, "cpu_credits");
+  let fleet = recipe_fleet_status(merge(o, {output:out + ".fleet", output_explicit:true, top:1000}));
+  let ids = []; let names = {}; let types = {};
+  for (row in json_parse(read_file(out + ".fleet.instances.raw.json"))) {
+    let wanted = o.instance == "" || get(row,"id","") == o.instance || get(row,"name","") == o.instance;
+    if (wanted && get(row,"state","") == "running" && get(recipe_burst_spec(get(row,"type","")), "burstable", false) && len(ids) < 20) {
+      push(ids, row.id); names[row.id] = get(row,"name","") == "" ? row.id : row.name; types[row.id] = row.type;
+    }
+  }
+  let rows = []; let result = fleet.result;
+  if (len(ids) > 0) {
+    let csv = join(ids, ",");
+    let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_cpu_credits");
+file_write(${out + ".metrics.raw.json"}, cloud.cpu_credits(${csv}, ${o.hours}).json());
+end _dsl_
+    result = recipe_run(p, o);
+    let metrics = json_parse(read_file(out + ".metrics.raw.json"));
+    for (id in ids) {
+      let spec = recipe_burst_spec(types[id]);
+      let balance = 0; let surplus = 0; let charged = 0; let used = 0; let used_n = 0; let cpu = 0; let cpu_n = 0;
+      for (m in metrics) {
+        if (m.instance != id) { continue; }
+        if (m.metric == "CPUCreditBalance" && m.average != "") { balance = num(m.average); }
+        if (m.metric == "CPUSurplusCreditBalance" && m.average != "") { surplus = num(m.average); }
+        if (m.metric == "CPUSurplusCreditsCharged" && m.sum != "") { charged = charged + num(m.sum); }
+        if (m.metric == "CPUCreditUsage" && m.sum != "") { used = used + num(m.sum); used_n = used_n + 1; }
+        if (m.metric == "CPUUtilization" && m.average != "") { cpu = cpu + num(m.average); cpu_n = cpu_n + 1; }
+      }
+      let per_hour = used_n == 0 ? 0 : used / used_n;
+      let net = spec.earn_per_hour - per_hour;
+      push(rows, {kind:"cpu_credits", name:names[id], type:types[id], baseline_pct:spec.baseline_pct, earn_per_hour:spec.earn_per_hour,
+        balance:_compute_r(balance, 1), max_balance:spec.max_balance, headroom_pct:_compute_r(100 * balance / spec.max_balance, 1),
+        used_per_hour:_compute_r(per_hour, 2), avg_cpu_pct:_compute_r(cpu_n == 0 ? 0 : cpu / cpu_n, 1),
+        surplus_balance:_compute_r(surplus, 1), surplus_charged:_compute_r(charged, 2),
+        hours_to_empty: net >= 0 ? "accruing" : str(_compute_r(balance / (0 - net), 1))});
+    }
+  }
+  return merge(_compute_save(o, out, {rows:rows, hours:o.hours, synthetic:!o.live, note:"credits from CloudWatch AWS/EC2 hourly statistics; no SSH; surplus credits are billed separately and not covered by Savings Plans"}), {result:result, output_file:out + ".json"});
+}
+
+fn recipe_eip_map(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "eip_map"); }
+  let out = _compute_output(o, "eip_map");
+  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_eip_map");
+file_write(${out + ".addresses.raw.json"}, cloud.addresses().json());
+file_write(${out + ".instances.raw.json"}, cloud.ec2_instances("", "").json());
+end _dsl_
+  let result = recipe_run(p, o);
+  let instances = json_parse(read_file(out + ".instances.raw.json"));
+  let rows = []; let idle = 0;
+  for (a in json_parse(read_file(out + ".addresses.raw.json"))) {
+    let owner = _compute_find(instances, "id", get(a, "instance", ""));
+    let is_idle = get(a, "idle", "false") == "true";
+    if (is_idle) { idle = idle + 1; }
+    let tagged = get(owner, o.tag_key == "Project" ? "project" : "name", "") != "" || get(a, "project", "") != "";
+    push(rows, {kind:"elastic_ip", public_ip:get(a,"public_ip",""), name:get(a,"name",""), attached_to:get(owner,"name",get(a,"instance","")), role:get(owner,"role",get(a,"role","")),
+      state: is_idle ? "idle" : "in use", monthly_usd:3.6,
+      policy: is_idle ? "idle: review before releasing (billed while allocated)" : (tagged ? "pinned: keep, never release automatically" : "attached: confirm the owner")});
+  }
+  return merge(_compute_save(o, out, {rows:rows, idle_count:idle, monthly_usd:_compute_r(3.6 * len(rows), 2), synthetic:!o.live, release_authorized:false, note:"every public IPv4 address costs $0.005/hour, attached or idle; this report never releases anything"}), {result:result, output_file:out + ".json"});
+}
+
+fn recipe_ami_parameters() {
+  return [
+    {family:"Ubuntu 24.04", arch:"arm64", parameter:"/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"},
+    {family:"Ubuntu 24.04", arch:"x86_64", parameter:"/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"},
+    {family:"Amazon Linux 2023", arch:"arm64", parameter:"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"},
+    {family:"Amazon Linux 2023", arch:"x86_64", parameter:"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"}];
+}
+
+fn recipe_ami_lookup(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "ami_lookup"); }
+  assert(!o.live || o.profile == "lmaws-ec2");
+  let out = _compute_output(o, "ami_lookup");
+  let params = recipe_ami_parameters();
+  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_ami_lookup");
+file_write(${out + ".0.raw"}, cloud.public_parameter(${params[0].parameter}));
+file_write(${out + ".1.raw"}, cloud.public_parameter(${params[1].parameter}));
+file_write(${out + ".2.raw"}, cloud.public_parameter(${params[2].parameter}));
+file_write(${out + ".3.raw"}, cloud.public_parameter(${params[3].parameter}));
+end _dsl_
+  let result = recipe_run(p, o);
+  let rows = []; let i = 0;
+  for (param in params) { push(rows, merge(param, {kind:"ami", ami:trim(read_file(out + "." + str(i) + ".raw"))})); i = i + 1; }
+  return merge(_compute_save(o, out, {rows:rows, synthetic:!o.live, region:o.region}), {result:result, output_file:out + ".json"});
+}
+
+fn recipe_spot_prices(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "spot_prices"); }
+  let out = _compute_output(o, "spot_prices");
+  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_spot_prices");
+file_write(${out + ".raw.json"}, cloud.spot_prices(${o.types}, ${o.hours}).json());
+end _dsl_
+  let result = recipe_run(p, o);
+  let prices = json_parse(read_file(out + ".raw.json"));
+  let cheapest = [];
+  for (type in split(o.types, ",")) {
+    let best = {}; let n = 0;
+    for (row in prices) {
+      if (row.type != type) { continue; }
+      n = n + 1;
+      if (!has_key(best, "price") || num(row.price) < num(best.price)) { best = row; }
+    }
+    if (n > 0) {
+      let od = best.on_demand == "" ? 0 : num(best.on_demand);
+      push(cheapest, {kind:"cheapest", type:type, az:best.az, price:num(best.price), on_demand:od, saving_pct: od == 0 ? 0 : _compute_r(100 * (1 - num(best.price) / od), 1), zones:n});
+    }
+  }
+  return merge(_compute_save(o, out, {rows:cheapest, prices:prices, hours:o.hours, synthetic:!o.live, product:"Linux/UNIX"}), {result:result, output_file:out + ".json"});
+}
+
+fn recipe_ebs_roots(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "ebs_roots"); }
+  let out = _compute_output(o, "ebs_roots");
+  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_ebs_roots");
+file_write(${out + ".volumes.raw.json"}, cloud.volumes().json());
+file_write(${out + ".instances.raw.json"}, cloud.ec2_instances("", "").json());
+end _dsl_
+  let result = recipe_run(p, o);
+  let instances = json_parse(read_file(out + ".instances.raw.json"));
+  let rows = []; let gib = 0;
+  for (v in json_parse(read_file(out + ".volumes.raw.json"))) {
+    let owner = _compute_find(instances, "id", get(v, "instance", ""));
+    let root = get(owner, "root_device", "") != "" && get(owner, "root_device", "") == get(v, "device", "");
+    let size = num(get(v, "size_gib", "0")); gib = gib + size;
+    push(rows, {kind:"volume", name:get(v,"name",""), az:get(v,"az",""), size_gib:size, type:get(v,"type",""), state:get(v,"state",""),
+      attached_to:get(owner,"name",get(v,"instance","")), root:root, delete_on_termination:get(v,"delete_on_termination",""), monthly_usd:_compute_r(size * 0.08, 2),
+      az_lock:"attachable only to instances in " + get(v,"az",""),
+      note: get(v,"state","") == "available" ? "unattached: still billed" : (get(v,"delete_on_termination","") == "false" ? "survives instance termination" : "deleted with its instance")});
+  }
+  return merge(_compute_save(o, out, {rows:rows, total_gib:gib, monthly_usd:_compute_r(gib * 0.08, 2), synthetic:!o.live, note:"EBS volumes live in one Availability Zone; a root kept with DeleteOnTermination=false can only boot an instance launched in that same AZ"}), {result:result, output_file:out + ".json"});
+}
+
+fn _spot_pick(prices, subnets, type, skip_az) {
+  let best = {};
+  for (row in prices) {
+    if (row.type != type || row.az == skip_az) { continue; }
+    let subnet = {};
+    for (s in subnets) { if (s.az == row.az && s.default_vpc == "true" && s.default_for_az == "true" && s.fleet == "false") { subnet = s; } }
+    if (!has_key(subnet, "id")) { continue; }
+    if (!has_key(best, "price") || num(row.price) < num(best.price)) { best = merge(row, {subnet:subnet.id, vpc:subnet.vpc}); }
+  }
+  if (has_key(best, "price")) { best.max_price = min(num(best.on_demand), _compute_r(num(best.price) * 1.5, 6)); }
+  return best;
+}
+
+fn recipe_spot_nano_lifecycle(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) {
+    let plan = recipe_preview(o, "spot_nano_lifecycle");
+    println("plan: t4g.nano (fallback t3.nano) one-time spot, 8 GiB gp3 root deleted on termination, no public IPv4, new tagged security group without inbound rules, at most 10 minutes, cap $0.05");
+    return plan;
+  }
+  assert(!o.live || (o.apply && o.profile == "lmaws-ec2"));
+  let out = _compute_output(o, "spot_nano_lifecycle");
+  let p1 = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_spot_plan");
+file_write(${out + ".subnets.raw.json"}, cloud.subnets().json());
+file_write(${out + ".prices.raw.json"}, cloud.spot_prices("t4g.nano,t3.nano", 3).json());
+file_write(${out + ".ami_arm64.raw"}, cloud.public_parameter("/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"));
+file_write(${out + ".ami_x86.raw"}, cloud.public_parameter("/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"));
+end _dsl_
+  recipe_run(p1, o);
+  let subnets = json_parse(read_file(out + ".subnets.raw.json"));
+  let prices = json_parse(read_file(out + ".prices.raw.json"));
+  let arm = trim(read_file(out + ".ami_arm64.raw")); let x86 = trim(read_file(out + ".ami_x86.raw"));
+  let first = _spot_pick(prices, subnets, "t4g.nano", "");
+  let second = _spot_pick(prices, subnets, "t4g.nano", get(first, "az", "-"));
+  let third = _spot_pick(prices, subnets, "t3.nano", "");
+  if (!has_key(first, "price")) { first = third; }
+  if (!has_key(second, "price")) { second = third; }
+  assert(has_key(first, "price") && has_key(third, "price"));
+  let ami1 = first.type == "t4g.nano" ? arm : x86; let ami2 = second.type == "t4g.nano" ? arm : x86; let ami3 = x86;
+  println("plan:", first.type, first.az, "spot", first.price, "max", first.max_price, "| then:", second.type, second.az, "| then:", third.type, third.az);
+  let o2 = merge(o, {timeout_ms:780000});
+  let p2 = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_spot_nano_lifecycle");
+let spot = cloud.spot_run();
+let sg = spot.security_group(${first.vpc});
+let inst = spot.launch(${first.type}, ${ami1}, ${first.subnet}, sg.get("id"), ${first.max_price});
+file_write(${out + ".launch1.json"}, inst.json());
+if (inst.get("status") != "launched") {
+  inst = spot.launch(${second.type}, ${ami2}, ${second.subnet}, sg.get("id"), ${second.max_price});
+  file_write(${out + ".launch2.json"}, inst.json());
+}
+if (inst.get("status") != "launched") {
+  inst = spot.launch(${third.type}, ${ami3}, ${third.subnet}, sg.get("id"), ${third.max_price});
+  file_write(${out + ".launch3.json"}, inst.json());
+}
+if (inst.get("status") == "launched") {
+  let id = inst.get("id");
+  file_write(${out + ".running.json"}, spot.wait_state(id, "running", 300).json());
+  file_write(${out + ".checks.json"}, spot.wait_status_ok(id, 420).json());
+  file_write(${out + ".status.json"}, cloud.instance_status(id).json());
+  file_write(${out + ".stop.json"}, spot.stop(id).json());
+  file_write(${out + ".terminate.json"}, spot.terminate(id).json());
+  file_write(${out + ".terminated.json"}, spot.wait_state(id, "terminated", 300).json());
+}
+file_write(${out + ".teardown.json"}, spot.teardown().json());
+file_write(${out + ".verify.json"}, spot.verify().json());
+file_write(${out + ".leftovers.json"}, spot.leftovers().json());
+file_write(${out + ".price.raw"}, str(spot.spot_price()));
+file_write(${out + ".cost.raw"}, str(spot.estimated_cost()));
+file_write(${out + ".denied.raw"}, spot.denied_action());
+end _dsl_
+  let result = recipe_run(p2, o2);
+  let launch = json_parse(read_file(out + ".launch1.json"));
+  let attempts = [launch.type + " " + launch.status];
+  for (k in ["2", "3"]) { if (file_exists(out + ".launch" + k + ".json")) { launch = json_parse(read_file(out + ".launch" + k + ".json")); push(attempts, launch.type + " " + launch.status); } }
+  let launched = launch.status == "launched";
+  let verify = json_parse(read_file(out + ".verify.json")); let leftovers = json_parse(read_file(out + ".leftovers.json"));
+  let unclean = 0; for (v in verify) { if (v.clean != "true") { unclean = unclean + 1; } }
+  let cost = num(trim(read_file(out + ".cost.raw")));
+  let report = {rows:[], launched:launched, attempts:attempts, launch_status:launch.status, message:get(launch, "message", ""), type:get(launch,"type",""), az:get(launch,"az",""),
+    denied_action:trim(read_file(out + ".denied.raw")), spot_requests:get(json_parse(read_file(out + ".teardown.json")), "spot_requests", ""),
+    spot_price_usd_hour:num(trim(read_file(out + ".price.raw"))), estimated_cost_usd:cost, cap_usd:o.cap, unclean:unclean, leftover_count:len(leftovers) + unclean, synthetic:!o.live, public_ipv4:false, root_gib:8};
+  if (launched) {
+    let running = json_parse(read_file(out + ".running.json")); let checks = json_parse(read_file(out + ".checks.json"));
+    let stop = json_parse(read_file(out + ".stop.json")); let down = json_parse(read_file(out + ".terminated.json"));
+    report.seconds_to_running = num(running.seconds); report.seconds_to_status_ok = num(running.seconds) + num(checks.seconds);
+    report.status_checks = checks.system_status + "/" + checks.instance_status; report.stop_result = stop.status;
+    report.seconds_to_terminated = num(down.seconds); report.final_state = down.state;
+    report.rows = [{phase:"launch to running", seconds:report.seconds_to_running}, {phase:"status checks ok", seconds:num(checks.seconds)}, {phase:"terminate to terminated", seconds:report.seconds_to_terminated}];
+  }
+  _compute_save(o, out, report);
+  println("attempts:", join(attempts, ", "));
+  println("instance:", report.type, report.az, "| launch:", report.launch_status, "| spot $/h:", report.spot_price_usd_hour);
+  if (launched) { println("running after", report.seconds_to_running, "s; checks", report.status_checks, "after", report.seconds_to_status_ok, "s; stop:", report.stop_result, "; terminated after", report.seconds_to_terminated, "s"); }
+  else { println("not launched:", report.message); }
+  println("spot request after teardown:", report.spot_requests);
+  if (report.denied_action != "") { println("denied by the session policy:", report.denied_action, "on spot-instances-request/* tagged lmaws_test; ask an administrator to allow it"); }
+  println("spot cost (price x minutes + 8 GiB gp3): $" + str(_compute_r(cost, 6)), "| leftovers:", report.leftover_count);
+  assert(cost <= o.cap);
+  assert(report.leftover_count == 0);
+  return merge(report, {result:result, output_file:out + ".json"});
+}
+
+
+fn recipe_compute_chart(name, title, ylabel, header, rows, colors) {
+  assert(regex_test(name, "^[a-z][a-z0-9_]*$"));
+  mkdir("images"); mkdir("data");
+  let data = join(header, ",") + "\n";
+  for (row in rows) { data = data + join(row, ",") + "\n"; }
+  write_file("data/" + name + ".csv", data);
+  let using = "";
+  let i = 2;
+  while (i <= len(header)) {
+    if (using != "") { using = using + ", '' every ::1"; }
+    using = using + " using " + str(i) + (i == 2 ? ":xtic(1)" : "") + " title '" + header[i - 1] + "' lc rgb '" + colors[(i - 2) % len(colors)] + "'";
+    i = i + 1;
+  }
+  let chart = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${"images/" + name + ".png"}, 900, 560);
+plot.cmd(${"set termoption noenhanced; set datafile separator ','; set title '" + title + "'; set ylabel '" + ylabel + "'; set style data histograms; set style histogram clustered gap 1; set style fill solid 0.85 border -1; set boxwidth 0.9; set grid ytics; set yrange [0:*]; set key top right; set xtics rotate by -25; set bmargin 6; set rmargin 10"});
+plot.cmd(${"plot 'data/" + name + ".csv' every ::1" + using});
+plot.close();
+end _dsl_
+  let code = temp_file(); savedsl(chart, code); let r = system(concat(dsl_cli(chart), ["--dsl", code]), {timeoutMs:120000}); remove_file(code); assert(r.code == 0);
+  println("images/" + name + ".png");
+}
+
+fn recipe_compute_table(name, title, lines_of_text) {
+  assert(regex_test(name, "^[a-z][a-z0-9_]*$"));
+  mkdir("images");
+  let cmds = "set termoption noenhanced; set title '" + title + "' font ',16'; unset border; unset tics; unset key; set xrange [0:1]; set yrange [0:" + str(len(lines_of_text) + 1) + "]";
+  let i = 0;
+  for (text in lines_of_text) { cmds = cmds + "; set label " + str(i + 1) + " '" + text + "' at 0.04," + str(len(lines_of_text) - i) + " font 'DejaVu Sans Mono,13'"; i = i + 1; }
+  let chart = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${"images/" + name + ".png"}, 900, 360);
+plot.cmd(${cmds});
+plot.cmd("plot -10 notitle");
+plot.close();
+end _dsl_
+  let code = temp_file(); savedsl(chart, code); let r = system(concat(dsl_cli(chart), ["--dsl", code]), {timeoutMs:120000}); remove_file(code); assert(r.code == 0);
+  println("images/" + name + ".png");
+}
+
+fn recipe_compute_picture(report, task, name) {
+  assert(get(report, "synthetic", false));
+  let blue = ["#5db7d1", "#f2a541", "#7fc97f", "#c97fbf"];
+  if (task == "fleet_status") {
+    let rows = []; for (r in report.rows) { push(rows, [r.name + " (" + r.type + ")", num(r.root_size_gib == "" ? "0" : r.root_size_gib), r.state == "running" ? 1 : 0]); }
+    recipe_compute_chart(name, "Synthetic fleet: root GiB per instance", "root volume (GiB)", ["instance", "root GiB", "running (1/0)"], rows, blue);
+  } else if (task == "cpu_credits") {
+    let rows = []; for (r in report.rows) { push(rows, [r.name + " " + r.type, r.balance, r.max_balance]); }
+    recipe_compute_chart(name, "Synthetic CPU credits: balance vs 24 h maximum", "credits", ["instance", "balance", "max balance"], rows, blue);
+  } else if (task == "eip_map") {
+    let rows = []; for (r in report.rows) { push(rows, [r.name + " (" + r.state + ")", r.monthly_usd]); }
+    recipe_compute_chart(name, "Synthetic Elastic IPs: monthly cost, idle ones flagged", "USD per month", ["address", "monthly USD"], rows, ["#f2a541"]);
+  } else if (task == "ami_lookup") {
+    let lines = []; for (r in report.rows) { push(lines, r.family + " " + r.arch + "    " + r.ami); }
+    recipe_compute_table(name, "Synthetic latest AMIs from public SSM parameters", lines);
+  } else if (task == "spot_prices") {
+    let rows = [];
+    for (zone in ["a","b","c","d","e","f"]) {
+      let row = ["us-east-1" + zone];
+      for (type in ["t4g.nano","t3.nano"]) { let found = 0; for (pr in report.prices) { if (pr.type == type && pr.az == "us-east-1" + zone) { found = num(pr.price); } } push(row, found); }
+      push(rows, row);
+    }
+    recipe_compute_chart(name, "Synthetic spot prices per AZ (USD/hour)", "USD per hour", ["zone", "t4g.nano", "t3.nano"], rows, blue);
+  } else if (task == "ebs_roots") {
+    let rows = []; for (r in report.rows) { push(rows, [r.name + " " + r.az, r.size_gib]); }
+    recipe_compute_chart(name, "Synthetic EBS volumes: GiB per volume and AZ", "GiB", ["volume", "size GiB"], rows, ["#7fc97f"]);
+  } else if (task == "spot_nano_lifecycle") {
+    let rows = [["launch to running", 18], ["status checks ok", 132], ["terminate to terminated", 41]];
+    recipe_compute_chart(name, "Synthetic spot nano lifecycle: seconds per phase", "seconds", ["phase", "seconds"], rows, ["#5db7d1"]);
+  } else { assert(false); }
+  return "images/" + name + ".png";
+}
+
+
+let options=recipe_options(ARGV);
+options.task="ami_lookup";
+if (!contains(ARGV,"--output")) {options.output="data/ami_lookup";}
+let report=recipe_ami_lookup(options);
+if (!options.preview) {println("report:",get(report,"output_file",options.output+".json"));println(recipe_cost_line(report));}

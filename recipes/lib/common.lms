@@ -7,7 +7,7 @@
 let recipe_budget={reserved_units:0};
 fn recipe_env(key,fallback) { let value=getenv(key,""); if(value=="") {return fallback;} return value; }
 fn recipe_normalize(options) {
-  let defaults = {period:num(recipe_env("LMAWS_RECIPE_PERIOD","30")),top:num(recipe_env("LMAWS_RECIPE_TOP","10")),prefix:recipe_env("LMAWS_RECIPE_PREFIX","lmaws"),region:recipe_env("AWS_REGION",recipe_env("AWS_DEFAULT_REGION","us-east-1")),profile:recipe_env("AWS_PROFILE",recipe_env("AWS_DEFAULT_PROFILE","default")),live:false,apply:false,preview:false,output:"data/recipe",task:"queues",cap:num(recipe_env("LMAWS_MAX_COST_USD","0.05")),older_hours:0,filter_prefix:false,output_explicit:false,cap_explicit:recipe_env("LMAWS_MAX_COST_USD","")!="",ledger_dir:recipe_env("LMAWS_LEDGER_DIR",".lmaws-local/recipes/ledgers")};
+  let defaults = {period:num(recipe_env("LMAWS_RECIPE_PERIOD","30")),top:num(recipe_env("LMAWS_RECIPE_TOP","10")),prefix:recipe_env("LMAWS_RECIPE_PREFIX","lmaws"),region:recipe_env("AWS_REGION",recipe_env("AWS_DEFAULT_REGION","us-east-1")),profile:recipe_env("AWS_PROFILE",recipe_env("AWS_DEFAULT_PROFILE","default")),live:false,apply:false,preview:false,output:"data/recipe",task:"queues",cap:num(recipe_env("LMAWS_MAX_COST_USD","0.05")),older_hours:0,filter_prefix:false,output_explicit:false,cap_explicit:recipe_env("LMAWS_MAX_COST_USD","")!="",ledger_dir:recipe_env("LMAWS_LEDGER_DIR",".lmaws-local/recipes/ledgers"),tag_key:"Project",tag_value:"",instance:"",hours:24,types:"t4g.nano,t3.nano",timeout_ms:300000};
   let o=merge(defaults,options);
   if(has_key(options,"output") && !has_key(options,"output_explicit")) {o.output_explicit=true;}
   if(has_key(options,"cap") && !has_key(options,"cap_explicit")) {o.cap_explicit=true;}
@@ -18,7 +18,11 @@ fn recipe_normalize(options) {
   o.output=replace_all(str(o.output),"\\","/");
   o.ledger_dir=replace_all(str(o.ledger_dir),"\\","/");
   assert(regex_test(o.ledger_dir,"^[A-Za-z0-9_./: -]+$"));
-  assert(o.profile=="default" || o.profile=="lmaws");
+  assert(o.profile=="default" || o.profile=="lmaws" || o.profile=="lmaws-ec2");
+  assert(is_number(o.hours) && o.hours>=1 && o.hours<=720 && floor(o.hours)==o.hours);
+  assert(is_number(o.timeout_ms) && o.timeout_ms>=1000 && o.timeout_ms<=900000);
+  assert(regex_test(str(o.tag_key),"^[A-Za-z0-9_.:/=+@ -]{0,128}$") && regex_test(str(o.tag_value),"^[A-Za-z0-9_.:/=+@ -]{0,256}$"));
+  assert(regex_test(str(o.types),"^[a-z0-9]+[.][a-z0-9]+(,[a-z0-9]+[.][a-z0-9]+)*$"));
   assert(regex_test(o.region,"^[a-z]{2}(-[a-z]+)+-[0-9]+$"));
   assert(regex_test(o.output,"^[A-Za-z0-9_./: -]+$"));
   assert(is_string(o.prefix) && len(o.prefix)<=128);
@@ -43,6 +47,11 @@ fn recipe_options(argv) {
       else if(key=="--output") {o.output=value;o.output_explicit=true;}
       else if(key=="--ledger-dir") {o.ledger_dir=value;}
       else if(key=="--task") {o.task=value;}
+      else if(key=="--tag-key") {o.tag_key=value;}
+      else if(key=="--tag-value") {o.tag_value=value;}
+      else if(key=="--instance") {o.instance=value;}
+      else if(key=="--hours") {o.hours=num(value);}
+      else if(key=="--types") {o.types=value;}
       else {println("Unknown recipe argument:",key);assert(false);}
     }
     i=i+1;
@@ -63,7 +72,12 @@ fn recipe_run(program, options) {
   let settings={AWS_PROFILE:o.profile,AWS_DEFAULT_PROFILE:o.profile,AWS_REGION:o.region,AWS_DEFAULT_REGION:o.region,LMAWS_LIVE:o.live ? "1":"0",LMAWS_SPEND_LIVE:o.live ? "1":"0",LMAWS_MAX_COST_USD:str(o.cap),LMAWS_LEDGER_DIR:o.ledger_dir,LMAWS_EVIDENCE_DIR:".lmaws-local/recipes/evidence"};
   let previous={};
   for(key in keys(settings)) {previous[key]=getenv(key,"");set_env(key,settings[key]);}
-  let r=system(concat(command,["--dsl",bytecode]),{timeoutMs:300000});
+  # lmscript 0.2.426 spawns children with its start-up environment, so set_env alone does not
+  # reach the host: pass the settings explicitly through env(1). Windows has no env(1).
+  let argv=concat(command,["--dsl",bytecode]);
+  if(getenv("OS","")!="Windows_NT") {let pre=["env"];for(key in keys(settings)) {push(pre,key+"="+str(settings[key]));}argv=concat(pre,argv);}
+  else if(o.live) {for(key in keys(settings)) {if(getenv(key,"")!=str(settings[key])) {println("Live recipes on Windows: set "+key+"="+str(settings[key])+" in the parent environment first.");assert(false);}}}
+  let r=system(argv,{timeoutMs:o.timeout_ms});
   for(key in keys(previous)) {set_env(key,previous[key]);}
   remove_file(bytecode);
   if(r.code!=0) {println("Recipe host failed; see the host's sanitized diagnostic.");println(r.stderr);}

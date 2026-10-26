@@ -11,6 +11,7 @@ Current maintenance notes:
 - [09-spend-reports.md](09-spend-reports.md): capped read-only billing analysis and private output.
 - [07-example-costs.md](07-example-costs.md): profiles, ownership, teardown, sweeper and caps.
 - [08-recipes.md](08-recipes.md): reusable recipe modules, synthetic examples and catalogue gates.
+- [10-compute.md](10-compute.md): EC2 compute recipes, the spot nano lifecycle tag contract and the lmaws-ec2 profile.
 
 Current release/comparison evidence:
 

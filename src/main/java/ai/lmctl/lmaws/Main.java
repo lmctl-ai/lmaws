@@ -7,14 +7,15 @@ import java.util.*;
 import java.io.*;
 
 public final class Main {
-    public static final String VERSION="0.1.4";
+    public static final String VERSION="0.1.5";
     private static final String HELP="""
-        lmaws 0.1.4 — AWS SDK for Java v2 scripting host
+        lmaws 0.1.5 — AWS SDK for Java v2 scripting host
         usage: lmaws [--dry-run] --dsl FILE | --dsl-schema [--json] | --dsl-signatures [--without-std]
                lmaws --version | --notices | --help | --self-test
                lmaws --sweep LEDGER_DIR --older-than-hours N
         DSL context: aws.demo() (offline) or aws.region(\"\") (default profile/region).
-        Live writes require AWS_PROFILE=lmaws, a new ledger, prefixed names and ownership tags.
+        Live writes require AWS_PROFILE=lmaws (or lmaws-ec2 for the spot nano sandbox),
+        a new ledger, prefixed names and ownership tags.
         Every run is cleaned up on success and failure. --sweep is always read-only.
         LMAWS_MAX_MEMORY_MB: positive whole MiB, default 4096; bounded heap and VM data.
         LMAWS_MAX_COST_USD: default 0.05, hard whole-run ceiling 0.25.
