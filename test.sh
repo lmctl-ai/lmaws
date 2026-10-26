@@ -14,7 +14,7 @@ mkdir -p target/jvm-bin
 if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
   python3 - <<'PYWIN'
 from pathlib import Path
-p=Path("target/jvm-bin/lmaws.cmd");jar=Path("target/lmaws-0.1.6.jar").resolve()
+p=Path("target/jvm-bin/lmaws.cmd");jar=Path("target/lmaws-0.1.7.jar").resolve()
 p.write_text('@echo off\njava -cp "'+str(jar)+'" ai.lmctl.lmaws.Main %*\n')
 PYWIN
   jvm=target/jvm-bin/lmaws.cmd
@@ -23,12 +23,13 @@ PYWIN
 else
   cat > target/jvm-bin/lmaws <<'WRAPPER'
 #!/usr/bin/env bash
-exec java -cp "$(cd "$(dirname "$0")/.." && pwd)/lmaws-0.1.6.jar" ai.lmctl.lmaws.Main "$@"
+exec java -cp "$(cd "$(dirname "$0")/.." && pwd)/lmaws-0.1.7.jar" ai.lmctl.lmaws.Main "$@"
 WRAPPER
   chmod +x target/jvm-bin/lmaws
   jvm=target/jvm-bin/lmaws
 fi
 export PATH="$PWD/target/jvm-bin:$PATH"
+export LMAWS_TEST_HOST="$jvm"
 timeout 300 python3 scripts/test-cli.py "$jvm"
 timeout 300 python3 scripts/test-fake.py "$jvm"
 timeout 180 python3 scripts/test-spend-api.py "$jvm"
@@ -36,6 +37,7 @@ timeout 300 python3 scripts/test-spend-transport.py
 if [[ "${LMAWS_NATIVE:-0}" == 1 ]]; then
  exe=target/lmaws; [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]] && exe=target/lmaws.exe
  export PATH="$PWD/target:$PATH"
+ export LMAWS_TEST_HOST="$exe"
  timeout 300 python3 scripts/test-cli.py "$exe"
  timeout 300 python3 scripts/test-fake.py "$exe"
  timeout 180 python3 scripts/test-spend-api.py "$exe"
@@ -45,4 +47,8 @@ fi
 if [[ "${LMAWS_NATIVE:-0}" == 1 ]]; then timeout 1500 python3 scripts/test-gallery.py --run; else echo "note: example images run in the native CI stage; checking committed gallery now"; timeout 30 python3 scripts/test-gallery.py; fi
 
 timeout 60 python3 scripts/test-recipes.py
+if [[ ( "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ) && "${LMAWS_NATIVE:-0}" != 1 ]]; then
+  echo "DEFER recipe execution to the mandatory native Windows stage: Node cannot schema-probe a JVM .cmd host"
+else
 timeout 180 python3 scripts/test-recipe-execution.py
+fi

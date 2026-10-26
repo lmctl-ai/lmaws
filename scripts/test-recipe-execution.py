@@ -22,7 +22,11 @@ class RecipeExecutionTests(unittest.TestCase):
         if not LMSCRIPT:
             self.skipTest("lmscript is not installed")
         self.env = dict(os.environ)
-        self.env["PATH"] = str(ROOT / "target") + os.pathsep + str(ROOT / "target" / "jvm-bin") + os.pathsep + str(ROOT / "build") + os.pathsep + self.env.get("PATH", "")
+        selected = self.env.get("LMAWS_TEST_HOST")
+        if selected:
+            self.env["PATH"] = str(Path(selected).resolve().parent) + os.pathsep + self.env.get("PATH", "")
+        elif not shutil.which("lmaws", path=self.env.get("PATH", "")):
+            self.env["PATH"] = str(ROOT / "target/jvm-bin") + os.pathsep + str(ROOT / "target") + os.pathsep + self.env.get("PATH", "")
         self.env.update(CI="true", LMAWS_LIVE="0", AWS_EC2_METADATA_DISABLED="true")
         for key in ("AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION"):
             self.env.pop(key, None)
