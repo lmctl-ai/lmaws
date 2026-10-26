@@ -1,0 +1,68 @@
+# Access: Read-only search/planning; explicit deletion requires live lmaws profile.
+# What: Account-level native prefix discovery and ledger-qualified recovery.
+# When: Find prefixed resources or review abandoned test resources before cleanup.
+# Run: lmctl examples/find_lmaws_resources.lms --prefix lmaws
+# Preview: lmctl examples/leftover_report.lms --preview
+import "./common.lms";
+fn recipe_discovery(options) {
+  let o=recipe_normalize(options);
+  if(o.preview) {return recipe_preview(o,o.task);}
+  assert(!o.apply || (o.live && o.profile=="lmaws"));
+  if(o.live) {
+    if(!o.output_explicit) {o.output=".lmaws-local/search/"+o.task;}
+    assert(starts_with(o.output,".lmaws-local/"));
+  }
+  let p=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud=aws.example(${o.task});
+if (${o.task} == "find_lmaws_resources") {
+  let rows=cloud.find_prefix(${o.prefix});
+  rows.csv(${o.output+".csv"});file_write(${o.output+".json"},rows.json());
+} else {
+  let rows=cloud.cleanup_prefix(${o.prefix},${o.older_hours},${o.apply});
+  rows.csv(${o.output+".csv"});file_write(${o.output+".json"},rows.json());
+}
+end _dsl_
+  let result=recipe_run(p,o);let rows=json_parse(read_file(o.output+".json"));
+  for(row in rows) {
+    if(get(row,"status","")=="delete_failed") {println("Cleanup failed:",json_stringify({name:get(row,"name",""),reason:get(row,"reason","")}));assert(false);}
+  }
+  return {rows:rows,result:result,output:o.output,output_file:o.output+".json",live:o.live,apply:o.apply};
+}
+fn recipe_discovery_picture(report,name) {
+  let root=report.live ? ".lmaws-local/search":"data";
+  let images=report.live ? ".lmaws-local/search/images":"images";
+  mkdir(root,true);mkdir(images,true);
+  let services={};let ages={"under 24h":0,"24h to 7d":0,"over 7d":0,"unknown":0};let max_count=1;
+  let table=[{x:0.01,y:12,text:"NAME | SERVICE | AGE HOURS | RUN TAG | PLAN"}];let i=0;
+  for(row in report.rows) {
+    let service=str(get(row,"service","unknown"));services[service]=get(services,service,0)+1;
+    if(services[service]>max_count) {max_count=services[service];}
+    let age=str(get(row,"age_hours",""));let bucket="unknown";
+    if(age!="") {let hours=num(age);bucket=hours<24 ? "under 24h":hours<168 ? "24h to 7d":"over 7d";}
+    ages[bucket]=ages[bucket]+1;
+    if(i<10) {
+      let label=str(get(row,"name",""))+" | "+service+" | "+(age=="" ? "unknown":age)+" | "+str(get(row,"run_id",""))+" | "+str(get(row,"status","ok"));
+      label=regex_replace(label,"[\\r\\n\\t]"," ","g");label=substr(label,0,130);
+      push(table,{x:0.01,y:11-i,text:label});i=i+1;
+    }
+  }
+  if(i==0) {push(table,{x:0.01,y:10,text:"No matching account resources"});}
+  let counts=[];for(service in keys(services)) {push(counts,{label:service,count:services[service]});}
+  if(len(counts)==0) {push(counts,{label:"no matches",count:0});}
+  let age_rows=[];for(bucket in keys(ages)) {push(age_rows,{label:bucket,count:ages[bucket]});}
+  write_csv(root+"/"+name+".csv",counts);write_csv(root+"/"+name+"_age.csv",age_rows);write_csv(root+"/"+name+"_table.csv",table);
+  let prefix=report.live ? "Account":"Synthetic account";
+  let plot=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${images+"/"+name+".png"},1000,560);
+plot.cmd(${"set datafile separator ','; set title '"+prefix+" prefix matches by service'; unset key; set style data histograms; set style fill solid 0.8; set yrange [0:"+str(max_count+1)+"]; set grid ytics"});
+plot.cmd(${"plot '"+root+"/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});plot.close();
+plot.png(${images+"/"+name+"_age.png"},1000,560);
+plot.cmd(${"set title '"+prefix+" prefix matches by age'; set yrange [0:*]; set grid ytics"});
+plot.cmd(${"plot '"+root+"/"+name+"_age.csv' every ::1 using 2:xtic(1) lc rgb '#e6aa50'"});plot.close();
+plot.png(${images+"/"+name+"_table.png"},1300,560);
+plot.cmd(${"set termoption noenhanced; set title '"+prefix+" resource names and recovery status'; unset xtics; unset ytics; unset grid; set xrange [0:1]; set yrange [0:13]; unset border"});
+plot.cmd(${"plot '"+root+"/"+name+"_table.csv' every ::1 using 1:2:3 with labels left font 'Monospace,10'"});plot.close();
+end _dsl_
+  let code=temp_file();savedsl(plot,code);let r=system(concat(dsl_cli(plot),["--dsl",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
+  println(images+"/"+name+".png");println(images+"/"+name+"_age.png");println(images+"/"+name+"_table.png");
+}

@@ -5,10 +5,14 @@ aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("queues");
 let csv = "service,count\n";
 let queues_rows = cloud.queues();
+queues_rows.csv("data/queues_names.csv");
+file_write("data/queues_names.json",queues_rows.json());
 let queues_count = queues_rows.len();
 if (cloud.is_demo()) { check(queues_count == 3); }
 csv = csv + "queues," + str(queues_count) + "\n";
 let topics_rows = cloud.topics();
+topics_rows.csv("data/topics_names.csv");
+file_write("data/topics_names.json",topics_rows.json());
 let topics_count = topics_rows.len();
 if (cloud.is_demo()) { check(topics_count == 3); }
 csv = csv + "topics," + str(topics_count) + "\n";
@@ -24,6 +28,8 @@ savedsl(aws, "queues-aws.dslb");
 r = system ${dsl_cli(aws)} --dsl "queues-aws.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
+for(row in json_parse(read_file("data/queues_names.json"))) {println("queue:",json_stringify(row.name));}
+for(row in json_parse(read_file("data/topics_names.json"))) {println("topic:",json_stringify(row.name));}
 let cost_line = "";
 for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
 assert(starts_with(cost_line, "estimated cost: $"));

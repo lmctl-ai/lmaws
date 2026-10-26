@@ -69,7 +69,7 @@ The native release targets five platforms and uses a 4096 MB memory budget. Linu
 
 `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_spend_detail.lms`
 
-![Find lmaws_ and lmaws- names across supported account inventories](docs/images/recipe_prefix_search.png)
+![Find every literal lmaws prefix variant through native account APIs](docs/images/recipe_prefix_search.png)
 
 `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_prefix_search.lms`
 
@@ -85,8 +85,8 @@ Use `lmaws`, never the `aws` CLI. Read-only recipes use `default`; writes requir
 
 All executable recipes default to synthetic fixtures. Use `--preview` for a no-call plan,
 or the runner's `lmctl script --dry-run recipes/<name>.lms`. Live inventory needs `--live`;
-live sandboxes also require `--apply --profile lmaws`. Prefix discovery and the sweeper
-never authorize deletion of existing resources. The current sweeper is read-only.
+live sandboxes also require `--apply --profile lmaws`. Prefix discovery is read-only; sweeper deletion
+requires --delete, the lmaws profile, matching run tags and original creation-ledger proof.
 
 Arguments override defaults. `AWS_PROFILE` / `AWS_REGION` and `LMAWS_RECIPE_PERIOD`,
 `LMAWS_RECIPE_TOP`, `LMAWS_RECIPE_PREFIX` supply environment defaults. Period is used
@@ -173,9 +173,9 @@ println("matched rows:",len(report.rows));
 
 | File | What it does | Access | Arguments | Typical cost |
 |---|---|---|---|---|
-| [`leftover_report.lms`](recipes/leftover_report.lms) | Inspect aged active/pending records in the local run ledgers | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/leftover_report [--live] --ledger-dir .lmaws-local/recipes/ledgers --older-hours 0 | $0.00 synthetic; live request cap $0.05 |
-| [`prefix_search.lms`](recipes/prefix_search.lms) | Find lmaws_ and lmaws- names across supported account inventories | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/prefix_search [--live] --ledger-dir .lmaws-local/recipes/ledgers --older-hours 0 | $0.00 synthetic; live request cap $0.05 |
-| [`sweeper.lms`](recipes/sweeper.lms) | Dry-run leftover review; discovery never authorizes deletion | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/sweeper [--live] --ledger-dir .lmaws-local/recipes/ledgers --older-hours 0 | $0.00 synthetic; live request cap $0.05 |
+| [`leftover_report.lms`](recipes/leftover_report.lms) | Inspect account resources by age and their creation-ledger proof | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/leftover_report [--live] --ledger-dir .lmaws-local/recipes/ledgers --older-hours 24 [--delete --profile lmaws] | $0.00 synthetic; live request cap $0.05 |
+| [`prefix_search.lms`](recipes/prefix_search.lms) | Find every literal lmaws prefix variant through native account APIs | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/prefix_search [--live] --ledger-dir .lmaws-local/recipes/ledgers --older-hours 24 [--delete --profile lmaws] | $0.00 synthetic; live request cap $0.05 |
+| [`sweeper.lms`](recipes/sweeper.lms) | Plan account cleanup; explicit delete checks prefix, tag and run ledger | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/sweeper [--live] --ledger-dir .lmaws-local/recipes/ledgers --older-hours 24 [--delete --profile lmaws] | $0.00 synthetic; live request cap $0.05 |
 
 ### Safe lifecycle sandboxes
 
@@ -477,7 +477,7 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 #### leftover_report
 
-![Inspect aged active/pending records in the local run ledgers](docs/images/recipe_leftover_report.png)
+![Inspect account resources by age and their creation-ledger proof](docs/images/recipe_leftover_report.png)
 
 `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_leftover_report.lms`
 
@@ -486,7 +486,7 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 #### prefix_search
 
-![Find lmaws_ and lmaws- names across supported account inventories](docs/images/recipe_prefix_search.png)
+![Find every literal lmaws prefix variant through native account APIs](docs/images/recipe_prefix_search.png)
 
 `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_prefix_search.lms`
 
@@ -495,7 +495,7 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 #### sweeper
 
-![Dry-run leftover review; discovery never authorizes deletion](docs/images/recipe_sweeper.png)
+![Plan account cleanup; explicit delete checks prefix, tag and run ledger](docs/images/recipe_sweeper.png)
 
 `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_sweeper.lms`
 

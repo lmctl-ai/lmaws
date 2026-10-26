@@ -1,4 +1,4 @@
-# Synthetic-only: Dry-run leftover review; discovery never authorizes deletion.
+# Synthetic-only: Plan account cleanup; explicit delete checks prefix, tag and run ledger.
 # This picture-first example always disables live AWS and apply, even if inherited.
 # Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_sweeper.lms
 # Generated standalone example from recipes/lib/prefix.lms
@@ -32,7 +32,7 @@ fn recipe_options(argv) {
   while(i<len(argv)) {
     let key=argv[i];
     if(key=="--live") {o.live=true;}
-    else if(key=="--apply") {o.apply=true;}
+    else if(key=="--apply" || key=="--delete") {o.apply=true;}
     else if(key=="--preview" || key=="--dry-run") {o.preview=true;}
     else {
       assert(i+1<len(argv));i=i+1;let value=argv[i];
@@ -138,116 +138,77 @@ end _dsl_
   println("images/"+name+".png");
 }
 
-
-fn recipe_inventory(options) {
-  let o = recipe_normalize(options);
-  if (o.preview) { return recipe_preview(o, o.task); }
-  let output = str(o.output);
-  assert(contains(["identity", "buckets", "instances", "vpcs", "security_groups", "tables", "queues", "topics", "functions", "log_groups", "alarms", "zones", "secrets", "parameters", "clusters", "roles"],o.task) || o.task=="all");
-  assert(!o.live || (o.task!="identity" && o.task!="roles" && o.profile!="admin"));
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
-let cloud = aws.example("recipe_inventory");
-if ((${o.task} == "identity" || ${o.task} == "all") && !${o.live}) { file_write(${output + ".identity.raw.json"}, cloud.identity().json()); }
-if ((${o.task} == "buckets" || ${o.task} == "all")) { file_write(${output + ".buckets.raw.json"}, cloud.buckets().json()); }
-if ((${o.task} == "instances" || ${o.task} == "all")) { file_write(${output + ".instances.raw.json"}, cloud.instances().json()); }
-if ((${o.task} == "vpcs" || ${o.task} == "all")) { file_write(${output + ".vpcs.raw.json"}, cloud.vpcs().json()); }
-if ((${o.task} == "security_groups" || ${o.task} == "all")) { file_write(${output + ".security_groups.raw.json"}, cloud.security_groups().json()); }
-if ((${o.task} == "tables" || ${o.task} == "all")) { file_write(${output + ".tables.raw.json"}, cloud.tables().json()); }
-if ((${o.task} == "queues" || ${o.task} == "all")) { file_write(${output + ".queues.raw.json"}, cloud.queues().json()); }
-if ((${o.task} == "topics" || ${o.task} == "all")) { file_write(${output + ".topics.raw.json"}, cloud.topics().json()); }
-if ((${o.task} == "functions" || ${o.task} == "all")) { file_write(${output + ".functions.raw.json"}, cloud.functions().json()); }
-if ((${o.task} == "log_groups" || ${o.task} == "all")) { file_write(${output + ".log_groups.raw.json"}, cloud.log_groups().json()); }
-if ((${o.task} == "alarms" || ${o.task} == "all")) { file_write(${output + ".alarms.raw.json"}, cloud.alarms().json()); }
-if ((${o.task} == "zones" || ${o.task} == "all")) { file_write(${output + ".zones.raw.json"}, cloud.zones().json()); }
-if ((${o.task} == "secrets" || ${o.task} == "all")) { file_write(${output + ".secrets.raw.json"}, cloud.secrets().json()); }
-if ((${o.task} == "parameters" || ${o.task} == "all")) { file_write(${output + ".parameters.raw.json"}, cloud.parameters().json()); }
-if ((${o.task} == "clusters" || ${o.task} == "all")) { file_write(${output + ".clusters.raw.json"}, cloud.clusters().json()); }
-if ((${o.task} == "roles" || ${o.task} == "all") && !${o.live}) { file_write(${output + ".roles.raw.json"}, cloud.roles().json()); }
-end _dsl_
-  let result = recipe_run(p, o);
-  let selected = [];
-  let task = str(o.task);
-  if (task == "all") { for (name in ["identity","buckets","instances","vpcs","security_groups","tables","queues","topics","functions","log_groups","alarms","zones","secrets","parameters","clusters","roles"]) { if (!o.live || (name!="identity" && name!="roles")) { for (row in json_parse(read_file(output + "." + name + ".raw.json"))) { push(selected,row); } } } }
-  else { selected = json_parse(read_file(output + "." + task + ".raw.json")); }
-  if (o.filter_prefix) { let filtered=[]; for(row in selected) {if(starts_with(str(get(row,"name","")),o.prefix)) {push(filtered,row);}} selected=filtered; }
-  selected = recipe_select(selected,o);
-  write_file(output + ".json",json_stringify(selected));
-  return {"rows":selected,"result":result};
-}
-
-fn recipe_prefix_fixture() {
-  return [
-    {kind:"queue",name:"lmaws_rfixture1xfixture2_events",region:"us-east-1",tagged:"true",count:1},
-    {kind:"bucket",name:"lmaws-rfixture1xfixture2-artifacts",region:"us-east-1",tagged:"true",count:1},
-    {kind:"table",name:"lmaws_rfixture1xfixture2_items",region:"us-east-1",tagged:"true",count:1},
-    {kind:"topic",name:"lmaws_rfixture1xfixture2_notifications",region:"us-east-1",tagged:"true",count:1},
-    {kind:"log_group",name:"lmaws_rfixture1xfixture2_logs",region:"us-east-1",tagged:"false",count:1},
-    {kind:"parameter",name:"lmaws_rfixture1xfixture2_config",region:"us-east-1",tagged:"unknown",count:1},
-    {kind:"queue",name:"customer_events",region:"us-east-1",tagged:"true",count:1}
-  ];
-}
-fn recipe_prefix_search(options) {
+fn recipe_discovery(options) {
   let o=recipe_normalize(options);
-  if(o.preview) {return recipe_preview(o,"prefix_search");}
-  let rows=[];let execution_result={};
+  if(o.preview) {return recipe_preview(o,o.task);}
+  assert(!o.apply || (o.live && o.profile=="lmaws"));
   if(o.live) {
-    let all=recipe_inventory(merge(o,{task:"all",top:1000}));execution_result=all.result;
-    for(task in ["buckets","instances","vpcs","security_groups","tables","queues","topics","functions","log_groups","alarms","zones","secrets","parameters","clusters"]) {
-      for(row in json_parse(read_file(o.output+"."+task+".raw.json"))) {push(rows,row);}
+    if(!o.output_explicit) {o.output=".lmaws-local/search/"+o.task;}
+    assert(starts_with(o.output,".lmaws-local/"));
+  }
+  let p=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud=aws.example(${o.task});
+if (${o.task} == "find_lmaws_resources") {
+  let rows=cloud.find_prefix(${o.prefix});
+  rows.csv(${o.output+".csv"});file_write(${o.output+".json"},rows.json());
+} else {
+  let rows=cloud.cleanup_prefix(${o.prefix},${o.older_hours},${o.apply});
+  rows.csv(${o.output+".csv"});file_write(${o.output+".json"},rows.json());
+}
+end _dsl_
+  let result=recipe_run(p,o);let rows=json_parse(read_file(o.output+".json"));
+  for(row in rows) {
+    if(get(row,"status","")=="delete_failed") {println("Cleanup failed:",json_stringify({name:get(row,"name",""),reason:get(row,"reason","")}));assert(false);}
+  }
+  return {rows:rows,result:result,output:o.output,output_file:o.output+".json",live:o.live,apply:o.apply};
+}
+fn recipe_discovery_picture(report,name) {
+  let root=report.live ? ".lmaws-local/search":"data";
+  let images=report.live ? ".lmaws-local/search/images":"images";
+  mkdir(root,true);mkdir(images,true);
+  let services={};let ages={"under 24h":0,"24h to 7d":0,"over 7d":0,"unknown":0};let max_count=1;
+  let table=[{x:0.01,y:12,text:"NAME | SERVICE | AGE HOURS | RUN TAG | PLAN"}];let i=0;
+  for(row in report.rows) {
+    let service=str(get(row,"service","unknown"));services[service]=get(services,service,0)+1;
+    if(services[service]>max_count) {max_count=services[service];}
+    let age=str(get(row,"age_hours",""));let bucket="unknown";
+    if(age!="") {let hours=num(age);bucket=hours<24 ? "under 24h":hours<168 ? "24h to 7d":"over 7d";}
+    ages[bucket]=ages[bucket]+1;
+    if(i<10) {
+      let label=str(get(row,"name",""))+" | "+service+" | "+(age=="" ? "unknown":age)+" | "+str(get(row,"run_id",""))+" | "+str(get(row,"status","ok"));
+      label=regex_replace(label,"[\\r\\n\\t]"," ","g");label=substr(label,0,130);
+      push(table,{x:0.01,y:11-i,text:label});i=i+1;
     }
-  } else {rows=recipe_prefix_fixture();println("estimated cost: $0.00");}
-  let found=[];
-  for(row in rows) {
-    let name=str(get(row,"name",""));
-    let matches=starts_with(name,o.prefix);
-    if(o.prefix=="lmaws") {matches=starts_with(name,"lmaws_") || starts_with(name,"lmaws-");}
-    if(matches) {push(found,row);}
   }
-  let report={rows:recipe_select(found,o),matching_count:len(found),scanned_count:len(rows),region:o.region,profile:o.profile,synthetic:!o.live,scope:"14 supported metadata APIs in one configured region plus global inventories; IAM excluded; not every AWS service or region",cleanup_authorized:false};
-  mkdir(dirname(o.output),true);write_file(o.output+".json",json_stringify(report,2));
-  write_csv(o.output+".csv",report.rows);
-  return merge(report,{result:execution_result});
-}
-fn recipe_ledger_name(record) {
-  let value=str(get(record,"name",get(record,"id","manual review")));
-  if(contains(value,"/")) {let parts=split(value,"/");value=parts[len(parts)-1];}
-  if(contains(value,":")) {let parts=split(value,":");value=parts[len(parts)-1];}
-  return value;
-}
-fn recipe_leftovers(options) {
-  let o=recipe_normalize(options);
-  if(o.preview) {return recipe_preview(o,"leftover_report");}
-  let rows=[];let execution_result={};
-  if(o.live) {
-    let p=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
-let cloud=aws.example("recipe_leftovers");
-file_write(${o.output+".ledger.raw.json"},cloud.sweep(${o.older_hours}).json());
+  if(i==0) {push(table,{x:0.01,y:10,text:"No matching account resources"});}
+  let counts=[];for(service in keys(services)) {push(counts,{label:service,count:services[service]});}
+  if(len(counts)==0) {push(counts,{label:"no matches",count:0});}
+  let age_rows=[];for(bucket in keys(ages)) {push(age_rows,{label:bucket,count:ages[bucket]});}
+  write_csv(root+"/"+name+".csv",counts);write_csv(root+"/"+name+"_age.csv",age_rows);write_csv(root+"/"+name+"_table.csv",table);
+  let prefix=report.live ? "Account":"Synthetic account";
+  let plot=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${images+"/"+name+".png"},1000,560);
+plot.cmd(${"set datafile separator ','; set title '"+prefix+" prefix matches by service'; unset key; set style data histograms; set style fill solid 0.8; set yrange [0:"+str(max_count+1)+"]; set grid ytics"});
+plot.cmd(${"plot '"+root+"/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});plot.close();
+plot.png(${images+"/"+name+"_age.png"},1000,560);
+plot.cmd(${"set title '"+prefix+" prefix matches by age'; set yrange [0:*]; set grid ytics"});
+plot.cmd(${"plot '"+root+"/"+name+"_age.csv' every ::1 using 2:xtic(1) lc rgb '#e6aa50'"});plot.close();
+plot.png(${images+"/"+name+"_table.png"},1300,560);
+plot.cmd(${"set termoption noenhanced; set title '"+prefix+" resource names and recovery status'; unset xtics; unset ytics; unset grid; set xrange [0:1]; set yrange [0:13]; unset border"});
+plot.cmd(${"plot '"+root+"/"+name+"_table.csv' every ::1 using 1:2:3 with labels left font 'Monospace,10'"});plot.close();
 end _dsl_
-    execution_result=recipe_run(p,o);rows=json_parse(read_file(o.output+".ledger.raw.json"));
-  } else {
-    rows=[{name:"lmaws_rfixture1xfixture2_events",kind:"queue",state:"active",ledger:"synthetic run ledger",count:1},{name:"lmaws-rfixture1xfixture2-artifacts",kind:"bucket",state:"pending",ledger:"synthetic run ledger",count:1}];println("estimated cost: $0.00");
-  }
-  let selected=[];
-  for(row in rows) {
-    if(has_key(row,"record")) {let record=json_parse_safe(row.record,{});row=merge(row,{name:recipe_ledger_name(record),kind:get(record,"kind","unknown"),state:get(record,"state","unknown")});}
-    let name=str(get(row,"name","manual review"));
-    if(starts_with(name,o.prefix) || name=="manual review" || o.prefix=="lmaws" && (starts_with(name,"lmaws_") || starts_with(name,"lmaws-"))) {push(selected,row);}
-  }
-  let report={rows:recipe_select(selected,o),leftover_count:len(selected),dry_run:true,synthetic:!o.live,cleanup_authorized:false};
-  mkdir(dirname(o.output),true);write_file(o.output+".json",json_stringify(report,2));write_csv(o.output+".csv",report.rows);
-  return merge(report,{result:execution_result});
+  let code=temp_file();savedsl(plot,code);let r=system(concat(dsl_cli(plot),["--dsl",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
+  println(images+"/"+name+".png");println(images+"/"+name+"_age.png");println(images+"/"+name+"_table.png");
 }
-fn recipe_sweeper(options) {
-  let o=recipe_normalize(options);
-  if(o.preview) {return recipe_preview(o,"sweeper");}
-  assert(!o.apply);
-  return recipe_leftovers(o);
-}
+
+fn recipe_prefix_search(options) {return recipe_discovery(merge(options,{task:"find_lmaws_resources"}));}
+fn recipe_leftovers(options) {return recipe_discovery(merge(options,{task:"leftover_report"}));}
+fn recipe_sweeper(options) {return recipe_discovery(merge(options,{task:"sweeper"}));}
 
 let options=recipe_options(ARGV);
 options.live=false;options.apply=false;options.preview=false;options.profile="default";
 options.task="sweeper";options.output="data/recipe_sweeper";
 let report=recipe_sweeper(options);
 assert(is_array(report.rows));
-recipe_picture(report.rows,"Dry-run leftover review; discovery never authorizes deletion","recipe_sweeper");
+recipe_picture(report.rows,"Plan account cleanup; explicit delete checks prefix, tag and run ledger","recipe_sweeper");
 println(recipe_cost_line(report));

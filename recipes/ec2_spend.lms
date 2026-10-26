@@ -40,7 +40,7 @@ fn recipe_options(argv) {
   while(i<len(argv)) {
     let key=argv[i];
     if(key=="--live") {o.live=true;}
-    else if(key=="--apply") {o.apply=true;}
+    else if(key=="--apply" || key=="--delete") {o.apply=true;}
     else if(key=="--preview" || key=="--dry-run") {o.preview=true;}
     else {
       assert(i+1<len(argv));i=i+1;let value=argv[i];

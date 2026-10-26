@@ -12,7 +12,7 @@ ITEMS.append(dict(name='inventory',category='Inventory',task='all',library='inve
 for kind in LIFECYCLES:
  ITEMS.append(dict(name='sandbox_'+kind,category='Safe lifecycle sandboxes',task=kind,library='lifecycle',function='recipe_lifecycle',what='Create and tear down one owned '+kind.replace('_',' ')+' with its run ledger',access='Write with the lmaws profile',cost='Synthetic $0.00; live generally below $0.0001; cap $0.05'))
 ITEMS.append(dict(name='lifecycle',category='Safe lifecycle sandboxes',task='queue',library='lifecycle',function='recipe_lifecycle',what='Select a disposable queue/topic/table/bucket/parameter/log-group lifecycle',access='Write with the lmaws profile',cost='Synthetic $0.00; live generally below $0.0001; cap $0.05'))
-for name,function,what in [('prefix_search','recipe_prefix_search','Find lmaws_ and lmaws- names across supported account inventories'),('leftover_report','recipe_leftovers','Inspect aged active/pending records in the local run ledgers'),('sweeper','recipe_sweeper','Dry-run leftover review; discovery never authorizes deletion')]:
+for name,function,what in [('prefix_search','recipe_prefix_search','Find every literal lmaws prefix variant through native account APIs'),('leftover_report','recipe_leftovers','Inspect account resources by age and their creation-ledger proof'),('sweeper','recipe_sweeper','Plan account cleanup; explicit delete checks prefix, tag and run ledger')]:
  ITEMS.append(dict(name=name,category='Leftover search and cleanup by prefix',task=name,library='prefix',function=function,what=what,access='Read-only',cost='$0.00 synthetic; live request cap $0.05'))
 for name,function,category,what in [('idle_instances','recipe_idle','Idle and waste detection','Flag stopped-instance state for further review; never delete'),('tag_compliance','recipe_compliance','Tag and naming compliance','Report missing and unknown tag presence without assuming compliance'),('naming_compliance','recipe_naming','Tag and naming compliance','Check case-sensitive lmaws_ and lmaws- naming among prefix candidates')]:
  ITEMS.append(dict(name=name,category=category,task=name,library='audits',function=function,what=what,access='Read-only',cost='$0.00 synthetic; live request cap $0.05'))
@@ -45,13 +45,25 @@ def flatten(path,seen=None):
   else:lines.append(line)
  return '\n'.join(lines).strip()+'\n'
 
+def generate_discovery(check=False):
+ for name in ['find_lmaws_resources','leftover_report','sweeper']:
+  text='# Account-level prefix discovery; names, tags and IDs are projected by lmaws.\n# Read-only by default. --delete additionally requires --live and --profile lmaws.\n# Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/'+name+'.lms\n'
+  text+=flatten(ROOT/'recipes/lib/discovery.lms')
+  text+='\nlet options=recipe_options(ARGV);\noptions.task="'+name+'";\noptions.live=options.live || getenv("LMAWS_LIVE","0")=="1";\n'
+  if name=='find_lmaws_resources':text+='assert(!options.apply);\n'
+  else:text+='if(!contains(ARGV,"--older-hours")) {options.older_hours=24;}\n'
+  text+='if(!options.output_explicit) {options.output="data/'+name+'";}\nlet report=recipe_discovery(options);\nif(!options.preview) {\n for(row in report.rows) {println(json_stringify({service:get(row,"service",""),name:get(row,"name",""),age_hours:get(row,"age_hours",""),run_id:get(row,"run_id",""),status:get(row,"status","ok")}));}\n recipe_discovery_picture(report,"'+name+'");\n println(recipe_cost_line(report));\n}\n'
+  target=ROOT/'examples'/(name+'.lms')
+  if check:assert target.read_text()==text, str(target)+' is stale'
+  else:target.write_text(text)
+
 def generate(check=False):
 
  for item in ITEMS:
   name=item['name'];example='recipe_'+name;lib='recipes/lib/'+item['library']+'.lms'
   args='--task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/'+name+' [--live]'
   if item['library']=='spend':args='--period 30 --top 10 --region us-east-1 --profile default --cap 0.25 [--live] [--output PRIVATE_DIR]'
-  if item['library']=='prefix':args+=' --ledger-dir .lmaws-local/recipes/ledgers --older-hours 0'
+  if item['library']=='prefix':args+=' --ledger-dir .lmaws-local/recipes/ledgers --older-hours 24 [--delete --profile lmaws]'
   if item['access']=='Write with the lmaws profile':args=args.replace('--profile default','--profile lmaws')+' [--apply]'
   if name=='policy_lint':args='--file POLICY.json --top 20 --output data/policy_lint'
   if name=='grant_session_policy':args='--policy lmaws_session --file POLICY.json --profile admin --top 20 --output data/grant_session_policy [--live] [--apply]'
@@ -63,6 +75,7 @@ def generate(check=False):
    body+='options.task='+repr(item['task']).replace("'",'"')+';\n'
   elif name=='inventory':body+='if (!contains(ARGV,"--task")) {options.task="all";}\n'
   else:body+='if (!contains(ARGV,"--task")) {options.task="queue";}\n'
+  if item['library']=='prefix' and name!='prefix_search':body+='if (!contains(ARGV,"--older-hours")) {options.older_hours=24;}\n'
   body+='if (!contains(ARGV,"--output")) {options.output="data/'+name+'";}\n'
   body+='let report='+item['function']+'(options);\nif (!options.preview) {println("report:",get(report,"output_file",options.output+".json"));println(recipe_cost_line(report));}\n'
   body=re.sub(r'\nimport \"[^\"]+\";\n', '\n', body)
@@ -84,6 +97,7 @@ def generate(check=False):
   target=ROOT/'examples'/(example+'.lms')
   if check:assert target.read_text()==content, str(target)+' is stale; run generate-recipes.py'
   else:target.write_text(content)
+ generate_discovery(check)
  return ITEMS
 if __name__=='__main__':
  generate('--check' in sys.argv);print('checked' if '--check' in sys.argv else 'generated',len(ITEMS),'recipes and synthetic examples')
