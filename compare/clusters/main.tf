@@ -14,6 +14,6 @@ data "aws_instances" "all" {
 }
 output "example_id" { value = "clusters" }
 output "estimated_cost" { value = "$0.00" }
-output "resource_count" { value = length(data.aws_ecs_clusters.all.arns) + length(data.aws_instances.all.ids) }
+output "resource_count" { value = length(data.aws_ecs_clusters.all.cluster_arns) + length(data.aws_instances.all.ids) }
 
-output "comparison" { value = { clusters = length(data.aws_ecs_clusters.all.arns), instances = length(data.aws_instances.all.ids) } }
+output "comparison" { value = { clusters = length(data.aws_ecs_clusters.all.cluster_arns), instances = length(data.aws_instances.all.ids) } }

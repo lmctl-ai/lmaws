@@ -10,12 +10,17 @@ from runtime import clean,load,write,ALLOWANCE
 from output_compare import compare_outputs
 MANIFEST=load(ROOT/'compare/manifest.json')['examples']
 
+def cost_label(engine):
+    if engine['status'] in ('estimated_only','prior_denied','not_attempted'):
+        return 'estimated only'
+    return '$'+format(Decimal(str(engine.get('total_estimated_usd','0'))), '.8f')
+
 def update_results():
     records={}
     for path in sorted((ROOT/'compare/evidence').glob('*.json'), key=lambda p: (load(p).get('recorded_at',0),p.name)):
         record=load(path)
         if record.get('example') in MANIFEST:records[record['example']]=record
-    lines=['# lmaws ↔ lmcloud comparisons','','Native writes run once with profile `lmaws`; native evidence can be reused. Read-only runs use `default`. IAM is deliberately skipped. Resource names are compared after replacing each unique run ID; payload objects/items are separately noted because the SDK ledger tracks their owning parent. Provider API cost is a conservative allowance, not observed request accounting. Raw state and logs stay under ignored `compare/runs/`.','','| Example | Native live result / estimated cost | lmcloud result / estimated cost | Resources, names and tags | Outputs / wall seconds | Cleanup | Same / differs / why |','| --- | --- | --- | --- | --- | --- | --- |']
+    lines=['# lmaws ↔ lmcloud comparisons','','Native writes run once with profile `lmaws`; native evidence can be reused. Read-only runs use `default`. IAM is deliberately skipped. Resource names are compared after replacing each unique run ID; payload objects/items are separately noted because the SDK ledger tracks their owning parent. Provider cost is a conservative upper bound reserved before plan, not measured API request accounting; native costs use observed SDK attempts and lifetimes. Timings are end-to-end (native rendering versus multiple provider phases), with a shared warm provider cache. Raw state and logs stay under ignored `compare/runs/`.','','| Example | Native live result / estimated cost | lmcloud result / estimated cost | Resources, names and tags | Outputs / wall seconds | Cleanup | Same / differs / why |','| --- | --- | --- | --- | --- | --- | --- |']
     for name,meta in sorted(MANIFEST.items()):
         r=records.get(name)
         if not r:
@@ -24,13 +29,34 @@ def update_results():
         native=r['native'];cloud=r['lmcloud'];comp=r.get('comparison',{})
         resource_desc=comp.get('resources','not comparable')
         output=comp.get('outputs','not comparable')
-        lines.append(f'| `{name}` | {native["status"]} / ${native.get("total_estimated_usd","0")} | {cloud["status"]} / ${cloud.get("total_estimated_usd","0")} | {resource_desc} | {output}; {native.get("wall_seconds","n/a")} / {cloud.get("wall_seconds","n/a")} | {r.get("leftover_count","unknown")} leftovers | {comp.get("why",meta["notes"]).replace(chr(10)," ").replace("|","/")} |')
+        both=native['status']=='passed' and cloud['status']=='passed'
+        full=both and resource_desc.startswith('same') and output.startswith('same:') and not meta.get('unsupported_operations')
+        classification='same' if full else 'differs' if both else 'skipped' if meta['iam'] else 'not comparable'
+        cleanup=f"native {native.get('leftover_count','unknown')}; lmcloud {cloud.get('leftover_count','unknown')}"
+        lines.append(f'| `{name}` | {native["status"]} / {cost_label(native)} | {cloud["status"]} / {cost_label(cloud)} | {resource_desc} | {output}; {native.get("wall_seconds","n/a")} / {cloud.get("wall_seconds","n/a")} | {cleanup} leftovers | **{classification}**: {comp.get("why",meta["notes"]).replace(chr(10)," ").replace("|","/")} |')
     (ROOT/'compare/RESULTS.md').write_text('\n'.join(lines)+'\n')
 
+def native_resources(native):
+    """Recover confirmed child names from successful SDK ledger updates, never payloads."""
+    parents=[dict(v) for v in native.get('resources',[])]
+    path=Path(native.get('ledger',''))
+    if not path.is_file():return native.get('observed_resources',parents)
+    children={}
+    for line in path.read_text().splitlines():
+        row=json.loads(line)
+        if row.get('event')!='updated' or not row.get('action','').startswith('update:'):continue
+        parent=next((p for p in parents if p.get('id')==row.get('id') and p['kind']==row.get('kind')),None)
+        if not parent or parent['kind'] not in ('bucket','table'):continue
+        kind='aws_s3_object' if parent['kind']=='bucket' else 'aws_dynamodb_table_item'
+        name=row['action'].removeprefix('update:')
+        children[(kind,parent['name'],name)]=dict(kind=kind,name=name,parent=parent['name'],tags={})
+    return parents+list(children.values())
+
 def equivalent_resources(native,cloud):
+    kinds={'bucket','queue','topic','parameter','table','log_group','aws_s3_object','aws_dynamodb_table_item'}
     def norm(rows,run):
-        return sorted((r['kind'],r['name'].replace(run,'<run>'),tuple(sorted((k,str(v).replace(run,'<run>')) for k,v in r.get('tags',{}).items()))) for r in rows if r['kind'] in ('bucket','queue','topic','parameter','table','log_group'))
-    return norm(native.get('resources',[]),native.get('run_id','!'))==norm(cloud.get('observed_resources',[]),cloud.get('run_id','!'))
+        return sorted((r['kind'],r['name'].replace(run,'<run>'),r.get('parent','').replace(run,'<run>'),tuple(sorted((k,str(v).replace(run,'<run>')) for k,v in r.get('tags',{}).items()))) for r in rows if r['kind'] in kinds)
+    return norm(native.get('observed_resources',native.get('resources',[])),native.get('run_id','!'))==norm(cloud.get('observed_resources',[]),cloud.get('run_id','!'))
 
 def check_comparison_budget(native_cost,campaign_cost,cap,write_mode):
     if not cap.is_finite() or cap<0 or cap>Decimal('0.25'):raise RuntimeError('comparison cap must be between zero and 0.25')
@@ -73,7 +99,7 @@ def main():
         started=time.monotonic();p=subprocess.run(['lmscript',str(ROOT/'examples'/(name+'.lms'))],cwd=native_work,env=env,text=True,capture_output=True,timeout=360)
         (native_work/'private.log').write_text(p.stdout+p.stderr)
         files=list((native_work/'evidence').glob('live-cost-'+name+'-*.json'));assert len(files)==1,'native run did not emit unique evidence'
-        native=load(files[0]);native['status']='passed' if p.returncode==0 else 'blocked';native['wall_seconds']=round(time.monotonic()-started,6)
+        native=load(files[0]);native['example_exit_code']=p.returncode;native['status']='passed' if p.returncode==0 else 'blocked';native['wall_seconds']=round(time.monotonic()-started,6)
         output=native_work/'data'/(name+'.csv')
         if output.exists():native['outputs_csv']=output.read_text()
         count_file=native_work/'data'/(name+'.count')
@@ -84,6 +110,8 @@ def main():
     previous_verification=sum((Decimal(str(v.get('estimated_usd',0))) for v in native.get('independent_readonly_verification',[])),Decimal(0))
     native['independent_readonly_verification']=verify(attempted)
     for resource in native.get('resources',[]):resource.setdefault('tags',{'lmaws_test':native['run_id']})
+    native['observed_resources']=native_resources(native)
+    write(native_work/'native-result.json',native)
     campaign_path=Path(env['LMAWS_COMPARE_CAMPAIGN']);prior=load(campaign_path);campaign=Decimal(str(prior.get('estimated_usd','0')))
     amount=Decimal(str(native.get('total_estimated_usd','0')))+previous_verification+sum((Decimal(str(v.get('estimated_usd',0))) for v in native['independent_readonly_verification']),Decimal(0))
     comparison_cap=Decimal(env.get('LMAWS_MAX_COST_USD','0.05'))
@@ -97,7 +125,7 @@ def main():
         cloud=dict(status='compile_or_bootstrap_failed',total_estimated_usd='0',leftover_count=1,cleanup_verification='unknown: missing final ledger',run_error='No final provider record; inspect private state and logs before assuming cleanup',wall_seconds=round(time.monotonic()-started,6))
     record=dict(recorded_at=time.time(),example=name,run_id=run_id,profile=expected,region='us-east-1',native=native,lmcloud=cloud,leftover_count=max(native['leftover_count'],cloud.get('leftover_count',1)),comparison={})
     same=equivalent_resources(native,cloud) if native['status']=='passed' and cloud['status']=='passed' else None
-    record['comparison']=dict(resources=('same parent types/names/tags after run-ID normalization' if same else 'differs' if same is False else 'not comparable: a run was blocked'),outputs=compare_outputs(native,cloud,meta['write'],name),why=meta['notes']+(' Both engines passed.' if same else ' '+native['status']+' vs '+cloud['status']+'.'))
+    record['comparison']=dict(resources=('same observed parent/child types, names and tags after run-ID normalization' if same else 'differs' if same is False else 'not comparable: a run was blocked'),outputs=compare_outputs(native,cloud,meta['write'],name),why=meta['notes']+(' Both engines passed.' if same else ' '+native['status']+' vs '+cloud['status']+'.'))
     record['comparison']['estimated_cost_delta_usd']=str(Decimal(str(cloud.get('total_estimated_usd',0)))-Decimal(str(native.get('total_estimated_usd',0))))
     if 'wall_seconds' in native and 'wall_seconds' in cloud:record['comparison']['wall_delta_seconds']=round(cloud['wall_seconds']-native['wall_seconds'],6)
     # Logs, provider state, parameter values and account identifiers never enter public records.

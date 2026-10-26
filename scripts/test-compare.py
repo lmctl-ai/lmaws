@@ -36,6 +36,17 @@ for altered in [False,True]:
 try:runtime.assert_owned(plan,run,False)
 except RuntimeError:pass
 else:raise AssertionError('read-only comparison accepted cloud mutations')
+native_owned={'run_id':'r1234abcdx5678abcd','resources':[{'kind':'bucket','name':'lmaws-r1234abcdx5678abcd-sample','tags':{'lmaws_test':'r1234abcdx5678abcd'}}]}
+cloud_owned={'run_id':'r11112222x33334444','observed_resources':[{'kind':'bucket','name':'lmaws-r11112222x33334444-sample','tags':{'lmaws_test':'r11112222x33334444'}}]}
+assert driver.equivalent_resources(native_owned,cloud_owned)
+cloud_drift=json.loads(json.dumps(cloud_owned));cloud_drift['resources']=json.loads(json.dumps(cloud_drift['observed_resources']));cloud_drift['observed_resources'][0]['name']='foreign'
+assert not driver.equivalent_resources(native_owned,cloud_drift),'planned equality hid observed drift'
+with tempfile.TemporaryDirectory(prefix='lmaws-sdk-child-') as td:
+ ledger=pathlib.Path(td)/'ledger.jsonl';ledger.write_text(json.dumps({'event':'updated','kind':'bucket','id':'own','action':'update:tiny.txt'})+'\n')
+ sample={'ledger':str(ledger),'resources':[{'kind':'bucket','id':'own','name':'lmaws-owned'}]}
+ resources=driver.native_resources(sample);assert len(resources)==2 and resources[1]['name']=='tiny.txt' and resources[1]['parent']=='lmaws-owned'
+
+
 with tempfile.TemporaryDirectory(prefix='lmaws-compare-tests-') as tmp:
  tmp=pathlib.Path(tmp);fake=tmp/'bin';fake.mkdir();emitter=fake/'emit.py'
  # A loopback test seam must never silently become a real cloud comparison.
@@ -57,6 +68,7 @@ with tempfile.TemporaryDirectory(prefix='lmaws-compare-tests-') as tmp:
  bootstrap_env=dict(env);bootstrap_env.pop('LMAWS_COMPARE_RUNTIME',None);bootstrap_env.pop('LMAWS_COMPARE_VERIFIER',None)
  boot=subprocess.run([shutil.which('lmscript'),'--no-preflight',str(bootstrap_file)],cwd=tmp,env=bootstrap_env,text=True,capture_output=True,timeout=45)
  assert boot.returncode==0,boot.stderr
+ assert (tmp/'comparison-main.tf').read_bytes()==(ROOT/'compare/bucket_objects/main.tf').read_bytes(), 'HCL interpolation changed the run-owned configuration'
  assert (tmp/'compare-runtime.py').read_text().strip()=='mock-helper'
  assert (tmp/'verify_absence.py').read_text().strip()=='mock-helper'
 
@@ -92,3 +104,39 @@ with tempfile.TemporaryDirectory(prefix='lmaws-compare-tests-') as tmp:
    result=json.loads(pathlib.Path('cloud-result.json').read_text());assert result['leftover_count']==0 and result['status']=='failed'
  finally:os.chdir(original)
 print('PASS 30 comparison scripts with fake schema; ownership/profile and failure teardown checks')
+
+with tempfile.TemporaryDirectory(prefix='lmaws-missing-result-') as td:
+ tmp=pathlib.Path(td);(tmp/'compare/evidence').mkdir(parents=True)
+ fixture=tmp/'native.json';fixture.write_text(json.dumps({'example':'bucket_objects','profile':'lmaws','live':True,'example_exit_code':0,'leftover_count':0,'resources':[],'total_estimated_usd':'0','run_id':'r1234abcdx5678abcd'}))
+ env={'LMAWS_LIVE':'1','AWS_PROFILE':'lmaws','AWS_REGION':'us-east-1','CI':'false','GITHUB_ACTIONS':'false','LMAWS_COMPARE_CAMPAIGN':str(tmp/'campaign.json')}
+ with patch.dict(os.environ,env),patch.object(driver,'ROOT',tmp),patch.object(sys,'argv',['driver','bucket_objects','--native-evidence',str(fixture),'--host',str(tmp/'missing-host')]),patch('driver.verify',return_value=[]),patch('driver.subprocess.run',return_value=SimpleNamespace(returncode=1,stdout='',stderr='fixture bootstrap failure')):
+  assert driver.main()==1
+ result=json.loads(next((tmp/'compare/evidence').glob('*.json')).read_text())
+ assert result['leftover_count']>0 and 'unknown' in result['lmcloud']['cleanup_verification']
+ # File names deliberately disagree with time; cloning must not revive older results.
+ old=dict(result,recorded_at=1);old['native']=dict(result['native'],status='old-marker')
+ new=dict(result,recorded_at=2);new['native']=dict(result['native'],status='current-marker')
+ (tmp/'compare/evidence/z-old.json').write_text(json.dumps(old));(tmp/'compare/evidence/a-new.json').write_text(json.dumps(new))
+ for f in (tmp/'compare/evidence').glob('bucket_objects-*.json'):f.unlink()
+ with patch.object(driver,'ROOT',tmp):driver.update_results()
+ text=(tmp/'compare/RESULTS.md').read_text();assert 'current-marker' in text and 'old-marker' not in text
+print('PASS observed-state parity, unknown cleanup and timestamp result selection')
+
+assert runtime.phase_error('plan','provider["registry.opentofu.org/hashicorp/aws"]: failed to refresh cached credentials, credential_process exit status 1')=='aws_credentials_unavailable'
+assert runtime.phase_error('init','Failed to install registry provider package')=='provider_download_failed'
+assert runtime.phase_error('plan','AccessDenied for read action')=='aws_permission_denied'
+print('PASS credential failures are not misreported as provider installation failures')
+
+bucket_plan={'resource_changes':[{'address':'aws_s3_bucket.own','mode':'managed','type':'aws_s3_bucket','change':{'actions':['create'],'after':{'bucket':'lmaws-'+run+'-sample','tags':{'lmaws_test':run},'force_destroy':False}}},{'address':'aws_s3_object.own','mode':'managed','type':'aws_s3_object','change':{'actions':['create'],'after':{'bucket':None,'key':'tiny.txt','content':'tiny'}}}], 'configuration':{'root_module':{'resources':[{'address':'aws_s3_object.own','expressions':{'bucket':{'references':['aws_s3_bucket.own.id']}}}]}}}
+assert runtime.assert_owned(bucket_plan,run,True)[0]['kind']=='bucket'
+for mode in ('foreign_known_parent','oversized_content','file_source','multiple_children','force_destroy'):
+ bad=json.loads(json.dumps(bucket_plan))
+ if mode=='foreign_known_parent':bad['resource_changes'][1]['change']['after']['bucket']='foreign-bucket'
+ elif mode=='oversized_content':bad['resource_changes'][1]['change']['after']['content']='x'*65537
+ elif mode=='file_source':bad['resource_changes'][1]['change']['after']['source']='/private/file'
+ elif mode=='multiple_children':bad['resource_changes'].append(bad['resource_changes'][1])
+ else:bad['resource_changes'][0]['change']['after']['force_destroy']=True
+ try:runtime.assert_owned(bad,run,True)
+ except RuntimeError:pass
+ else:raise AssertionError('unsafe child plan accepted: '+mode)
+print('PASS bounded child content, known parent ownership and force-destroy rejection')

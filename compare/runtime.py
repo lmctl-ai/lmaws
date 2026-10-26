@@ -4,7 +4,7 @@
 All writes require lmaws; state and operation output remain private. The public
 record contains only resource descriptors, counts, prices and sanitized failures.
 """
-import argparse,json,os,re,secrets,shutil,signal,subprocess,sys,time
+import argparse,hashlib,json,os,re,secrets,shutil,signal,subprocess,sys,time
 from decimal import Decimal
 from pathlib import Path
 repository_scripts=Path(__file__).resolve().parent.parent/"scripts"
@@ -43,7 +43,13 @@ def state_resources(state):
             name=values.get('bucket') if kind=='bucket' else values.get('name')
             if typ=='aws_s3_object':name=values.get('key')
             if typ=='aws_dynamodb_table_item':name=values.get('table_name')
-            out.append(dict(kind=kind,provider_type=typ,name=name or '',tags=values.get('tags') or {},address=resource.get('address','')))
+            parent=''
+            if typ=='aws_s3_object':parent=values.get('bucket','')
+            if typ=='aws_dynamodb_table_item':
+                parent=values.get('table_name','')
+                try:name=json.loads(values.get('item','{}')).get('pk',{}).get('S','')
+                except (ValueError,TypeError):name=''
+            out.append(dict(kind=kind,provider_type=typ,name=name or '',parent=parent,tags=values.get('tags') or {},address=resource.get('address','')))
         for child in module.get('child_modules',[]):visit(child)
     visit(state.get('values',{}).get('root_module',{}))
     return out
@@ -64,21 +70,38 @@ def assert_owned(plan,run_id,write_mode):
             kind=TYPES[typ];name=after.get('bucket') if kind=='bucket' else after.get('name')
             if not isinstance(name,str) or not name.startswith(('lmaws_','lmaws-')) or run_id not in name:raise RuntimeError('plan name is not run-owned')
             if (after.get('tags') or {}).get('lmaws_test')!=run_id:raise RuntimeError('plan ownership tag does not match this ledger')
+            if typ=='aws_s3_bucket' and after.get('force_destroy'):raise RuntimeError('force-destroy of untracked bucket objects is forbidden')
             if typ=='aws_dynamodb_table' and after.get('billing_mode')!='PAY_PER_REQUEST':raise RuntimeError('only on-demand DynamoDB is allowed')
             if typ=='aws_ssm_parameter' and (after.get('type')!='String' or after.get('tier','Standard')!='Standard'):raise RuntimeError('only Standard String parameters are allowed')
             resources.append(dict(kind=kind,name=name,tags={'lmaws_test':run_id},request_unit_price_usd_upper_bound='0.000005',request_allowance=500))
             parents[change.get('address','')]=dict(kind=kind,name=name)
+    if len(children)>1:raise RuntimeError('one tiny child object/item per comparison is allowed')
     config={r.get('address'):r for r in plan.get('configuration',{}).get('root_module',{}).get('resources',[])}
     for child in children:
         field='bucket' if child['type']=='aws_s3_object' else 'table_name'
         expected='bucket' if field=='bucket' else 'table'
-        target=(child['change'].get('after') or {}).get(field)
+        after=child['change'].get('after') or {}
+        target=after.get(field)
+        if child['type']=='aws_s3_object':
+            if not isinstance(after.get('key'),str) or not 0<len(after['key'].encode())<=1024:raise RuntimeError('invalid tiny object key')
+            if after.get('source') or after.get('content_base64') or not isinstance(after.get('content'),str) or len(after['content'].encode())>65536:raise RuntimeError('only bounded inline tiny object content is allowed')
+        elif not isinstance(after.get('item'),str) or len(after['item'].encode())>65536:
+            raise RuntimeError('only a bounded inline DynamoDB item is allowed')
         references=config.get(child.get('address'),{}).get('expressions',{}).get(field,{}).get('references',[])
-        owned=any(parent['kind']==expected and (target==parent['name'] or any(ref==address or ref.startswith(address+'.') for ref in references)) for address,parent in parents.items() if address)
+        owned=any(parent['kind']==expected and ((target==parent['name']) if target is not None else any(ref==address or ref.startswith(address+'.') for ref in references)) for address,parent in parents.items() if address)
         if not owned:raise RuntimeError('child object/item does not reference the newly owned parent')
     if write_mode and not resources:raise RuntimeError('write comparison has no planned AWS resource')
     if len(resources)>1:raise RuntimeError('one parent AWS resource per comparison is the approved scope')
     return resources
+
+def phase_error(phase,error):
+    if re.search(r'credential|expiredtoken|invalidclienttoken|sso.*token',error,re.I):
+        return 'aws_credentials_unavailable'
+    if re.search(r'accessdenied|unauthorizedoperation|authorizationerror',error,re.I):
+        return 'aws_permission_denied'
+    if phase=='init' and re.search(r'install|registry|download|provider.*package',error,re.I):
+        return 'provider_download_failed'
+    return 'lmcloud_'+phase+'_failed'
 
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--name',required=True);ap.add_argument('--host',required=True);ap.add_argument('--config',required=True);ap.add_argument('--metadata',required=True);args=ap.parse_args()
@@ -103,7 +126,7 @@ def main():
     env=dict(os.environ,TF_PLUGIN_CACHE_DIR=str(provider_cache),AWS_PROFILE=profile,AWS_DEFAULT_PROFILE=profile,AWS_REGION='us-east-1',AWS_DEFAULT_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',AWS_MAX_ATTEMPTS='2',TF_INPUT='0',TF_IN_AUTOMATION='1',TF_VAR_run_id=run_id)
     for k in ('AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN','AWS_SECURITY_TOKEN','AWS_WEB_IDENTITY_TOKEN_FILE','AWS_ROLE_ARN','AWS_ROLE_SESSION_NAME','AWS_CONTAINER_CREDENTIALS_RELATIVE_URI','AWS_CONTAINER_CREDENTIALS_FULL_URI','TF_LOG','TF_LOG_PROVIDER','TF_LOG_PATH'):env.pop(k,None)
     engine_version=subprocess.run([args.host,'--version'],text=True,capture_output=True,timeout=15).stdout.strip()
-    ledger={'engine_version':engine_version,'schema':'lmaws-tofu-ledger-v2','example':args.name,'run_id':run_id,'profile':profile,'region':'us-east-1','live':live,'resources':[],'events':[],'price_table':{k:str(v) for k,v in PRICES.items()},'price_method':'Conservative upper bound of 500 provider/verification requests at the maximum table price, reserved before plan; not observed SDK request counts or an invoice measurement; tiny storage included','cap_usd':str(cap),'request_allowance':500,'request_unit_price_usd':'0.000005','total_estimated_usd':'0','leftover_count':0}
+    ledger={'engine_version':engine_version,'engine_sha256':hashlib.sha256(Path(args.host).read_bytes()).hexdigest() if Path(args.host).is_file() else 'fixture','config_sha256':hashlib.sha256(Path(args.config).read_bytes()).hexdigest(),'schema':'lmaws-tofu-ledger-v2','example':args.name,'run_id':run_id,'profile':profile,'region':'us-east-1','live':live,'resources':[],'events':[],'price_table':{k:str(v) for k,v in PRICES.items()},'price_method':'Conservative upper bound of 500 provider/verification requests at the maximum table price, reserved before plan; not observed SDK request counts or an invoice measurement; tiny storage included','cap_usd':str(cap),'request_allowance':500,'request_unit_price_usd':'0.000005','total_estimated_usd':'0','leftover_count':0}
     archive=Path(os.getenv('LMAWS_COMPARE_LEDGER_DIR','comparison-ledgers'))/(args.name+'-'+run_id+'.json')
     archive.parent.mkdir(parents=True,exist_ok=True)
     archive_fd=os.open(archive,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600);os.close(archive_fd)
@@ -117,7 +140,7 @@ def main():
         event('phase',phase=name,ok=ok,wall_seconds=round(time.monotonic()-started,6),exit_code=p.returncode)
         if p.returncode or not ok:
             # Detailed diagnostics are kept locally, never copied to public evidence.
-            summary='provider_download_failed' if re.search(r'install|registry|download|provider.*package',error,re.I) else 'lmcloud_'+name+'_failed'
+            summary=phase_error(name,error)
             raise RuntimeError(summary)
     campaign=Path(os.getenv('LMAWS_COMPARE_CAMPAIGN',str(Path.cwd()/'campaign.json'))).resolve();campaign.parent.mkdir(parents=True,exist_ok=True)
     lock=campaign.with_suffix('.lock');lock_fd=None

@@ -52,6 +52,6 @@ file_write("phase-inspect_after.ok", str(ok));
 file_write("phase-inspect_after.error", tofu.last_error());
 end _dsl_
 savedsl(phase_inspect_after, "phase-inspect_after.dslb");
-result = system(["python3", "compare-runtime.py", "--name", "sweeper", "--host", dsl_cli(phase_init)[0], "--config", "comparison-main.tf", "--metadata", "{\"write\": false, \"iam\": false, \"kind\": \"local state outputs (no managed resources)\", \"notes\": \"Both audit local cleanup state without AWS mutations; native scans SDK ledgers, Terraform has its own state.\", \"supported_outputs\": [], \"unsupported_outputs\": []}"], 900000);
+result = system(["python3", "compare-runtime.py", "--name", "sweeper", "--host", dsl_cli(phase_init)[0], "--config", "comparison-main.tf", "--metadata", "{\"write\": false, \"iam\": false, \"kind\": \"local state outputs (no managed resources)\", \"notes\": \"Both audit local cleanup state without AWS mutations; native scans SDK ledgers, Terraform has its own state.\", \"supported_outputs\": [\"leftovers\"], \"unsupported_outputs\": [], \"unsupported_operations\": [\"Native SDK ledger sweep and OpenTofu state inspection use different local stores; equal zero counts do not establish interchangeable sweepers.\"]}"], 900000);
 println(result.stdout);
 assert(result.code == 0);

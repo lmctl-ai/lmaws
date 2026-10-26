@@ -52,6 +52,6 @@ file_write("phase-inspect_after.ok", str(ok));
 file_write("phase-inspect_after.error", tofu.last_error());
 end _dsl_
 savedsl(phase_inspect_after, "phase-inspect_after.dslb");
-result = system(["python3", "compare-runtime.py", "--name", "instances", "--host", dsl_cli(phase_init)[0], "--config", "comparison-main.tf", "--metadata", "{\"write\": false, \"iam\": false, \"kind\": \"aws_instances\", \"notes\": \"Matches native instances().\", \"supported_outputs\": [\"instances\"], \"unsupported_outputs\": []}"], 900000);
+result = system(["python3", "compare-runtime.py", "--name", "instances", "--host", dsl_cli(phase_init)[0], "--config", "comparison-main.tf", "--metadata", "{\"write\": false, \"iam\": false, \"kind\": \"aws_instances\", \"notes\": \"Compares running/stopped categories; the full instance source explicitly includes all EC2 states.\", \"supported_outputs\": [\"running\", \"stopped\"], \"unsupported_outputs\": []}"], 900000);
 println(result.stdout);
 assert(result.code == 0);

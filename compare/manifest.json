@@ -76,9 +76,10 @@
       "write": false,
       "iam": false,
       "kind": "aws_instances",
-      "notes": "Matches native instances().",
+      "notes": "Compares running/stopped categories; the full instance source explicitly includes all EC2 states.",
       "supported_outputs": [
-        "instances"
+        "running",
+        "stopped"
       ],
       "unsupported_outputs": []
     },
@@ -197,17 +198,23 @@
       "write": false,
       "iam": false,
       "kind": "aws_secretsmanager_secrets",
-      "notes": "Metadata only; no secret values.",
+      "notes": "Metadata-only secret count; native missing/redaction display categories are not all provider outputs.",
       "supported_outputs": [
         "secrets"
       ],
-      "unsupported_outputs": []
+      "unsupported_outputs": [
+        "missing"
+      ]
     },
     "security_groups": {
       "write": false,
       "iam": false,
       "kind": "aws_security_groups",
-      "notes": "Same EC2 metadata classification; OpenTofu additionally describes each resource individually."
+      "notes": "Same ingress CIDR public/private counts via EC2 rule-list and rule-detail data sources.",
+      "supported_outputs": [
+        "public",
+        "private"
+      ]
     },
     "service_matrix": {
       "write": false,
@@ -220,8 +227,13 @@
       "iam": false,
       "kind": "local state outputs (no managed resources)",
       "notes": "Both audit local cleanup state without AWS mutations; native scans SDK ledgers, Terraform has its own state.",
-      "supported_outputs": [],
-      "unsupported_outputs": []
+      "supported_outputs": [
+        "leftovers"
+      ],
+      "unsupported_outputs": [],
+      "unsupported_operations": [
+        "Native SDK ledger sweep and OpenTofu state inspection use different local stores; equal zero counts do not establish interchangeable sweepers."
+      ]
     },
     "table_items": {
       "write": true,
@@ -233,11 +245,14 @@
       "write": false,
       "iam": false,
       "kind": "aws_dynamodb_tables",
-      "notes": "Matches native tables().",
+      "notes": "Table total is represented; native billing-category rows are not reproduced.",
       "supported_outputs": [
         "tables"
       ],
-      "unsupported_outputs": []
+      "unsupported_outputs": [
+        "on_demand",
+        "missing"
+      ]
     },
     "tag_compliance": {
       "write": false,
