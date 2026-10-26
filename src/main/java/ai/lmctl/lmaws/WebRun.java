@@ -21,8 +21,10 @@ final class WebRun implements AutoCloseable {
         WebStack.requireRun(run);
         if(domain==null||!domain.matches("[a-z0-9](?:[a-z0-9.-]{0,250}[a-z0-9])?")||domain.contains(".."))throw new IllegalArgumentException("invalid domain");
         this.backend=backend;this.cost=cost;this.run=run;this.domain=domain;this.path=Path.of(file).toAbsolutePath().normalize();
-        if(!path.toString().contains(".lmweblab-local")&&!backend.isDemo())throw new IllegalArgumentException("live web state must be in .lmweblab-local");
+        if(java.util.stream.StreamSupport.stream(path.getParent().spliterator(),false).noneMatch(part->part.toString().equals(".lmweblab-local"))&&!backend.isDemo())throw new IllegalArgumentException("live web state must be in .lmweblab-local");
         try {
+            Path ancestor=path.getRoot();boolean privatePart=false;
+            for(Path part:path){ancestor=ancestor.resolve(part);privatePart|=part.toString().equals(".lmweblab-local");if(privatePart&&Files.isSymbolicLink(ancestor))throw new IllegalArgumentException("private web state symlink refused");}
             Files.createDirectories(path.getParent());
             if(Files.isSymbolicLink(path))throw new IllegalArgumentException("web state symlink refused");
             Path lockPath=path.resolveSibling(path.getFileName()+".lock");
@@ -35,25 +37,34 @@ final class WebRun implements AutoCloseable {
                 for(var e:map.entrySet())state.put((String)e.getKey(),(String)e.getValue());
                 if(!run.equals(state.get("run_id"))||!domain.equals(state.get("domain"))||!String.valueOf(backend.isDemo()).equals(state.get("demo")))throw new IllegalArgumentException("web state run/domain/mode mismatch");
             } else {
-                state.put("run_id",run);state.put("domain",domain);state.put("demo",String.valueOf(backend.isDemo()));state.put("started_at",Instant.now().toString());state.put("cost_cap",cost.cap().toPlainString());state.put("request_cost_prior","0");state.put("price_table",Jsons.encodeRaw(Map.of("spot_max_usd_hour","0.0042","public_ipv4_usd_hour","0.005","gp3_gb_month","0.08","root_gib","8","as_of","2026-10-26","region","us-east-1")));
+                state.put("run_id",run);state.put("domain",domain);state.put("demo",String.valueOf(backend.isDemo()));state.put("started_at",Instant.now().toString());state.put("cost_cap",cost.cap().toPlainString());state.put("request_cost_prior","0");state.put("price_table",Jsons.encodeRaw(Map.of("spot_bid_ceiling_usd_hour","0.0052","public_ipv4_usd_hour","0.005","gp3_gb_month","0.08","root_gib","8","as_of","2026-10-26","region","us-east-1","http_request_bound_usd","0.000001","http_transfer_bound_usd_gb","0.09")));
                 state.put("bucket","lmaws-site-"+run);state.put("site","lmaws-site-"+run+"."+domain);state.put("app","lmaws-app-"+run+"."+domain);persist();
             }
+            if(!state.containsKey("owner_proof")){state.put("owner_proof",UUID.randomUUID().toString().replace("-",""));persist();}
         } catch(java.io.IOException e){throw new IllegalStateException("cannot lock/read private web state",e);}
     }
+    static List<Map<String,String>> find(AwsBackend backend,String run,String domain) {
+        WebStack.requireRun(run);
+        if(domain==null||!domain.matches("[a-z0-9](?:[a-z0-9.-]{0,250}[a-z0-9])?")||domain.contains(".."))throw new IllegalArgumentException("invalid web domain");
+        if(backend.isDemo())return List.of();
+        try(var adapter=new WebStackAws(backend.webBuilder(Route53Client.builder()).region(software.amazon.awssdk.regions.Region.AWS_GLOBAL).build(),backend.webBuilder(CloudFrontClient.builder()).region(software.amazon.awssdk.regions.Region.AWS_GLOBAL).build(),backend.webBuilder(AcmClient.builder()).build(),backend.webBuilder(S3Client.builder()).build(),backend.ec2Client(),run,domain)) {
+            List<Map<String,String>> result=new ArrayList<>(adapter.recoverOwned());result.addAll(new WebCompute(backend).inventory(run));return result;
+        }
+    }
     private WebStackAws aws() {
-        if(provider==null)provider=new WebStackAws(backend.webBuilder(Route53Client.builder()).region(software.amazon.awssdk.regions.Region.AWS_GLOBAL).build(),backend.webBuilder(CloudFrontClient.builder()).region(software.amazon.awssdk.regions.Region.AWS_GLOBAL).build(),backend.webBuilder(AcmClient.builder()).build(),backend.webBuilder(S3Client.builder()).build(),backend.ec2Client(),run,domain);
+        if(provider==null)provider=new WebStackAws(backend.webBuilder(Route53Client.builder()).region(software.amazon.awssdk.regions.Region.AWS_GLOBAL).build(),backend.webBuilder(CloudFrontClient.builder()).region(software.amazon.awssdk.regions.Region.AWS_GLOBAL).build(),backend.webBuilder(AcmClient.builder()).build(),backend.webBuilder(S3Client.builder()).build(),backend.ec2Client(),run,domain,val("owner_proof"));
         return provider;
     }
     private void guard(){if(!backend.isDemo()&&(!"lmaws".equals(AwsBackend.activeProfile())||!AwsBackend.isLiveEnabled()||!"us-east-1".equals(cost.region())))throw new IllegalStateException("web mutations require live AWS_PROFILE=lmaws in us-east-1");}
     private void persist(){try{Path temp=Files.createTempFile(path.getParent(),".web-state-",".tmp");try{try{Files.setPosixFilePermissions(temp,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));}catch(UnsupportedOperationException ignored){}Files.writeString(temp,Jsons.encodeRaw(state));try(FileChannel f=FileChannel.open(temp,StandardOpenOption.WRITE)){f.force(true);}Files.move(temp,path,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}finally{Files.deleteIfExists(temp);}}catch(java.io.IOException e){throw new IllegalStateException("cannot save private web state",e);}}
     private String val(String k){String v=state.get(k);if(v==null||v.isEmpty())throw new IllegalStateException("web step prerequisite missing: "+k);return v;}
     @SuppressWarnings("unchecked") synchronized Map<String,String> step(String op,String json) {
-        guard();if(!Set.of("bucket","distribution","certificate","dns_site","compute","dns_app","https","invalidate","record_http").contains(op))throw new IllegalArgumentException("unknown web step");
+        guard();if(!Set.of("bucket","distribution","certificate","dns_site","compute","dns_app","https","invalidate","record_http","reserve_http").contains(op))throw new IllegalArgumentException("unknown web step");
         Object parsed=Json.parse(json);if(!(parsed instanceof Map<?,?> raw))throw new IllegalArgumentException("web step arguments must be an object");
         Map<String,Object> args=(Map<String,Object>)raw;
         if("down".equals(state.get("status")))throw new IllegalStateException("run is torn down; choose a new run id");
-        if(!op.equals("record_http")&&"done".equals(state.get("step_"+op)))return summary();
-        if(estimate().compareTo(new java.math.BigDecimal(state.getOrDefault("cost_cap","0.10")))>=0)throw new CostLedger.BudgetExceeded("web run cost cap reached before step");
+        if(!Set.of("record_http","reserve_http").contains(op)&&"done".equals(state.get("step_"+op)))return summary();
+        if(estimate().add(Set.of("record_http","reserve_http").contains(op)?java.math.BigDecimal.ZERO:new java.math.BigDecimal(state.getOrDefault("http_reserved","0"))).compareTo(new java.math.BigDecimal(state.getOrDefault("cost_cap","0.10")))>=0)throw new CostLedger.BudgetExceeded("web run cost cap reached before step");
         state.put("intent",op);persist();long start=System.nanoTime();
         try{if(backend.isDemo()) demoStep(op,args);else liveStep(op,args);}
         catch(RuntimeException failure){
@@ -66,13 +77,13 @@ final class WebRun implements AutoCloseable {
         switch(op){
             case "bucket"->state.put("bucket_created","true");
             case "distribution"->{val("bucket_created");state.put("oac","fixture-oac");state.put("distribution","fixture-distribution");state.put("cf_domain","dfixture.cloudfront.net");}
-            case "certificate"->{val("distribution");state.put("cert","fixture-cert");state.put("certificate_status","ISSUED");}
+            case "certificate"->{state.put("cert","fixture-cert");state.put("certificate_status","ISSUED");}
             case "dns_site"->{val("cert");state.put("site_record","true");state.put("zone","fixture-zone");}
             case "compute"->{WebStack.requireHttpCidr(arg(a,"cidr","203.0.113.10/32"));state.put("instance_id","i-fixture");state.put("security_group_id","sg-fixture");state.put("public_ip","203.0.113.20");}
             case "dns_app"->{val("instance_id");state.put("app_record","true");}
             case "https"->{val("cert");state.put("https","true");}
             case "invalidate"->val("distribution");
-            case "record_http" -> { }
+            case "record_http", "reserve_http" -> { }
         }
     }
     private void liveStep(String op,Map<String,Object>a) {
@@ -84,7 +95,7 @@ final class WebRun implements AutoCloseable {
             }
             case "distribution"->{
                 if(!state.containsKey("oac")){state.put("oac",aws().createOac());persist();}
-                if(!state.containsKey("distribution")){var d=aws().createDistribution(val("bucket"),val("site"),val("oac"));state.put("distribution",d.id());state.put("distribution_arn",d.arn());state.put("cf_domain",d.domainName());persist();}
+                if(!state.containsKey("distribution")){var d=aws().createDistribution(val("bucket"),val("site"),val("oac"),state.get("cert"));state.put("distribution",d.id());state.put("distribution_arn",d.arn());state.put("cf_domain",d.domainName());persist();}
                 aws().bucketPolicy(val("bucket"),val("distribution_arn"));aws().waitDeployed(val("distribution"),Duration.ofMinutes(20));
             }
             case "certificate"->{
@@ -96,11 +107,11 @@ final class WebRun implements AutoCloseable {
                     for(var option:cert.domainValidationOptions())if(option.resourceRecord()!=null){state.put("validation_name",option.resourceRecord().name());state.put("validation_value",option.resourceRecord().value());persist();break;}
                     if(!state.containsKey("validation_name")){if(System.nanoTime()>until)throw new IllegalStateException("ACM validation record timeout");sleep(3000);}
                 }
-                if(!state.containsKey("validation_record")){aws().recordCname(val("zone"),val("validation_name"),val("validation_value"),false);state.put("validation_record","true");persist();}
+                if(!state.containsKey("validation_record")){aws().recordCname(val("zone"),val("validation_name"),val("validation_value"),false,()->{state.put("validation_record","true");persist();});}
                 aws().waitIssued(val("cert"),Duration.ofMinutes(15));state.put("certificate_status","ISSUED");
-                aws().attachCertificate(val("distribution"),val("site"),val("cert"),false);
+                if(state.containsKey("distribution"))aws().attachCertificate(val("distribution"),val("site"),val("cert"),false);
             }
-            case "dns_site"->{aws().changeAlias(val("zone"),val("site"),val("cf_domain"),false);state.put("site_record","true");}
+            case "dns_site"->{aws().changeAlias(val("zone"),val("site"),val("cf_domain"),false,()->{state.put("site_record","true");persist();});}
             case "compute"->{
                 String script=read(Path.of(arg(a,"user_data","shared/userdata/user_data.sh"))).replace("__RUN_ID__",run);
                 if(estimate().add(new java.math.BigDecimal("0.003")).compareTo(new java.math.BigDecimal(state.getOrDefault("cost_cap","0.10")))>0)throw new CostLedger.BudgetExceeded("nano + public IPv4 + volume reservation exceeds run cap");
@@ -108,15 +119,23 @@ final class WebRun implements AutoCloseable {
                 var result=new WebCompute(backend).create(run,arg(a,"vpc_id",""),arg(a,"subnet_id",""),arg(a,"ami",""),arg(a,"cidr",""),arg(a,"instance_type","t4g.nano"),8,script,Double.parseDouble(arg(a,"max_price","0.0042")),checkpoint->{state.putAll(checkpoint);persist();});
                 state.putAll(result);persist();
             }
-            case "dns_app"->{aws().recordA(val("zone"),val("app"),val("public_ip"),false);state.put("app_record","true");}
+            case "dns_app"->{aws().recordA(val("zone"),val("app"),val("public_ip"),false,()->{state.put("app_record","true");persist();});}
             case "https"->{aws().attachCertificate(val("distribution"),val("site"),val("cert"),true);state.put("https","true");}
             case "invalidate"->aws().invalidate(val("distribution"));
-            case "record_http"->{
+            case "reserve_http", "record_http"->{
                 long requests=Long.parseLong(arg(a,"requests","0")),bytes=Long.parseLong(arg(a,"bytes","0"));
                 if(requests<0||requests>10000||bytes<0||bytes>104857600)throw new IllegalArgumentException("HTTP cost accounting bounds exceeded");
                 var amount=java.math.BigDecimal.valueOf(requests).multiply(new java.math.BigDecimal("0.000001"))
-                   .add(java.math.BigDecimal.valueOf(bytes).multiply(new java.math.BigDecimal("0.085")).divide(new java.math.BigDecimal("1073741824"),12,java.math.RoundingMode.CEILING));
-                state.put("viewer_cost",new java.math.BigDecimal(state.getOrDefault("viewer_cost","0")).add(amount).toPlainString());
+                   .add(java.math.BigDecimal.valueOf(bytes).multiply(new java.math.BigDecimal("0.09")).divide(new java.math.BigDecimal("1073741824"),12,java.math.RoundingMode.CEILING));
+                if(estimate().add(amount).compareTo(new java.math.BigDecimal(state.getOrDefault("cost_cap","0.10")))>0)throw new CostLedger.BudgetExceeded("HTTP estimate exceeds whole web-run cap");
+                if(op.equals("reserve_http"))state.put("http_reserved",amount.toPlainString());
+                else {
+                    var reserved=new java.math.BigDecimal(state.getOrDefault("http_reserved","0"));
+                    if(reserved.signum()>0&&amount.compareTo(reserved)>0)throw new CostLedger.BudgetExceeded("HTTP requests exceeded the admitted test reservation");
+                    state.put("viewer_cost",new java.math.BigDecimal(state.getOrDefault("viewer_cost","0")).add(amount).toPlainString());state.remove("http_reserved");
+                    state.put("viewer_requests",String.valueOf(Long.parseLong(state.getOrDefault("viewer_requests","0"))+requests));
+                    state.put("viewer_bytes_bound",String.valueOf(Long.parseLong(state.getOrDefault("viewer_bytes_bound","0"))+bytes));
+                }
             }
         }
     }
@@ -134,7 +153,7 @@ final class WebRun implements AutoCloseable {
         if(state.containsKey("compute_started_at")){
             Instant end=state.containsKey("compute_ended_at")?Instant.parse(state.get("compute_ended_at")):Instant.now();
             double seconds=Math.max(0,Duration.between(Instant.parse(state.get("compute_started_at")),end).toMillis()/1000.0);
-            total=total.add(java.math.BigDecimal.valueOf(seconds).multiply(new java.math.BigDecimal("0.0092")).divide(new java.math.BigDecimal("3600"),12,java.math.RoundingMode.CEILING));
+            total=total.add(java.math.BigDecimal.valueOf(seconds).multiply(new java.math.BigDecimal(state.getOrDefault("max_price","0.0052")).add(new java.math.BigDecimal("0.005"))).divide(new java.math.BigDecimal("3600"),12,java.math.RoundingMode.CEILING));
             total=total.add(java.math.BigDecimal.valueOf(seconds).multiply(new java.math.BigDecimal("0.64")).divide(new java.math.BigDecimal("2592000"),12,java.math.RoundingMode.CEILING));
         }
         if(state.containsKey("bucket_started_at")) {
@@ -150,11 +169,15 @@ final class WebRun implements AutoCloseable {
         catch(RuntimeException e){throw e;}catch(Exception e){throw new IllegalStateException("web cleanup failed",e);}
     }
     private Map<String,String> downInternal() {
-        guard();System.out.println("web teardown plan: own DNS records, tagged web compute, tagged distribution, OAC, bucket versions, certificate");
+        guard();
+        if(state.containsKey("http_reserved")){
+            state.put("viewer_cost",new java.math.BigDecimal(state.getOrDefault("viewer_cost","0")).add(new java.math.BigDecimal(state.get("http_reserved"))).toPlainString());
+            state.put("viewer_cost_basis","admitted upper bound for interrupted HTTP suite");state.remove("http_reserved");persist();
+        }System.out.println("web teardown plan: own DNS records, tagged web compute, tagged distribution, OAC, bucket versions, certificate");
         if(!backend.isDemo()) {
             List<RuntimeException> errors=new ArrayList<>();
             // Discovery also covers writes whose successful response preceded a process failure.
-            for(var item:aws().recoverOwned()) {
+            try{for(var item:aws().recoverOwned()) {
                 if(!"true".equals(item.get("owned")))throw new IllegalStateException("same-name resource lacks this run tag; cleanup refused");
                 switch(item.get("kind")) {
                     case "bucket" -> state.put("bucket_created","true");
@@ -164,10 +187,12 @@ final class WebRun implements AutoCloseable {
                     default -> { }
                 }
             }
-            for(var item:new WebCompute(backend).inventory(run)){
+            }catch(RuntimeException recovery){errors.add(recovery);}
+            try{for(var item:new WebCompute(backend).inventory(run)){
                 if(item.get("kind").equals("instance")&&WebStack.resourceName(run,"app").equals(item.get("name")))state.put("instance_id",item.get("id"));
                 if(item.get("kind").equals("security_group")&&WebStack.resourceName(run,"web-sg").equals(item.get("name")))state.put("security_group_id",item.get("id"));
             }
+            }catch(RuntimeException recovery){errors.add(recovery);}
             persist();
             cleanup("app_record",()->aws().recordA(val("zone"),val("app"),val("public_ip"),true),errors);
             cleanup("site_record",()->aws().changeAlias(val("zone"),val("site"),val("cf_domain"),true),errors);
@@ -185,7 +210,11 @@ final class WebRun implements AutoCloseable {
     private void cleanup(String key,Runnable action,List<RuntimeException> errors){if(state.containsKey(key))try{action.run();state.remove(key);persist();}catch(RuntimeException e){errors.add(e);}}
     static void sleep(long ms){try{Thread.sleep(ms);}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException("web wait interrupted",e);}}
     @Override public void close(){try{
-        if(!recordedCost){state.put("request_cost_prior",new java.math.BigDecimal(state.getOrDefault("request_cost_prior","0")).add(cost.total()).toPlainString());persist();recordedCost=true;}
-        System.out.println("estimated cost: $"+estimate().setScale(8,java.math.RoundingMode.CEILING));
+        if(!recordedCost){
+            var total=estimate();state.put("request_cost_prior",new java.math.BigDecimal(state.getOrDefault("request_cost_prior","0")).add(cost.total()).toPlainString());
+            state.put("total_estimated_usd",total.toPlainString());persist();
+            cost.webSnapshot(total,Json.parse(state.getOrDefault("price_table","{}")),state.getOrDefault("status","new"));recordedCost=true;
+        }
+        System.out.println("estimated cost: $"+estimate().setScale(8,java.math.RoundingMode.CEILING).toPlainString());
 if(provider!=null)provider.close();lock.release();channel.close();}catch(java.io.IOException e){throw new IllegalStateException("web state unlock failed",e);}}
 }

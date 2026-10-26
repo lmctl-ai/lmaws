@@ -104,7 +104,7 @@ def main() -> None:
         raise SystemExit(f"web smoke requires lmscript and host executable: {host}")
     compiler_argv = ["cmd.exe", "/c", compiler] if os.name == "nt" else [compiler]
     magic = host.read_bytes()[:4]
-    native = magic == b"\x7fELF" or magic[:2] == b"MZ" or magic in {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"}
+    native = magic == b"\x7fELF" or magic[:2] == b"MZ" or magic in {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",b"\xca\xfe\xba\xbf",b"\xbf\xba\xfe\xca"}
     if not native and "jvm-bin" not in str(host):
         raise SystemExit(f"refusing to call non-native host without an explicit JVM wrapper: {host}")
 

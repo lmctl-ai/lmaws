@@ -25,7 +25,7 @@ final class WebCompute {
         if (!vpcId.matches("vpc-[0-9a-z]{1,32}") || !subnetId.matches("subnet-[0-9a-z]{1,32}")) throw new IllegalArgumentException("web compute requires explicit VPC and subnet");
         if (!ami.matches("ami-[0-9a-z]{8,32}")) throw new IllegalArgumentException("web compute requires an AMI id");
         if (userData == null || !userData.startsWith("#!") || !userData.contains("lmweblab") || userData.getBytes(StandardCharsets.UTF_8).length>16000) throw new IllegalArgumentException("web compute user data must identify lmweblab");
-        if (!(maxPrice > 0.0 && Double.isFinite(maxPrice) && maxPrice <= Ec2Compute.ON_DEMAND.get(instanceType).doubleValue())) throw new IllegalArgumentException("web compute spot max price must be positive and <= $0.01/hour");
+        if (!(maxPrice > 0.0 && Double.isFinite(maxPrice) && maxPrice <= Ec2Compute.ON_DEMAND.get(instanceType).doubleValue())) throw new IllegalArgumentException("web compute spot max price must be positive and within the nano On-Demand ceiling");
         backend.requireComputeWriteEnabled(); Ec2Client ec2 = backend.ec2Client();
         String sgName = WebStack.resourceName(runId, "web-sg");
         String sg = ec2.createSecurityGroup(x -> x.groupName(sgName).description("lmweblab run-owned web ingress").vpcId(vpcId)
@@ -36,24 +36,43 @@ final class WebCompute {
             ec2.authorizeSecurityGroupIngress(x -> x.groupId(sg).ipPermissions(IpPermission.builder().ipProtocol("tcp").fromPort(80).toPort(80).ipRanges(IpRange.builder().cidrIp(cidr).description("lmweblab caller").build()).build()));
             String script = "#!/bin/bash\n# bound cost before any boot setup can fail\nshutdown -h +9\n" + userData;
             String encoded = Base64.getEncoder().encodeToString(script.getBytes(StandardCharsets.UTF_8));
-            RunInstancesResponse response = ec2.runInstances(x -> x.imageId(ami).instanceType(InstanceType.fromValue(instanceType)).minCount(1).maxCount(1).clientToken("lmaws-" + runId + "-web")
-                    .networkInterfaces(InstanceNetworkInterfaceSpecification.builder().deviceIndex(0).subnetId(subnetId).groups(sg).associatePublicIpAddress(true).build())
-                    .metadataOptions(InstanceMetadataOptionsRequest.builder().httpTokens(HttpTokensState.REQUIRED).httpEndpoint(InstanceMetadataEndpointState.ENABLED).build())
-                    .instanceInitiatedShutdownBehavior(ShutdownBehavior.TERMINATE).userData(encoded)
-                    .instanceMarketOptions(m -> m.marketType(MarketType.SPOT).spotOptions(s -> s.spotInstanceType(SpotInstanceType.ONE_TIME).maxPrice(Double.toString(maxPrice))))
-                    .blockDeviceMappings(BlockDeviceMapping.builder().deviceName("/dev/xvda").ebs(EbsBlockDevice.builder().volumeSize(volumeGiB).volumeType(VolumeType.GP3).deleteOnTermination(true).encrypted(true).build()).build())
-                    .tagSpecifications(tagSpec(ResourceType.INSTANCE, runId, WebStack.resourceName(runId, "app")), tagSpec(ResourceType.VOLUME, runId, WebStack.resourceName(runId, "app-volume")), tagSpec(ResourceType.NETWORK_INTERFACE, runId, WebStack.resourceName(runId, "app-eni")), tagSpec(ResourceType.SPOT_INSTANCES_REQUEST, runId, WebStack.resourceName(runId, "spot"))));
-            if (response.instances().isEmpty()) throw new IllegalStateException("EC2 returned no web instance");
-            launched = true; Instance i = response.instances().get(0);
-            if(checkpoint!=null)checkpoint.accept(Map.of("instance_id",i.instanceId(),"security_group_id",sg));
-            i = waitRunning(ec2, i.instanceId());
-            String publicIp = i.publicIpAddress() == null ? "" : i.publicIpAddress();
-            if (publicIp.isBlank()) throw new IllegalStateException("web instance did not receive a public IPv4");
-            var out = new LinkedHashMap<>(Map.of("instance_id", i.instanceId(), "security_group_id", sg, "subnet_id", subnetId, "vpc_id", vpcId, "state", i.state().nameAsString(), "public_ip", publicIp, "run_id", runId));
-            if (checkpoint != null) checkpoint.accept(Map.copyOf(out));
-            return out;
+            List<String> subnetCandidates = candidateSubnets(ec2, vpcId, subnetId);
+            List<String> typeCandidates = instanceType.equals("t4g.nano") ? List.of("t4g.nano", "t3.nano") : List.of("t3.nano", "t4g.nano");
+            long deadline = System.nanoTime() + java.time.Duration.ofSeconds(180).toNanos(); int attempts = 0;
+            for (String candidateType : typeCandidates) for (String candidateSubnet : subnetCandidates) {
+                if (++attempts > 12 || System.nanoTime() > deadline) throw new IllegalStateException("web capacity fallback exceeded 12 attempts or 180 seconds");
+                String candidateAmi = candidateType.equals(instanceType) ? ami : publicAmi(candidateType);
+                double candidatePrice = Math.min(maxPrice, Ec2Compute.ON_DEMAND.get(candidateType).doubleValue());
+                String token = "lmaws-" + runId + "-" + candidateType.replace('.', '-') + "-" + Integer.toHexString((candidateAmi + candidateSubnet).hashCode());
+                try {
+                    RunInstancesResponse response = run(ec2, candidateAmi, candidateType, candidateSubnet, sg, candidatePrice, encoded, token, runId, volumeGiB);
+                    if (response.instances().isEmpty()) throw new IllegalStateException("EC2 returned no web instance");
+                    launched = true; Instance i = response.instances().get(0);
+                    if(checkpoint!=null)checkpoint.accept(Map.of("instance_id",i.instanceId(),"security_group_id",sg));
+                    i = waitRunning(ec2, i.instanceId());
+                    String publicIp = i.publicIpAddress() == null ? "" : i.publicIpAddress();
+                    if (publicIp.isBlank()) throw new IllegalStateException("web instance did not receive a public IPv4");
+                    var out = new LinkedHashMap<>(Map.of("instance_id", i.instanceId(), "security_group_id", sg, "subnet_id", candidateSubnet, "vpc_id", vpcId, "state", i.state().nameAsString(), "public_ip", publicIp, "run_id", runId, "instance_type", candidateType, "ami", candidateAmi, "max_price", Double.toString(candidatePrice)));
+                    if (checkpoint != null) checkpoint.accept(Map.copyOf(out));
+                    return out;
+                } catch (Ec2Exception capacity) { if (!capacityCode(capacity)) throw capacity; }
+            }
+            throw new IllegalStateException("all web spot capacity candidates were rejected");
+
         } finally { if (!launched) try { ec2.deleteSecurityGroup(x -> x.groupId(sg)); } catch (RuntimeException ignored) { } }
     }
+
+    private RunInstancesResponse run(Ec2Client ec2,String ami,String type,String subnet,String sg,double price,String encoded,String token,String runId,int volumeGiB) {
+        return ec2.runInstances(x -> x.imageId(ami).instanceType(InstanceType.fromValue(type)).minCount(1).maxCount(1).clientToken(token)
+                .networkInterfaces(InstanceNetworkInterfaceSpecification.builder().deviceIndex(0).subnetId(subnet).groups(sg).associatePublicIpAddress(true).build())
+                .metadataOptions(InstanceMetadataOptionsRequest.builder().httpTokens(HttpTokensState.REQUIRED).httpEndpoint(InstanceMetadataEndpointState.ENABLED).build()).instanceInitiatedShutdownBehavior(ShutdownBehavior.TERMINATE).creditSpecification(CreditSpecificationRequest.builder().cpuCredits("standard").build()).userData(encoded)
+                .instanceMarketOptions(m -> m.marketType(MarketType.SPOT).spotOptions(s -> s.spotInstanceType(SpotInstanceType.ONE_TIME).maxPrice(Double.toString(price))))
+                .blockDeviceMappings(BlockDeviceMapping.builder().deviceName("/dev/xvda").ebs(EbsBlockDevice.builder().volumeSize(volumeGiB).volumeType(VolumeType.GP3).deleteOnTermination(true).encrypted(true).build()).build())
+                .tagSpecifications(tagSpec(ResourceType.INSTANCE, runId, WebStack.resourceName(runId, "app")),tagSpec(ResourceType.VOLUME, runId, WebStack.resourceName(runId, "app-volume")),tagSpec(ResourceType.NETWORK_INTERFACE, runId, WebStack.resourceName(runId, "app-eni")),tagSpec(ResourceType.SPOT_INSTANCES_REQUEST, runId, WebStack.resourceName(runId, "spot"))));
+    }
+    private static boolean capacityCode(Ec2Exception e){String c=e.awsErrorDetails()==null?"":e.awsErrorDetails().errorCode();return Set.of("InsufficientInstanceCapacity","InsufficientInstanceCapacityInAvailabilityZone","InsufficientSpotInstanceCapacity").contains(c);}
+    private List<String> candidateSubnets(Ec2Client ec2,String vpc,String requested){LinkedHashSet<String> out=new LinkedHashSet<>();out.add(requested);for(var s:ec2.describeSubnets(x->x.filters(Filter.builder().name("vpc-id").values(vpc).build(),Filter.builder().name("map-public-ip-on-launch").values("true").build())).subnets())if(!requested.equals(s.subnetId()))out.add(s.subnetId());return out.stream().limit(6).toList();}
+    private String publicAmi(String type){String n=type.equals("t4g.nano")?"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64":"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64";return backend.ssmClient().getParameter(x->x.name(n)).parameter().value();}
 
     Map<String,String> delete(String runId, String instanceId, String securityGroupId) {
         WebStack.requireRun(runId); if (!instanceId.isEmpty()&&!instanceId.matches("i-[0-9a-f]{8,32}") || !securityGroupId.matches("sg-[0-9a-f]{8,32}")) throw new IllegalArgumentException("invalid web compute identifiers");

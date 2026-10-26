@@ -45,6 +45,7 @@ if [[ "${LMAWS_NATIVE:-0}" == 1 ]]; then
  timeout 300 python3 scripts/test-cli.py "$exe"
  timeout 300 python3 scripts/test-fake.py "$exe"
  timeout 180 python3 scripts/test-web-native.py --host "$exe"
+ timeout 180 python3 scripts/test-web-native.py --host "$exe"
  timeout 180 python3 scripts/test-spend-api.py "$exe"
  timeout 300 python3 scripts/test-spend-transport.py "$exe"
  if [[ "$(uname -s)" == Linux ]]; then timeout 30 python3 scripts/check-linux-linkage.py "$exe"; fi

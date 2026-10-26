@@ -51,4 +51,4 @@ From v0.1.12, the fluent IAM Permission Builder (`PolicyBuilder`, `PolicyCatalog
 `PolicyAnalyzer`, `PolicySimulator`) adds the `Policy` type (46 methods) and 12
 policy analysis/simulation methods on `Cloud` (58 new own signatures).
 The current merged API, including account recovery, web-stack, session-doctor and
-permission-builder methods, has 152 own / 224 total signatures.
+permission-builder methods, has 154 own / 226 total signatures.

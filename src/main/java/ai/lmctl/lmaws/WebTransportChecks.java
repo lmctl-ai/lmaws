@@ -24,6 +24,7 @@ import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 public final class WebTransportChecks {
     private static final String RUN = "a1b2c3d4";
     private static final String DOMAIN = "example.com";
+    private static final String PROOF = "0123456789abcdef0123456789abcdef";
     private WebTransportChecks() {}
 
     public static void main(String[] args) { run(); System.out.println("PASS web SDK transport checks"); }
@@ -41,7 +42,7 @@ public final class WebTransportChecks {
         Ec2Client ec2 = Ec2Client.builder().region(Region.US_EAST_1)
                 .endpointOverride(URI.create("http://127.0.0.1:1"))
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))).build();
-        try (WebStackAws web = new WebStackAws(r53, cf, acm, s3, ec2, RUN, DOMAIN)) {
+        try (WebStackAws web = new WebStackAws(r53, cf, acm, s3, ec2, RUN, DOMAIN, PROOF)) {
             expect(() -> web.changeAlias("zone", "lmaws-site-" + RUN + ".other.example", "d1234567890.cloudfront.net", false));
             expect(() -> web.recordA("zone", "lmaws-app-" + RUN + ".other.example", "192.0.2.10", false));
             expect(() -> web.requestCertificate("lmaws-site-" + RUN + ".other.example"));
@@ -63,14 +64,53 @@ public final class WebTransportChecks {
             web.createOac();
             Object oac = seen.get("createOriginAccessControl");
             if (!(oac instanceof CreateOriginAccessControlRequest oacReq)
-                    || !oacReq.originAccessControlConfig().name().equals("lmaws-oac-" + RUN))
+                    || !oacReq.originAccessControlConfig().name().equals("lmaws-oac-" + RUN)
+                    || !oacReq.originAccessControlConfig().description().equals("lmweblab " + RUN + " owner:" + PROOF))
                 throw new AssertionError("OAC request was not run-scoped");
+            seen.remove("deleteOriginAccessControl");
+            try (WebStackAws wrongProof = new WebStackAws(r53, cf, acm, s3, ec2, RUN, DOMAIN,
+                    "fedcba9876543210fedcba9876543210")) {
+                expect(() -> wrongProof.deleteOac("oac"));
+            }
+            try (WebStackAws missingProof = new WebStackAws(r53, cf, acm, s3, ec2, RUN, DOMAIN)) {
+                expect(() -> missingProof.deleteOac("oac"));
+            }
+            if (seen.containsKey("deleteOriginAccessControl"))
+                throw new AssertionError("unproven OAC deletion reached Delete API");
+            web.deleteOac("oac");
+            if (!(seen.get("deleteOriginAccessControl") instanceof DeleteOriginAccessControlRequest))
+                throw new AssertionError("proven OAC deletion did not reach Delete API");
 
             web.requestCertificate("lmaws-site-" + RUN + "." + DOMAIN);
             Object cert = seen.get("requestCertificate");
             if (!(cert instanceof RequestCertificateRequest certReq)
                     || certReq.tags().stream().noneMatch(t -> "lmaws_test".equals(t.key()) && RUN.equals(t.value())))
                 throw new AssertionError("certificate request missing ownership tag");
+            String certArn = "arn:aws:acm:us-east-1:000000000000:certificate/synthetic";
+            web.createDistribution("lmaws-site-" + RUN,
+                    "lmaws-site-" + RUN + "." + DOMAIN, "oac-" + RUN, certArn);
+            if (!(seen.get("createDistributionWithTags") instanceof CreateDistributionWithTagsRequest preparedReq))
+                throw new AssertionError("prepared-certificate distribution request missing");
+            DistributionConfig prepared = preparedReq.distributionConfigWithTags().distributionConfig();
+            if (!prepared.aliases().items().equals(List.of("lmaws-site-" + RUN + "." + DOMAIN))
+                    || !certArn.equals(prepared.viewerCertificate().acmCertificateArn())
+                    || prepared.defaultCacheBehavior().viewerProtocolPolicy() != ViewerProtocolPolicy.ALLOW_ALL
+                    || prepared.viewerCertificate().minimumProtocolVersion() != MinimumProtocolVersion.TLS_V1_2_2021)
+                throw new AssertionError("prepared certificate distribution config is unsafe");
+
+            // HTTPS phase must use the exact alias, an issued certificate, a
+            // modern minimum protocol, and an explicit redirect policy.
+            web.attachCertificate("EDFDVBD6EXAMPLE", "lmaws-site-" + RUN + "." + DOMAIN,
+                    "arn:aws:acm:us-east-1:000000000000:certificate/synthetic", true);
+            if (!(seen.get("updateDistribution") instanceof UpdateDistributionRequest httpsReq))
+                throw new AssertionError("HTTPS update request missing");
+            DistributionConfig httpsConfig = httpsReq.distributionConfig();
+            if (!httpsConfig.aliases().items().equals(List.of("lmaws-site-" + RUN + "." + DOMAIN)))
+                throw new AssertionError("HTTPS alias was not exact run/domain name");
+            if (httpsConfig.defaultCacheBehavior().viewerProtocolPolicy() != ViewerProtocolPolicy.REDIRECT_TO_HTTPS)
+                throw new AssertionError("HTTPS phase did not enable redirect");
+            if (httpsConfig.viewerCertificate().minimumProtocolVersion() != MinimumProtocolVersion.TLS_V1_2_2021)
+                throw new AssertionError("HTTPS phase did not enforce TLS 1.2");
 
             // Bucket mutations require the exact run tag and the policy must
             // bind reads to the tagged CloudFront distribution ARN.
@@ -98,6 +138,16 @@ public final class WebTransportChecks {
             if (!(change instanceof ChangeResourceRecordSetsRequest recordReq)
                     || !recordReq.changeBatch().changes().getFirst().resourceRecordSet().name().startsWith("lmaws-app-"))
                 throw new AssertionError("Route 53 A request missing scoped name");
+            seen.remove("accepted");
+            web.recordA("zone", "lmaws-app-" + RUN + "." + DOMAIN, "192.0.2.10", false,
+                    () -> seen.put("accepted", true));
+            if (!Boolean.TRUE.equals(seen.get("accepted")))
+                throw new AssertionError("accepted callback did not run after Route 53 mutation response");
+            seen.put("timeoutChange", true); seen.remove("accepted");
+            expect(() -> web.recordA("zone", "lmaws-app-" + RUN + "." + DOMAIN, "192.0.2.10", false,
+                    () -> seen.put("accepted", true)));
+            if (!Boolean.TRUE.equals(seen.get("accepted")))
+                throw new AssertionError("DNS state callback did not run before INSYNC timeout");
         } finally {
             // Proxy clients have no resources and close() is deliberately a no-op.
         }
@@ -129,16 +179,36 @@ public final class WebTransportChecks {
                     var b = GetHostedZoneRequest.builder(); ((java.util.function.Consumer<GetHostedZoneRequest.Builder>) consumer).accept(b); seen.put(name, b.build());
                 } else if (type == S3Client.class && name.equals("putBucketPolicy")) {
                     var b = PutBucketPolicyRequest.builder(); ((java.util.function.Consumer<PutBucketPolicyRequest.Builder>) consumer).accept(b); seen.put(name, b.build());
+                } else if (type == CloudFrontClient.class && name.equals("updateDistribution")) {
+                    var b = UpdateDistributionRequest.builder(); ((java.util.function.Consumer<UpdateDistributionRequest.Builder>) consumer).accept(b); seen.put(name, b.build());
+                } else if (type == CloudFrontClient.class && name.equals("deleteOriginAccessControl")) {
+                    var b = DeleteOriginAccessControlRequest.builder(); ((java.util.function.Consumer<DeleteOriginAccessControlRequest.Builder>) consumer).accept(b); seen.put(name, b.build());
                 }
             }
             if (type == CloudFrontClient.class && name.equals("createDistributionWithTags"))
                 return CreateDistributionWithTagsResponse.builder().distribution(Distribution.builder().id("EDFDVBD6EXAMPLE").arn("arn:aws:cloudfront::000000000000:distribution/EDFDVBD6EXAMPLE").domainName("d1234567890.cloudfront.net").build()).build();
             if (type == CloudFrontClient.class && name.equals("createOriginAccessControl"))
                 return CreateOriginAccessControlResponse.builder().originAccessControl(OriginAccessControl.builder().id("oac").build()).build();
+            if (type == CloudFrontClient.class && name.equals("getOriginAccessControl"))
+                return GetOriginAccessControlResponse.builder().eTag("etag").originAccessControl(OriginAccessControl.builder().id("oac").originAccessControlConfig(OriginAccessControlConfig.builder().name("lmaws-oac-" + RUN).description("lmweblab " + RUN + " owner:" + PROOF).build()).build()).build();
+            if (type == CloudFrontClient.class && name.equals("deleteOriginAccessControl"))
+                return DeleteOriginAccessControlResponse.builder().build();
+            if (type == CloudFrontClient.class && name.equals("getDistribution"))
+                return GetDistributionResponse.builder().eTag("etag").distribution(Distribution.builder().id("EDFDVBD6EXAMPLE").arn("arn:aws:cloudfront::000000000000:distribution/EDFDVBD6EXAMPLE").domainName("d1234567890.cloudfront.net").status("Deployed").distributionConfig(DistributionConfig.builder().enabled(true).defaultCacheBehavior(DefaultCacheBehavior.builder().targetOriginId("s3-lmaws-site-a1b2c3d4").viewerProtocolPolicy(ViewerProtocolPolicy.ALLOW_ALL).build()).build()).build()).build();
+            if (type == CloudFrontClient.class && name.equals("listTagsForResource"))
+                return software.amazon.awssdk.services.cloudfront.model.ListTagsForResourceResponse.builder().tags(Tags.builder().items(software.amazon.awssdk.services.cloudfront.model.Tag.builder().key("lmaws_test").value(RUN).build()).build()).build();
+            if (type == CloudFrontClient.class && name.equals("updateDistribution"))
+                return UpdateDistributionResponse.builder().eTag("etag").distribution(Distribution.builder().id("EDFDVBD6EXAMPLE").status("Deployed").build()).build();
             if (type == AcmClient.class && name.equals("requestCertificate"))
                 return RequestCertificateResponse.builder().certificateArn("arn:aws:acm:us-east-1:000000000000:certificate/synthetic").build();
-            if (type == Route53Client.class && name.equals("getChange"))
+            if (type == AcmClient.class && name.equals("describeCertificate"))
+                return DescribeCertificateResponse.builder().certificate(CertificateDetail.builder().domainName("lmaws-site-" + RUN + "." + DOMAIN).status(CertificateStatus.ISSUED).build()).build();
+            if (type == AcmClient.class && name.equals("listTagsForCertificate"))
+                return software.amazon.awssdk.services.acm.model.ListTagsForCertificateResponse.builder().tags(software.amazon.awssdk.services.acm.model.Tag.builder().key("lmaws_test").value(RUN).build()).build();
+            if (type == Route53Client.class && name.equals("getChange")) {
+                if (Boolean.TRUE.equals(seen.get("timeoutChange"))) throw new IllegalStateException("synthetic Route 53 wait failure");
                 return GetChangeResponse.builder().changeInfo(ChangeInfo.builder().status(ChangeStatus.INSYNC).id("/change/C1").build()).build();
+            }
             if (type == Route53Client.class && name.equals("getHostedZone"))
                 return GetHostedZoneResponse.builder().hostedZone(HostedZone.builder().id("/hostedzone/ZTEST").name(DOMAIN + ".").build()).build();
             if (type == S3Client.class && name.equals("getBucketTagging")) {

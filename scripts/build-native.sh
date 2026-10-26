@@ -9,4 +9,4 @@ if [[ "$(uname -s)" == Linux ]]; then
  flags+=(-H:+StaticExecutableWithDynamicLibC -H:NativeLinkerOption=-static-libstdc++ -H:NativeLinkerOption=-static-libgcc)
 fi
 cp target/lmaws-0.1.12.jar target/native-input.jar
-timeout 2400 native-image "${flags[@]}" -jar target/native-input.jar target/lmaws
+timeout 2400 native-image "${flags[@]}" -jar target/native-input.jar "${LMAWS_NATIVE_OUTPUT:-target/lmaws}"

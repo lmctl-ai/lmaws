@@ -111,6 +111,7 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","iam_policy_delete",List.of("string","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamPolicyDelete(text(a[0]),a[1].asBool())));
         r.method("Cloud","session_doctor",List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.sessionDoctor(),c)));
         r.method("Cloud","run",List.of("string","string"),"Run",(c,s,a)->{Sandbox run=new Sandbox(session(s).backend,text(a[0]),Path.of(text(a[1])),session(s).cost);runs.add(run);return Value.object("Run",run);});
+        r.method("Cloud","web_find",List.of("string","string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(WebRun.find(session(s).backend,text(a[0]),text(a[1])),c)));
         r.method("Cloud","web_stack",List.of("string","string","string"),"Web",(c,s,a)->{if(!webRuns.isEmpty())throw VmException.host("one web run per host program");var v=session(s);WebRun run=new WebRun(v.backend,v.cost,text(a[0]),text(a[1]),text(a[2]));webRuns.add(run);return Value.object("Web",run);});
         r.method("Web","step",List.of("string","string"),"Row",(c,s,a)->rowValue(c,((WebRun)s.asObject()).step(text(a[0]),text(a[1]))));
         r.method("Web","status",List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(((WebRun)s.asObject()).status(),c)));
@@ -295,11 +296,17 @@ public final class CloudHost implements AutoCloseable {
         List<Map<String,String>> candidates=Sandbox.leftovers(session.cost.path().toAbsolutePath().getParent(),0).stream().filter(v->Path.of(v.get("ledger")).toAbsolutePath().normalize().equals(session.cost.path().toAbsolutePath().normalize())).toList();
         leftovers=Math.max(leftovers,candidates.size());
         Map<String,Object> report=new LinkedHashMap<>(session.cost.report(leftovers));report.put("provider_verification",verified);report.put("sweeper_leftover_count",candidates.size());report.put("profile",AwsBackend.activeProfile());report.put("ledger",session.cost.path().toString());report.put("estimated_cost_display",session.cost.displayCost());if(!failureCode.isEmpty())report.put("run_error",failureCode);if(!deniedAction.isEmpty())report.put("denied_action",deniedAction);report.put("finished_at",java.time.Instant.now().toString());
+        for(var web:webRuns)if(web.cost==session.cost){
+            report.put("sdk_estimated_usd",report.get("total_estimated_usd"));
+            var total=new java.math.BigDecimal(web.state.getOrDefault("total_estimated_usd","0"));
+            report.put("total_estimated_usd",total);report.put("estimated_cost_display","$"+total.setScale(8,java.math.RoundingMode.CEILING).toPlainString());
+            report.put("web_status",web.state.getOrDefault("status","new"));report.put("web_verified_leftover_count","down".equals(web.state.get("status"))?0:null);
+        }
         Path dir=Path.of(System.getenv().getOrDefault("LMAWS_EVIDENCE_DIR",session.cost.live()?"evidence":"data/cost-evidence"));Path output=dir.resolve("live-cost-"+session.cost.example()+"-"+session.cost.runId()+".json");
         try {
             Files.createDirectories(dir);Files.writeString(output,Jsons.encode(report)+"\n",java.nio.charset.StandardCharsets.UTF_8);
         }catch(java.io.IOException e){throw new IllegalStateException("cannot write cost evidence",e);}
-        System.out.println("evidence: "+output);System.out.println("estimated cost: "+session.cost.displayCost());
+        System.out.println("evidence: "+output);System.out.println("estimated cost: "+report.get("estimated_cost_display"));
         if(leftovers!=0)throw new IllegalStateException("leftover count is "+leftovers+"; inspect the run ledger");
     }
 }

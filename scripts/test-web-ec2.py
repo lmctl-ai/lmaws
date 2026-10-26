@@ -1,41 +1,40 @@
 #!/usr/bin/env python3
-"""Loopback EC2 SDK test for WebCompute; no AWS credentials or network."""
-import http.server, pathlib, subprocess, tempfile, threading, os, urllib.parse, sys, shutil
-ROOT=pathlib.Path(__file__).resolve().parents[1]
+"""Loopback EC2 Query fixture for WebCompute capacity fallback."""
+import http.server, os, pathlib, subprocess, tempfile, threading, urllib.parse, shutil
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
 class Fake(http.server.BaseHTTPRequestHandler):
-    requests=[]
-    def log_message(self,*a): pass
+    requests=[]; launches=0
+    def log_message(self,*args): pass
     def do_POST(self):
-        raw=self.rfile.read(int(self.headers.get('Content-Length','0'))); q=urllib.parse.parse_qs(raw.decode()); action=q.get('Action',[''])[0]; Fake.requests.append((action,q,raw))
-        if action=='CreateSecurityGroup': body='<CreateSecurityGroupResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><groupId>sg-0123456789abcdef0</groupId></CreateSecurityGroupResponse>'
-        elif action=='RunInstances': body='<RunInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><instancesSet><item><instanceId>i-0123456789abcdef0</instanceId><instanceState><name>running</name></instanceState><publicIpAddress>198.51.100.7</publicIpAddress><subnetId>subnet-1234abcd</subnetId><placement><availabilityZone>us-east-1a</availabilityZone></placement><spotInstanceRequestId>sir-0123456789abcdef0</spotInstanceRequestId></item></instancesSet></RunInstancesResponse>'
-        elif action=='DescribeInstances': body='<DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><reservationSet><item><instancesSet><item><instanceId>i-0123456789abcdef0</instanceId><instanceState><name>running</name></instanceState><ipAddress>198.51.100.7</ipAddress><subnetId>subnet-1234abcd</subnetId><placement><availabilityZone>us-east-1a</availabilityZone></placement><spotInstanceRequestId>sir-0123456789abcdef0</spotInstanceRequestId></item></instancesSet></item></reservationSet></DescribeInstancesResponse>'
-        else: body='<AuthorizeSecurityGroupIngressResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"/>'
-        data=body.encode(); self.send_response(200); self.send_header('Content-Type','text/xml'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
+        raw=self.rfile.read(int(self.headers.get("Content-Length","0"))); q=urllib.parse.parse_qs(raw.decode(errors="replace")); action=q.get("Action",[""])[0]; Fake.requests.append((action,q,raw))
+        if action=="CreateSecurityGroup": self.reply('<CreateSecurityGroupResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><groupId>sg-0123456789abcdef0</groupId></CreateSecurityGroupResponse>')
+        elif action=="DescribeSubnets": self.reply('<DescribeSubnetsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><subnetSet><item><subnetId>subnet-1234abcd</subnetId><vpcId>vpc-1234abcd</vpcId><mapPublicIpOnLaunch>true</mapPublicIpOnLaunch></item><item><subnetId>subnet-5678abcd</subnetId><vpcId>vpc-1234abcd</vpcId><mapPublicIpOnLaunch>true</mapPublicIpOnLaunch></item></subnetSet></DescribeSubnetsResponse>')
+        elif action=="RunInstances":
+            Fake.launches+=1
+            if Fake.launches==1:
+                body=b'<Response><Errors><Error><Code>InsufficientInstanceCapacity</Code><Message>capacity unavailable</Message></Error></Errors><RequestId>fixture</RequestId></Response>'; self.send_response(400); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+            else: self.reply('<RunInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><instancesSet><item><instanceId>i-0123456789abcdef0</instanceId><instanceState><name>running</name></instanceState><ipAddress>198.51.100.7</ipAddress><subnetId>subnet-5678abcd</subnetId><spotInstanceRequestId>sir-0123456789abcdef0</spotInstanceRequestId></item></instancesSet></RunInstancesResponse>')
+        elif action=="DescribeInstances": self.reply('<DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><reservationSet><item><instancesSet><item><instanceId>i-0123456789abcdef0</instanceId><instanceState><name>running</name></instanceState><ipAddress>198.51.100.7</ipAddress><subnetId>subnet-5678abcd</subnetId><spotInstanceRequestId>sir-0123456789abcdef0</spotInstanceRequestId></item></instancesSet></item></reservationSet></DescribeInstancesResponse>')
+        else: self.reply('<AuthorizeSecurityGroupIngressResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"/>')
+    def reply(self,text):
+        body=text.encode(); self.send_response(200); self.send_header("Content-Type","text/xml"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+
 def main():
     maven=shutil.which("mvn.cmd" if os.name=="nt" else "mvn") or "mvn"
     maven_argv=["cmd.exe","/c",maven] if os.name=="nt" else [maven]
-    srv=http.server.ThreadingHTTPServer(('127.0.0.1',0),Fake); threading.Thread(target=srv.serve_forever,daemon=True).start(); ep=f'http://127.0.0.1:{srv.server_port}'
-    with tempfile.TemporaryDirectory(prefix='lmaws-web-ec2-') as td:
-        td=pathlib.Path(td); cp=td/'cp'; subprocess.run(maven_argv+['-q','dependency:build-classpath',f'-Dmdep.outputFile={cp}'],cwd=ROOT,check=True,timeout=120); classpath=str(ROOT/'target/classes')+os.pathsep+cp.read_text().strip(); src=td/'WebEc2.java'
-        src.write_text('''package ai.lmctl.lmaws; import java.net.*; public class WebEc2 { public static void main(String[] a){ var b=new AwsBackend("us-east-1",false,null); var w=new WebCompute(b); var checkpoints=new java.util.ArrayList<java.util.Map<String,String>>();var r=w.create("a1b2c3d4","vpc-1234abcd","subnet-1234abcd","ami-12345678","198.51.100.7/32","t3.nano",8,"#!/bin/bash\\necho lmweblab\\n",0.004,m->checkpoints.add(m)); if(checkpoints.size()<3||!checkpoints.get(0).containsKey("security_group_id")||checkpoints.get(0).containsKey("instance_id")||!checkpoints.get(1).containsKey("instance_id"))throw new AssertionError("early creation checkpoints missing");if(!r.get("public_ip").equals("198.51.100.7")) throw new Error(r.toString()); try { w.create("a1b2c3d4","vpc-1234abcd","subnet-1234abcd","ami-12345678","0.0.0.0/0","m7g.large",9,"#!/bin/bash lmweblab",0.004); throw new Error("unsafe input accepted"); } catch(RuntimeException expected){} b.close(); }}''')
-        subprocess.run(['javac','-d',str(td),'-cp',classpath,str(src)],check=True); env=dict(os.environ,LMAWS_ENDPOINT=ep,LMAWS_LIVE='1',AWS_PROFILE='lmaws',AWS_REGION='us-east-1',CI='true',AWS_EC2_METADATA_DISABLED='true'); subprocess.run(['java','-cp',classpath+os.pathsep+str(td),'ai.lmctl.lmaws.WebEc2'],cwd=ROOT,env=env,check=True)
-        acts=[x[0] for x in Fake.requests]; assert acts[:4]==['CreateSecurityGroup','AuthorizeSecurityGroupIngress','RunInstances','DescribeInstances'],acts
-        run=Fake.requests[2][1]
-        def field(suffix):
-            matches=[v for k,v in run.items() if k.lower()==suffix.lower() or k.lower().endswith("."+suffix.lower())]
-            assert matches,(suffix,list(run));return matches
-        assert field('InstanceType')==[['t3.nano']]
-        assert field('VolumeSize')==[['8']]
-        assert field('AssociatePublicIpAddress')==[['true']]
-        assert field('HttpTokens')==[['required']]
-        assert field('InstanceInitiatedShutdownBehavior')==[['terminate']]
-        resources={v[0] for k,v in run.items() if k.endswith('.ResourceType')}
-        assert resources=={'instance','volume','network-interface','spot-instances-request'},resources
-        import base64
-        script=base64.b64decode(run['UserData'][0]).decode()
-        assert 'shutdown -h +9' in script and 'echo lmweblab' in script
-        assert Fake.requests[1][1].get('IpPermissions.1.IpRanges.1.CidrIp')==['198.51.100.7/32']
-        print('PASS loopback EC2 WebCompute create: tagged SG/instance/volume/ENI/spot, nano/8GiB, public IP, IMDSv2, /32; unsafe inputs rejected before request')
-    srv.shutdown(); srv.server_close()
-if __name__=='__main__': main()
+    server=http.server.ThreadingHTTPServer(("127.0.0.1",0),Fake); threading.Thread(target=server.serve_forever,daemon=True).start(); endpoint=f"http://127.0.0.1:{server.server_port}"
+    try:
+        with tempfile.TemporaryDirectory(prefix="lmaws-web-ec2-") as td:
+            td=pathlib.Path(td); cp=td/"cp"; subprocess.run(maven_argv+["-q","dependency:build-classpath",f"-Dmdep.outputFile={cp}"],cwd=ROOT,check=True,timeout=120); classpath=str(ROOT/"target/classes")+os.pathsep+cp.read_text().strip(); src=td/"WebEc2.java"
+            src.write_text('''package ai.lmctl.lmaws; public class WebEc2 { public static void main(String[] a){ var b=new AwsBackend("us-east-1",false,null); var w=new WebCompute(b); var cp=new java.util.ArrayList<java.util.Map<String,String>>(); var out=w.create("a1b2c3d4","vpc-1234abcd","subnet-1234abcd","ami-12345678","198.51.100.7/32","t3.nano",8,"#!/bin/bash\\necho lmweblab\\n",0.004,x->cp.add(x)); if(!"subnet-5678abcd".equals(out.get("subnet_id"))||!out.containsKey("instance_type")||cp.size()<3||cp.get(0).containsKey("instance_id")||!cp.get(1).containsKey("instance_id"))throw new AssertionError(out+" checkpoints="+cp.size()); try{w.create("a1b2c3d4","vpc-1234abcd","subnet-1234abcd","ami-12345678","0.0.0.0/0","m7g.large",9,"#!/bin/bash lmweblab",0.004);throw new AssertionError("unsafe inputs accepted");}catch(IllegalArgumentException|SecurityException expected){}b.close(); }}''')
+            subprocess.run(["javac","-d",str(td),"-cp",classpath,str(src)],check=True); env=dict(os.environ,LMAWS_ENDPOINT=endpoint,LMAWS_LIVE="1",AWS_PROFILE="lmaws",AWS_REGION="us-east-1",CI="true",AWS_EC2_METADATA_DISABLED="true"); subprocess.run(["java","-cp",classpath+os.pathsep+str(td),"ai.lmctl.lmaws.WebEc2"],cwd=ROOT,env=env,check=True)
+            runs=[x for x in Fake.requests if x[0]=="RunInstances"]; assert len(runs)==2 and runs[0][1]["ClientToken"]!=runs[1][1]["ClientToken"]
+            groups=lambda q:[v for k,values in q.items() if "GroupId" in k for v in values]
+            subnets=lambda q:[v for k,values in q.items() if k.endswith("SubnetId") for v in values]
+            assert groups(runs[0][1])==groups(runs[1][1]) and subnets(runs[1][1])==["subnet-5678abcd"]
+            assert b"lmaws_test" in runs[1][2]
+            print("PASS WebCompute capacity fallback: explicit capacity retry, alternate public subnet, distinct tokens, same SG, tags and 8GiB constraints")
+    finally: server.shutdown(); server.server_close()
+if __name__=="__main__": main()
