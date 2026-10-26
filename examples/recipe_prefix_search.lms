@@ -156,6 +156,7 @@ if (${o.task} == "find_lmaws_resources") {
   rows.csv(${o.output+".csv"});file_write(${o.output+".json"},rows.json());
 }
 end _dsl_
+  if(!o.live){o.ledger_dir="data/discovery-ledgers";}
   let result=recipe_run(p,o);let rows=json_parse(read_file(o.output+".json"));
   for(row in rows) {
     if(get(row,"status","")=="delete_failed") {println("Cleanup failed:",json_stringify({name:get(row,"name",""),reason:get(row,"reason","")}));assert(false);}

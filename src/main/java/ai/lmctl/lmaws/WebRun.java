@@ -47,12 +47,12 @@ final class WebRun implements AutoCloseable {
     private void guard(){if(!backend.isDemo()&&(!"lmaws".equals(AwsBackend.activeProfile())||!AwsBackend.isLiveEnabled()||!"us-east-1".equals(cost.region())))throw new IllegalStateException("web mutations require live AWS_PROFILE=lmaws in us-east-1");}
     private void persist(){try{Path temp=Files.createTempFile(path.getParent(),".web-state-",".tmp");try{try{Files.setPosixFilePermissions(temp,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));}catch(UnsupportedOperationException ignored){}Files.writeString(temp,Jsons.encodeRaw(state));try(FileChannel f=FileChannel.open(temp,StandardOpenOption.WRITE)){f.force(true);}Files.move(temp,path,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}finally{Files.deleteIfExists(temp);}}catch(java.io.IOException e){throw new IllegalStateException("cannot save private web state",e);}}
     private String val(String k){String v=state.get(k);if(v==null||v.isEmpty())throw new IllegalStateException("web step prerequisite missing: "+k);return v;}
-    @SuppressWarnings("unchecked") Map<String,String> step(String op,String json) {
-        guard();if(!Set.of("bucket","distribution","certificate","dns_site","compute","dns_app","https","invalidate").contains(op))throw new IllegalArgumentException("unknown web step");
+    @SuppressWarnings("unchecked") synchronized Map<String,String> step(String op,String json) {
+        guard();if(!Set.of("bucket","distribution","certificate","dns_site","compute","dns_app","https","invalidate","record_http").contains(op))throw new IllegalArgumentException("unknown web step");
         Object parsed=Json.parse(json);if(!(parsed instanceof Map<?,?> raw))throw new IllegalArgumentException("web step arguments must be an object");
         Map<String,Object> args=(Map<String,Object>)raw;
         if("down".equals(state.get("status")))throw new IllegalStateException("run is torn down; choose a new run id");
-        if("done".equals(state.get("step_"+op)))return summary();
+        if(!op.equals("record_http")&&"done".equals(state.get("step_"+op)))return summary();
         if(estimate().compareTo(new java.math.BigDecimal(state.getOrDefault("cost_cap","0.10")))>=0)throw new CostLedger.BudgetExceeded("web run cost cap reached before step");
         state.put("intent",op);persist();long start=System.nanoTime();
         try{if(backend.isDemo()) demoStep(op,args);else liveStep(op,args);}
@@ -70,14 +70,15 @@ final class WebRun implements AutoCloseable {
             case "dns_app"->{val("instance_id");state.put("app_record","true");}
             case "https"->{val("cert");state.put("https","true");}
             case "invalidate"->val("distribution");
+            case "record_http" -> { }
         }
     }
     private void liveStep(String op,Map<String,Object>a) {
         switch(op) {
             case "bucket"->{
-                if(!state.containsKey("bucket_created")){aws().createBucket(val("bucket"));state.put("bucket_created","true");persist();}
+                if(!state.containsKey("bucket_created")){aws().createBucket(val("bucket"));state.put("bucket_created","true");state.put("bucket_started_at",Instant.now().toString());persist();}
                 Path site=Path.of(arg(a,"site_dir","shared/site"));
-                for(String file:List.of("index.html","about.html","style.css","banner.png","404.html")){Path f=site.resolve(file);if(!Files.isRegularFile(f)||size(f)>262144)throw new IllegalArgumentException("missing or oversized static asset "+file);aws().upload(val("bucket"),file,f);}
+                for(String file:List.of("index.html","about.html","style.css","banner.png","404.html")){Path f=site.resolve(file);if(!Files.isRegularFile(f)||size(f)>262144)throw new IllegalArgumentException("missing or oversized static asset "+file);aws().upload(val("bucket"),file,f);state.put("site_bytes",String.valueOf(Long.parseLong(state.getOrDefault("site_bytes","0"))+size(f)));persist();}
             }
             case "distribution"->{
                 if(!state.containsKey("oac")){state.put("oac",aws().createOac());persist();}
@@ -108,6 +109,13 @@ final class WebRun implements AutoCloseable {
             case "dns_app"->{aws().recordA(val("zone"),val("app"),val("public_ip"),false);state.put("app_record","true");}
             case "https"->{aws().attachCertificate(val("distribution"),val("site"),val("cert"),true);state.put("https","true");}
             case "invalidate"->aws().invalidate(val("distribution"));
+            case "record_http"->{
+                long requests=Long.parseLong(arg(a,"requests","0")),bytes=Long.parseLong(arg(a,"bytes","0"));
+                if(requests<0||requests>10000||bytes<0||bytes>104857600)throw new IllegalArgumentException("HTTP cost accounting bounds exceeded");
+                var amount=java.math.BigDecimal.valueOf(requests).multiply(new java.math.BigDecimal("0.000001"))
+                   .add(java.math.BigDecimal.valueOf(bytes).multiply(new java.math.BigDecimal("0.085")).divide(new java.math.BigDecimal("1073741824"),12,java.math.RoundingMode.CEILING));
+                state.put("viewer_cost",new java.math.BigDecimal(state.getOrDefault("viewer_cost","0")).add(amount).toPlainString());
+            }
         }
     }
     private long size(Path f){try{return Files.size(f);}catch(java.io.IOException e){throw new IllegalArgumentException("asset read failed",e);}}
@@ -123,9 +131,15 @@ final class WebRun implements AutoCloseable {
             total=total.add(java.math.BigDecimal.valueOf(seconds).multiply(new java.math.BigDecimal("0.0092")).divide(new java.math.BigDecimal("3600"),12,java.math.RoundingMode.CEILING));
             total=total.add(java.math.BigDecimal.valueOf(seconds).multiply(new java.math.BigDecimal("0.64")).divide(new java.math.BigDecimal("2592000"),12,java.math.RoundingMode.CEILING));
         }
+        if(state.containsKey("bucket_started_at")) {
+            Instant end=state.containsKey("bucket_ended_at")?Instant.parse(state.get("bucket_ended_at")):Instant.now();
+            double seconds=Math.max(0,Duration.between(Instant.parse(state.get("bucket_started_at")),end).toMillis()/1000.0);
+            total=total.add(java.math.BigDecimal.valueOf(seconds).multiply(new java.math.BigDecimal(state.getOrDefault("site_bytes","0"))).multiply(new java.math.BigDecimal("0.023")).divide(new java.math.BigDecimal("2783138807808000"),18,java.math.RoundingMode.CEILING));
+        }
+        total=total.add(new java.math.BigDecimal(state.getOrDefault("viewer_cost","0")));
         return total;
     }
-    Map<String,String> down() {
+    synchronized Map<String,String> down() {
         try(AutoCloseable scope=cost.cleanupScope()){return downInternal();}
         catch(RuntimeException e){throw e;}catch(Exception e){throw new IllegalStateException("web cleanup failed",e);}
     }
@@ -154,7 +168,7 @@ final class WebRun implements AutoCloseable {
             if(state.containsKey("security_group_id"))try{new WebCompute(backend).delete(run,state.getOrDefault("instance_id",""),val("security_group_id"));state.remove("instance_id");state.remove("security_group_id");state.put("compute_ended_at",Instant.now().toString());persist();}catch(RuntimeException e){errors.add(e);}
             cleanup("distribution",()->{aws().disableDistribution(val("distribution"));aws().deleteDistribution(val("distribution"));},errors);
             cleanup("oac",()->aws().deleteOac(val("oac")),errors);
-            cleanup("bucket_created",()->aws().deleteBucket(val("bucket")),errors);
+            cleanup("bucket_created",()->{aws().deleteBucket(val("bucket"));state.put("bucket_ended_at",Instant.now().toString());},errors);
             cleanup("cert",()->aws().deleteCertificate(val("cert")),errors);
             cleanup("validation_record",()->aws().recordCname(val("zone"),val("validation_name"),val("validation_value"),true),errors);
             if(errors.isEmpty()&&(!aws().recoverOwned().isEmpty()||!new WebCompute(backend).inventory(run).isEmpty()))errors.add(new IllegalStateException("independent web inventory still finds this run resources"));

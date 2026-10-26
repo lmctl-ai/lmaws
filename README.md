@@ -782,3 +782,43 @@ Compiler minimum: lmscript 0.2.420. Host schema bytes omit built-in std; `--dsl-
 ### Persistent web-stack recipes
 
 `Cloud.web_stack(run_id, domain, private_state_path)` exposes a `Web` with explicit `step`, `status` and `down` methods for the [lmweblab integration](https://github.com/lmctl-ai/lmweblab). It covers run-tagged S3 origins, CloudFront OAC/distributions, scoped Route 53 records, ACM DNS validation and disposable HTTP spot nanos. Mutations require the single `lmaws` profile in us-east-1; state and live output stay private. Each deletion rechecks ownership, and teardown performs fresh provider inventory. See [the web-stack note](durable-memory/11-web-stack.md) for the local safety gates and the CloudFront certificate requirement.
+
+### Account names and recovery plans
+
+These fixtures show literal prefix matching, age metadata and ledger-qualified recovery. Live searches use read-only APIs; deletion remains explicit and run-owned.
+
+![Synthetic find_lmaws_resources.png](docs/images/find_lmaws_resources.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/find_lmaws_resources.lms`
+
+![Synthetic find_lmaws_resources_age.png](docs/images/find_lmaws_resources_age.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/find_lmaws_resources.lms`
+
+![Synthetic find_lmaws_resources_table.png](docs/images/find_lmaws_resources_table.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/find_lmaws_resources.lms`
+
+![Synthetic leftover_report.png](docs/images/leftover_report.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/leftover_report.lms`
+
+![Synthetic leftover_report_age.png](docs/images/leftover_report_age.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/leftover_report.lms`
+
+![Synthetic leftover_report_table.png](docs/images/leftover_report_table.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/leftover_report.lms`
+
+![Synthetic sweeper.png](docs/images/sweeper.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms`
+
+![Synthetic sweeper_age.png](docs/images/sweeper_age.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms`
+
+![Synthetic sweeper_table.png](docs/images/sweeper_table.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms`

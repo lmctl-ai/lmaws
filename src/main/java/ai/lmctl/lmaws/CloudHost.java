@@ -110,7 +110,7 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","iam_policy_put",List.of("string","string","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamPolicyPut(text(a[0]),text(a[1]),a[2].asBool())));
         r.method("Cloud","iam_policy_delete",List.of("string","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamPolicyDelete(text(a[0]),a[1].asBool())));
         r.method("Cloud","run",List.of("string","string"),"Run",(c,s,a)->{Sandbox run=new Sandbox(session(s).backend,text(a[0]),Path.of(text(a[1])),session(s).cost);runs.add(run);return Value.object("Run",run);});
-        r.method("Cloud","web_stack",List.of("string","string","string"),"Web",(c,s,a)->{var v=session(s);WebRun run=new WebRun(v.backend,v.cost,text(a[0]),text(a[1]),text(a[2]));webRuns.add(run);return Value.object("Web",run);});
+        r.method("Cloud","web_stack",List.of("string","string","string"),"Web",(c,s,a)->{if(!webRuns.isEmpty())throw VmException.host("one web run per host program");var v=session(s);WebRun run=new WebRun(v.backend,v.cost,text(a[0]),text(a[1]),text(a[2]));webRuns.add(run);return Value.object("Web",run);});
         r.method("Web","step",List.of("string","string"),"Row",(c,s,a)->rowValue(c,((WebRun)s.asObject()).step(text(a[0]),text(a[1]))));
         r.method("Web","status",List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(((WebRun)s.asObject()).status(),c)));
         r.method("Web","down",List.of(),"Row",(c,s,a)->rowValue(c,((WebRun)s.asObject()).down()));
@@ -182,6 +182,9 @@ public final class CloudHost implements AutoCloseable {
         return Value.object("Row",Collections.unmodifiableMap(new LinkedHashMap<>(source)));
     }
     public Context context(long budget) {Context c=new Context();c.memoryLimitBytes=budget;c.setObject("aws","Cloud",new Object());return c;}
+    void emergencyWebCleanup() {
+        for(var run:webRuns.reversed())try{run.down();}catch(RuntimeException e){System.err.println("web shutdown cleanup incomplete; inspect private state");}
+    }
     @Override public synchronized void close() {
         if(closed)return;
         RuntimeException failure=null;

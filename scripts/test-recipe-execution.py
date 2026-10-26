@@ -124,6 +124,7 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.work / "images" / "recipe_prefix_search.png").exists())
         self.assertTrue((self.work / "data" / "recipe_prefix_search.csv").exists())
+        self.assertFalse(list((self.work/".lmaws-local").rglob("*.jsonl")), "synthetic discovery must not create private live ledgers")
         ledgers = list(self.work.rglob("*.jsonl"))
         self.assertTrue(ledgers, "synthetic example retains its cost-accounting receipt")
         for ledger in ledgers:

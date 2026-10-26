@@ -34,6 +34,7 @@ timeout 300 python3 scripts/test-cli.py "$jvm"
 timeout 300 python3 scripts/test-fake.py "$jvm"
 timeout 180 python3 scripts/test-web-fake.py
 timeout 180 python3 scripts/test-web-http.py
+timeout 180 python3 scripts/test-web-ec2.py
 timeout 180 python3 scripts/test-prefix-fake.py "$jvm"
 timeout 180 python3 scripts/test-spend-api.py "$jvm"
 timeout 300 python3 scripts/test-spend-transport.py
