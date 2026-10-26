@@ -112,7 +112,11 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertTrue((self.work / "~" / "recipe-output.json").exists())
 
     def test_inherited_live_flag_stays_synthetic_for_picture_example(self) -> None:
-        env = dict(self.env, LMAWS_LIVE="1", AWS_PROFILE="default")
+        empty_config = self.work / "empty-aws-config"
+        empty_config.write_text("", encoding="utf-8")
+        env = dict(self.env, OS="Windows_NT", LMAWS_LIVE="1", LMAWS_SPEND_LIVE="1",
+                   AWS_PROFILE="default", AWS_CONFIG_FILE=str(empty_config),
+                   AWS_SHARED_CREDENTIALS_FILE=str(empty_config))
         result = subprocess.run(
             [LMSCRIPT, str(ROOT / "examples" / "recipe_prefix_search.lms")],
             cwd=self.work,

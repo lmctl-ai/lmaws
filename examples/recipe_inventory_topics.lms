@@ -84,6 +84,7 @@ fn recipe_run(program, options) {
   let previous={};
   for(key in keys(settings)) {previous[key]=getenv(key,"");set_env(key,settings[key]);}
   let cli_args=o.apply ? ["--apply","--dsl",bytecode] : ["--dsl",bytecode];
+  if(!o.live) {cli_args=concat(["--dry-run"],cli_args);}
   let argv=concat(command,cli_args);
   if(getenv("OS","")!="Windows_NT") {let pre=["env"];for(key in keys(settings)) {push(pre,key+"="+str(settings[key]));}argv=concat(pre,argv);}
   else if(o.live) {for(key in keys(settings)) {if(getenv(key,"")!=str(settings[key])) {println("Live recipes on Windows: set "+key+"="+str(settings[key])+" in the parent environment first.");assert(false);}}}
