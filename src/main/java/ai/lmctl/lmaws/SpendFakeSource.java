@@ -41,6 +41,7 @@ public final class SpendFakeSource implements SpendSource {
         String key="inventory:"+kind;var hit=cached(key);if(hit!=null)return hit;bill("ec2","Describe"+kind);available(kind);if(empty())return save(key,List.of());
         List<Map<String,String>> rows=switch(kind){
             case "ec2"->List.of(row("region","us-east-1","instance_id","i-demo-active","instance_type","t3.micro","state","running","platform","Linux/UNIX","public_ip","198.51.100.8"),row("region","us-east-1","instance_id","i-demo-idle","instance_type","t3.small","state","stopped","platform","Linux/UNIX","public_ip",""));
+            case "public_ipv4"->List.of(row("region","us-east-1","network_interface_id","eni-demo-managed","public_ip","198.51.100.9","instance_id","","interface_type","load_balancer","requester_managed","true"));
             case "eips"->List.of(row("region","us-east-1","allocation_id","eipalloc-demo-idle","public_ip","198.51.100.7","association_id","","instance_id",""),row("region","us-east-1","allocation_id","eipalloc-demo-used","public_ip","198.51.100.8","association_id","eipassoc-demo","instance_id","i-demo-active"));
             case "ebs"->List.of(row("region","us-east-1","volume_id","vol-demo-idle","volume_type","gp2","size_gib","40","iops","120","throughput_mib_s","0","state","available","attached_instance_id",""),row("region","us-east-1","volume_id","vol-demo-active","volume_type","gp2","size_gib","100","iops","300","throughput_mib_s","0","state","in-use","attached_instance_id","i-demo-active"));
             case "snapshots"->List.of(row("region","us-east-1","snapshot_id","snap-demo","size_gib","100","owner_id","123456789012","start_time","2026-10-01T00:00:00Z","state","completed"));
@@ -48,7 +49,10 @@ public final class SpendFakeSource implements SpendSource {
             case "dynamodb"->List.of(row("region","us-east-1","table_name","demo-active","table_id","arn:aws:dynamodb:us-east-1:123456789012:table/demo-active","billing_mode","PROVISIONED","size_bytes","10737418240","item_count","1000000","read_capacity","100","write_capacity","50"),row("region","us-east-1","table_name","demo-idle","table_id","arn:aws:dynamodb:us-east-1:123456789012:table/demo-idle","billing_mode","PAY_PER_REQUEST","size_bytes","0","item_count","0","read_capacity","0","write_capacity","0"));
             case "savings_plans"->scenario.equals("savings_absent")?List.of():List.of(row("region","us-east-1","plan_id","sp-demo","state","active","plan_type","Compute","commitment_hourly","1.00","start","2026-01-01","end","2027-01-01"));
             case "reserved_instances"->scenario.equals("savings_absent")?List.of():List.of(row("region","us-east-1","reserved_id","ri-demo","state","active","instance_type","t3.micro","instance_count","2","fixed_price","0","recurring_hourly","0.01"));
-            default->throw new Unavailable(kind,"unsupported inventory");};return save(key,rows);
+            default->throw new Unavailable(kind,"unsupported inventory");};
+        if(scenario.equals("duplicates")&&kind.equals("eips")){List<Map<String,String>> duplicates=new ArrayList<>(rows);duplicates.add(rows.getFirst());rows=duplicates;}
+        if(scenario.equals("unknown_sizes")&&(kind.equals("ebs")||kind.equals("snapshots"))){List<Map<String,String>> changed=new ArrayList<>();for(var original:rows){Map<String,String>x=new LinkedHashMap<>(original);x.put("size_gib","unknown");x.put("iops","unknown");x.put("throughput_mib_s","unknown");changed.add(x);}rows=changed;}
+        return save(key,rows);
     }
     @Override public List<Map<String,String>> commitment(String kind,LocalDate start,LocalDate end){
         String key=kind+start+end;var hit=cached(key);if(hit!=null)return hit;bill("costexplorer",kind);available(kind);

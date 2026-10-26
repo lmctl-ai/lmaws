@@ -19,7 +19,7 @@ public final class SpendReport {
     private boolean serviceAvailable;
     private SpendReport(String topic,LocalDate end,int days,int top,CostLedger ledger){
         this.ledger=ledger;this.end=end;this.start=end.minusDays(days);this.top=top;
-        metadata.put("topic",topic);metadata.put("start_inclusive",start.toString());metadata.put("end_exclusive",end.toString());metadata.put("days",days);
+        metadata.put("topic",topic);metadata.put("start_inclusive",start.toString());metadata.put("end_exclusive",end.toString());metadata.put("days",days);metadata.put("top_n",top);metadata.put("query_cap_usd",ledger.cap());
         metadata.put("mode",ledger.live()?"live_read_only":"synthetic");metadata.put("account","************");metadata.put("status","complete");
         assumptions.addAll(List.of("UTC dates; the current incomplete UTC day is excluded. Cost Explorer data can lag and be estimated.",
             "Unblended cost totals include credits/refunds; amortized costs are exported separately. Historical spend is not the current inventory run-rate.",
@@ -43,7 +43,13 @@ public final class SpendReport {
         if(topic.equals("all")||topic.equals("ebs_audit"))r.ebs(source);
         if(topic.equals("all")||topic.equals("bandwidth"))r.bandwidth(source);
         if(topic.equals("all")||topic.equals("lambda_spend"))r.safe("lambda_spend",()->SpendWorkloads.lambda(source,r.start,r.end));
-        if(topic.equals("all")||topic.equals("dynamodb_spend"))r.safe("dynamodb_spend",()->SpendWorkloads.dynamodb(source,r.start,r.end));
+        if(topic.equals("all")||topic.equals("dynamodb_spend")){
+            var tables=r.safe("dynamodb_spend",()->SpendWorkloads.dynamodb(source,r.start,r.end));
+            for(var table:tables)if(table.getOrDefault("billing_mode","").equals("PROVISIONED")&&known(table.get("provisioned_monthly_usd"))&&known(table.get("ondemand_equivalent_usd"))){
+                BigDecimal difference=number(table.get("provisioned_monthly_usd")).subtract(number(table.get("ondemand_equivalent_usd")));
+                if(difference.signum()>0)r.opportunity("dynamodb","review DynamoDB billing mode",difference,"reference cost at observed average only; verify peaks, autoscaling, tier and regional rates");
+            }
+        }
         r.opportunities.sort(Comparator.comparing((Map<String,String> x)->number(x.get("monthly_saving_usd"))).reversed());
         r.sections.put("opportunities",List.copyOf(r.opportunities.subList(0,Math.min(top,r.opportunities.size()))));
         r.sections.put("resources",r.section("opportunities"));
@@ -58,7 +64,15 @@ public final class SpendReport {
                 });rows.add(Collections.unmodifiableMap(row));
             }r.sections.put(entry.getKey(),List.copyOf(rows));
         }
-        r.metadata.put("source",source.diagnostics());return r;
+        r.metadata.put("source",source.diagnostics());
+        Object warnings=source.diagnostics().get("warnings");
+        if(warnings instanceof List<?> list&&!list.isEmpty()){
+            if(!r.metadata.get("status").equals("incomplete_cap"))r.metadata.put("status","partial");
+            List<Map<String,String>> statusRows=new ArrayList<>();
+            for(Object item:list)if(item instanceof Map<?,?> warning){Map<String,String> status=new LinkedHashMap<>();warning.forEach((key,value)->status.put(key.toString(),Jsons.mask(String.valueOf(value))));statusRows.add(status);}
+            r.sections.put("section_scope",List.copyOf(statusRows));
+        }
+        return r;
     }
     private List<Map<String,String>> safe(String name,Supplier<List<Map<String,String>>> query){
         List<Map<String,String>> result;
@@ -87,7 +101,8 @@ public final class SpendReport {
     }
     private void serviceSpend(SpendSource s,boolean all){
         List<Map<String,String>> daily=safe("ce_daily",()->costs(s,start,end,"DAILY","SERVICE","",false));
-        serviceAvailable=!failed(daily);
+        serviceAvailable=!failed(daily)&&daily.stream().filter(r->!r.getOrDefault("status","").equals("no_data")).allMatch(r->known(r.get("amount_usd")));
+        if(!serviceAvailable&&metadata.get("status").equals("complete"))metadata.put("status","partial");
         List<Map<String,String>> services=aggregate(daily,"service");services.sort(byAmount());
         sections.put("services",services.isEmpty()?daily:services);sections.put("service_spend",section("services"));
         sections.put("daily",daily); // full source rows, never truncate time series to top-N
@@ -134,14 +149,21 @@ public final class SpendReport {
         sections.put("commitments",section("sp_coverage"));
     }
     private void eips(SpendSource s){
+        var allocations=safe("eip_allocations",()->s.inventory("eips"));
+        var interfaces=safe("public_ipv4_interfaces",()->s.inventory("public_ipv4"));
         safe("eip_audit",()->{
-            List<Map<String,String>> out=new ArrayList<>();Set<String> ips=new HashSet<>();
-            for(var raw:s.inventory("eips")){
+            List<Map<String,String>> out=new ArrayList<>();Set<String> ips=new HashSet<>(),allocationKeys=new HashSet<>();
+            for(var raw:allocations){
+                if(raw.containsKey("status")&&Set.of("unavailable","error","budget_exhausted","no_data").contains(raw.get("status")))continue;
+                String allocationKey=raw.getOrDefault("region","")+"/"+raw.getOrDefault("allocation_id",raw.getOrDefault("public_ip","unknown"));
+                if(!allocationKeys.add(allocationKey))continue;
+                String publicIp=raw.getOrDefault("public_ip","");if(!publicIp.isBlank()&&ips.contains(publicIp))continue;
                 Map<String,String>x=new LinkedHashMap<>(raw);boolean associated=!raw.getOrDefault("association_id","").isBlank()||!raw.getOrDefault("instance_id","").isBlank();
                 x.put("status",associated?"associated":"idle");x.put("hourly_usd","0.005");x.put("monthly_usd","3.65");
                 x.put("monthly_saving_usd",associated?"0":"3.65");out.add(x);ips.add(raw.getOrDefault("public_ip",""));
                 if(!associated)opportunity("eip","idle allocated IPv4",new BigDecimal("3.65"),"review before releasing; no changes made");
             }
+            for(var raw:interfaces){String ip=raw.getOrDefault("public_ip","");if(ip.isBlank()||ips.contains(ip))continue;Map<String,String> x=new LinkedHashMap<>(raw);x.put("status","associated_interface");x.put("hourly_usd","0.005");x.put("monthly_usd","3.65");x.put("monthly_saving_usd","0");out.add(x);ips.add(ip);}
             for(var raw:s.inventory("ec2")){
                 String ip=raw.getOrDefault("public_ip","");if(ip.isBlank()||ips.contains(ip))continue;
                 out.add(row("region",raw.getOrDefault("region",""),"instance_id",raw.getOrDefault("instance_id",""),"public_ip",ip,"status","auto_assigned_associated","hourly_usd","0.005","monthly_usd","3.65","monthly_saving_usd","0"));ips.add(ip);
@@ -155,18 +177,19 @@ public final class SpendReport {
                 Map<String,String>x=new LinkedHashMap<>(raw);BigDecimal size=number(raw.get("size_gib"));String type=raw.getOrDefault("volume_type","");
                 BigDecimal gp3=size.multiply(new BigDecimal("0.08")).add(number(raw.get("iops")).subtract(new BigDecimal("3000")).max(BigDecimal.ZERO).multiply(new BigDecimal("0.005"))).add(number(raw.get("throughput_mib_s")).subtract(new BigDecimal("125")).max(BigDecimal.ZERO).multiply(new BigDecimal("0.04")));
                 BigDecimal cost=switch(type){case "io1"->size.multiply(new BigDecimal("0.125")).add(number(raw.get("iops")).multiply(new BigDecimal("0.065")));case "io2"->size.multiply(new BigDecimal("0.125")).add(number(raw.get("iops")).min(new BigDecimal("32000")).multiply(new BigDecimal("0.065"))).add(number(raw.get("iops")).subtract(new BigDecimal("32000")).max(BigDecimal.ZERO).min(new BigDecimal("32000")).multiply(new BigDecimal("0.046"))).add(number(raw.get("iops")).subtract(new BigDecimal("64000")).max(BigDecimal.ZERO).multiply(new BigDecimal("0.032")));case "gp2"->size.multiply(new BigDecimal("0.10"));case "gp3"->gp3;case "st1"->size.multiply(new BigDecimal("0.045"));case "sc1"->size.multiply(new BigDecimal("0.015"));case "standard"->size.multiply(new BigDecimal("0.05"));default->null;};
-                if(!known(raw.get("size_gib")))cost=null;
+                if(!known(raw.get("size_gib"))||Set.of("gp3","io1","io2").contains(type)&&!known(raw.get("iops"))||type.equals("gp3")&&!known(raw.get("throughput_mib_s")))cost=null;
                 boolean attached=!raw.getOrDefault("attached_instance_id","").isBlank()||raw.getOrDefault("state","").equals("in-use");x.put("attachment",attached?"attached":"unattached");
-                x.put("monthly_estimate_usd",cost==null?"unknown":money(cost));x.put("gp3_equivalent_monthly_usd",money(gp3));
+                x.put("monthly_estimate_usd",cost==null?"unknown":money(cost));x.put("gp3_equivalent_monthly_usd",known(raw.get("size_gib"))&&known(raw.get("iops"))&&known(raw.get("throughput_mib_s"))?money(gp3):"unknown");
                 x.put("gp2_to_gp3_candidate",Boolean.toString(type.equals("gp2")));BigDecimal saving=cost==null?BigDecimal.ZERO:cost.subtract(gp3).max(BigDecimal.ZERO);
-                x.put("migration_saving_usd",type.equals("gp2")?money(saving):"0");x.put("price_basis","illustrative us-east-1 storage/IOPS/throughput rates; excludes discounts and burst differences");out.add(x);
+                x.put("storage_only_gp2_saving_usd",type.equals("gp2")&&known(raw.get("size_gib"))?money(size.multiply(new BigDecimal("0.02"))):"unknown");
+                x.put("migration_saving_usd",type.equals("gp2")?(known(x.get("gp3_equivalent_monthly_usd"))?money(saving):"unknown"):"0");x.put("price_basis","illustrative us-east-1 storage/IOPS/throughput rates; excludes discounts and burst differences");out.add(x);
                 if(!attached&&cost!=null)opportunity("ebs","unattached EBS volume",cost,"confirm retention/backup needs before deleting");
-                else if(type.equals("gp2")&&saving.signum()>0)opportunity("ebs","gp2 to gp3 candidate",saving,"preserve required IOPS and throughput; estimate only");
+                else if(type.equals("gp2")&&known(x.get("gp3_equivalent_monthly_usd"))&&saving.signum()>0)opportunity("ebs","gp2 to gp3 candidate",saving,"preserve required IOPS and throughput; estimate only");
             }return out;
         });
         safe("snapshots",()->{
             List<Map<String,String>> out=new ArrayList<>();for(var raw:s.inventory("snapshots")){
-                Map<String,String>x=new LinkedHashMap<>(raw);x.put("monthly_upper_bound_usd",money(number(raw.get("size_gib")).multiply(new BigDecimal("0.05"))));
+                Map<String,String>x=new LinkedHashMap<>(raw);x.put("monthly_upper_bound_usd",known(raw.get("size_gib"))?money(number(raw.get("size_gib")).multiply(new BigDecimal("0.05"))):"unknown");
                 x.put("basis","logical full volume size upper bound; incremental billed snapshot bytes unavailable");out.add(x);
             }return out;
         });
@@ -201,7 +224,7 @@ public final class SpendReport {
         Map<String,Object>x=new LinkedHashMap<>();x.put("status",metadata.get("status"));x.put("mode",ledger.live()?"live_read_only":"synthetic");x.put("account","************");
         x.put("total_spend_usd",serviceAvailable?money(section("services").stream().map(r->number(r.get("amount_usd"))).reduce(BigDecimal.ZERO,BigDecimal::add)):"unavailable");
         x.put("top5_services",section("services").stream().filter(r->known(r.get("amount_usd"))).limit(5).toList());
-        x.put("opportunities",section("opportunities"));x.put("estimated_cost_usd",ledger.total());x.put("ce_requests",ledger.ceRequests());x.put("metric_requests",ledger.metricRequests());x.put("metric_units",ledger.metricUnits());return x;
+        x.put("opportunities",section("opportunities"));x.put("idle_resource_monthly_estimate_usd",money(opportunities.stream().filter(r->r.get("action").startsWith("idle allocated")||r.get("action").startsWith("unattached EBS")).map(r->number(r.get("monthly_saving_usd"))).reduce(BigDecimal.ZERO,BigDecimal::add)));x.put("estimated_cost_usd",ledger.total());x.put("ce_requests",ledger.ceRequests());x.put("metric_requests",ledger.metricRequests());x.put("metric_units",ledger.metricUnits());return x;
     }
     public BigDecimal estimatedCost(){return ledger.total();}
     private static boolean numericField(String key){return key.endsWith("_usd")||key.startsWith("consumed_")||key.startsWith("provisioned_")||Set.of("total","datapoints","usage_quantity","size_gib","size_bytes","item_count","memory_mb","read_capacity","write_capacity","iops","throughput_mib_s","duration_ms","invocations","errors","gb_seconds").contains(key);}

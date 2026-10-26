@@ -25,7 +25,7 @@ public final class SpendChecks {
         eq(all.section("ec2_resources").getFirst().get("ondemand_monthly_usd"),"7.592","hourly to 730-hour monthly");
         eq(all.section("ec2_resources").get(1).get("current_compute_monthly_usd"),"0","stopped compute zero while price reference remains");
         eq(all.section("eip_audit").getFirst().get("monthly_usd"),"3.65","idle public IPv4 charged");eq(all.section("eip_audit").get(1).get("monthly_usd"),"3.65","associated public IPv4 also charged");
-        check(all.section("eip_audit").size()==2,"no double-count of instance IP matching allocated EIP");
+        check(all.section("eip_audit").size()==3,"deduplicated EIP/instance IP plus managed interface IPv4");
         eq(all.section("ebs_audit").getFirst().get("monthly_estimate_usd"),"4","40GiB gp2 storage reference");
         eq(all.section("ebs_audit").get(1).get("migration_saving_usd"),"2","100GiB attached gp2 to gp3 saving");
         eq(all.section("snapshots").getFirst().get("monthly_upper_bound_usd"),"5","snapshot estimate explicitly upper bound");
@@ -59,6 +59,11 @@ public final class SpendChecks {
         check(unknown.section("lambda_spend").getFirst().get("unused_candidate").equals("unknown"),"missing metrics do not prove unused");
         CostLedger capped=ledger(dir,"cap","0.05");var cap=SpendReport.collect(new SpendFakeSource(capped),"all",end,30,5,capped);
         check(cap.summary().get("status").equals("incomplete_cap")&&capped.total().compareTo(new BigDecimal("0.05"))<=0,"cap blocks next billed request");
+        CostLedger duplicateLedger=ledger(dir,"duplicates","0.25");var duplicate=SpendReport.collect(new SpendFakeSource("duplicates",duplicateLedger),"all",end,30,10,duplicateLedger);
+        check(duplicate.section("eip_audit").size()==3,"duplicate allocations cannot inflate IPv4 charges");
+        CostLedger sizesLedger=ledger(dir,"sizes","0.25");var sizes=SpendReport.collect(new SpendFakeSource("unknown_sizes",sizesLedger),"ebs_audit",end,30,10,sizesLedger);
+        check(sizes.section("snapshots").getFirst().get("monthly_upper_bound_usd").equals("unknown"),"unknown snapshot size is not zero");
+        check(sizes.section("ebs_audit").getFirst().get("monthly_estimate_usd").equals("unknown"),"unknown EBS size is not free storage");
         CostLedger twentyFive=ledger(dir,"twentyfive","0.25");for(int i=0;i<25;i++)twentyFive.request("costexplorer","GetCostAndUsage");
         boolean refused=false;try{twentyFive.request("costexplorer","GetCostAndUsage");}catch(CostLedger.BudgetExceeded expected){refused=true;}
         check(refused&&twentyFive.ceRequests()==25,"26th CE call refused before dispatch");check(!twentyFive.displayCost().equals("$0.00"),"read-only billable request cost displayed");

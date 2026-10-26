@@ -25,7 +25,7 @@ final class SpendWorkloads {
             BigDecimal period=gb!=null&&inv!=null?gb.multiply(rate).add(inv.multiply(new BigDecimal("0.0000002"))):null;
             put(row,"period_estimate_usd",period);put(row,"monthly_estimate_usd",period==null?null:period.multiply(factor));
             row.put("unused_candidate",complete?Boolean.toString(inv.signum()==0&&dur.signum()==0&&err.signum()==0):"unknown");
-            row.put("assumption","current configured memory; reference us-east-1 request/GB-second rates; excludes free tier, discounts, ephemeral storage and historical configuration changes");out.add(row);
+            row.put("assumption","current configured memory; reference us-east-1 request/GB-second rates; excludes free tier, discounts, provisioned-concurrency charges, ephemeral storage and historical configuration changes");out.add(row);
         }
         out.sort(Comparator.comparing((Map<String,String>x)->number(x.get("period_estimate_usd"))).reversed());return out;
     }
@@ -40,12 +40,19 @@ final class SpendWorkloads {
             put(row,"consumed_read_units",cr);put(row,"consumed_write_units",cw);
             BigDecimal rr=cr==null?null:cr.divide(periodSeconds,12,RoundingMode.HALF_UP),wr=cw==null?null:cw.divide(periodSeconds,12,RoundingMode.HALF_UP);
             put(row,"average_read_units_per_second",rr);put(row,"average_write_units_per_second",wr);
+            boolean historicalProvisioned=pr!=null&&pw!=null;
             if(pr==null&&table.getOrDefault("billing_mode","").equals("PROVISIONED")&&known(table.get("read_capacity")))pr=number(table.get("read_capacity"));
             if(pw==null&&table.getOrDefault("billing_mode","").equals("PROVISIONED")&&known(table.get("write_capacity")))pw=number(table.get("write_capacity"));
             put(row,"provisioned_read_capacity",pr);put(row,"provisioned_write_capacity",pw);
             BigDecimal readCost=pr==null?null:pr.multiply(new BigDecimal("0.00013")).multiply(new BigDecimal("730"));
             BigDecimal writeCost=pw==null?null:pw.multiply(new BigDecimal("0.00065")).multiply(new BigDecimal("730"));
             BigDecimal provisioned=readCost==null||writeCost==null?null:readCost.add(writeCost);
+            BigDecimal hypotheticalRead=rr==null?null:rr.divide(new BigDecimal("0.7"),0,RoundingMode.CEILING).max(BigDecimal.ONE);
+            BigDecimal hypotheticalWrite=wr==null?null:wr.divide(new BigDecimal("0.7"),0,RoundingMode.CEILING).max(BigDecimal.ONE);
+            BigDecimal hypothetical=hypotheticalRead==null||hypotheticalWrite==null?null:hypotheticalRead.multiply(new BigDecimal("0.00013")).add(hypotheticalWrite.multiply(new BigDecimal("0.00065"))).multiply(new BigDecimal("730"));
+            put(row,"hypothetical_provisioned_monthly_usd",hypothetical);
+            row.put("hypothetical_capacity_basis","ceil of observed average /70% utilization, minimum1 RCU/WCU; not a peak-safe recommendation");
+            if(!table.getOrDefault("billing_mode","").equals("PROVISIONED"))provisioned=null;
             BigDecimal demand=cr==null||cw==null?null:cr.multiply(new BigDecimal("0.000000125")).add(cw.multiply(new BigDecimal("0.000000625"))).multiply(factor);
             put(row,"provisioned_monthly_usd",provisioned);put(row,"ondemand_equivalent_usd",demand);
             put(row,"read_utilization_percent",rr==null||pr==null||pr.signum()==0?null:rr.multiply(new BigDecimal("100")).divide(pr,8,RoundingMode.HALF_UP));
@@ -54,9 +61,12 @@ final class SpendWorkloads {
             put(row,"breakeven_write_units_per_second",writeCost==null?null:writeCost.divide(new BigDecimal("0.000000625").multiply(MONTH_SECONDS),12,RoundingMode.HALF_UP));
             BigDecimal storage=known(table.get("size_bytes"))?number(table.get("size_bytes")).divide(new BigDecimal("1073741824"),12,RoundingMode.HALF_UP).multiply(new BigDecimal("0.25")):null;
             put(row,"storage_reference_monthly_usd",storage);
-            row.put("metric_status",cr!=null&&cw!=null?"complete":"unknown");row.put("unused_candidate",cr==null||cw==null?"unknown":Boolean.toString(cr.signum()==0&&cw.signum()==0));
-            row.put("breakeven_hint",demand==null||provisioned==null?"unknown; review workload and peak requirements":demand.compareTo(provisioned)<0?"on-demand reference cheaper at observed average; validate peaks before changing":"provisioned reference cheaper at observed average; validate peaks and autoscaling");
-            row.put("assumption","us-east-1 illustrative $0.125/million reads, $0.625/million writes, $0.00013/RCU-hour, $0.00065/WCU-hour; no free tier or discounts; current size/count can be stale");out.add(row);
+            BigDecimal current=table.getOrDefault("billing_mode","").equals("PAY_PER_REQUEST")?demand:provisioned;put(row,"monthly_estimate_usd",current==null||storage==null?null:current.add(storage));
+            row.put("provisioned_basis",historicalProvisioned?"CloudWatch period average":"current configured capacity fallback; not historical usage");
+            row.put("metric_status",cr==null||cw==null?"unknown":table.getOrDefault("billing_mode","").equals("PROVISIONED")&&!historicalProvisioned?"partial_current_capacity":"complete");row.put("unused_candidate",cr==null||cw==null?"unknown":Boolean.toString(cr.signum()==0&&cw.signum()==0));
+            BigDecimal comparison=table.getOrDefault("billing_mode","").equals("PROVISIONED")?provisioned:hypothetical;
+            row.put("breakeven_hint",demand==null||comparison==null?"unknown; review workload and regional rates":demand.compareTo(comparison)<0?"on-demand reference cheaper than the compared provisioned model; validate peaks":"provisioned model potentially cheaper at observed average; validate peaks/autoscaling");
+            row.put("assumption","us-east-1 illustrative $0.125/million reads, $0.625/million writes, $0.00013/RCU-hour, $0.00065/WCU-hour; no free tier or discounts; current size/count can be stale; estimate excludes GSIs, backups, streams, replicas and special table tiers");out.add(row);
         }return out;
     }
     private static Map<String,BigDecimal> metrics(SpendSource source,List<SpendSource.Metric> queries,LocalDate start,LocalDate end){

@@ -1,0 +1,110 @@
+# Synthetic spend detail by default; explicit live flags are required for read-only AWS.
+mkdir("images");
+mkdir("data");
+let days = 30; let top_n = 10; let cap = 0.25;
+if (len(ARGV) > 0) { days = num(ARGV[0]); }
+if (len(ARGV) > 1) { top_n = num(ARGV[1]); }
+if (len(ARGV) > 2) { cap = num(ARGV[2]); }
+let data_root = "data";
+let image_root = "images";
+if (getenv("LMAWS_SPEND_LIVE", "0") == "1" && getenv("LMAWS_LIVE", "0") == "1") { mkdir(".lmaws-local"); mkdir(".lmaws-local/spend"); data_root = ".lmaws-local/spend"; image_root = ".lmaws-local/spend"; }
+aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let spend = aws.spend("all", ${days}, ${top_n}, str_to_float(str(${cap})));
+spend.write(${data_root} + "/spend_detail");
+end _dsl_
+savedsl(aws, "spend_detail-aws.dslb");
+r = system(concat(dsl_cli(aws), ["--dsl", "spend_detail-aws.dslb"]), {timeoutMs: 900000});
+let spend_stdout = r.stdout;
+if (r.code != 0) { println(r.stdout); println(r.stderr); }
+if (r.code != 0) { println(r.stdout); println(r.stderr); }
+assert(r.code == 0);
+copy_file(data_root + "/spend_detail/topic_chart.csv", data_root + "/spend_detail.csv");
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${image_root} + "/spend_detail.png", 900, 560);
+plot.cmd("set datafile separator ','; set style data histograms; set style fill solid 0.85 border -1; set style histogram rowstacked; set key outside right center; set xtics rotate by -60 font ',8'; set ylabel 'USD'; set bmargin 7; set title 'AWS spend by service (synthetic fixtures by default)'; plot for [COL=2:*] '" + ${data_root} + "/spend_detail/daily_chart.csv' using COL:xtic(1) title columnheader");
+plot.close();
+end _dsl_
+savedsl(plot, "spend_detail-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl "spend_detail-plot.dslb";
+if (r.code != 0) { println(r.stdout); println(r.stderr); }
+assert(r.code == 0);
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${image_root} + "/spend_services.png", 900, 560);
+plot.cmd("set datafile separator ','; set style data histograms; set style fill solid 0.85; set key off; set xtics rotate by -30 font ',10'; set bmargin 7; set ylabel 'Period USD'; set grid ytics; set title 'Spend by service'; plot '" + ${data_root} + "/spend_detail/services_chart.csv' using 2:xtic(1) title 'USD'");
+plot.close();
+end _dsl_
+savedsl(plot, "spend_services-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl "spend_services-plot.dslb";
+if (r.code != 0) { println(r.stdout); println(r.stderr); }
+assert(r.code == 0);
+fn xml_text(value) {
+  let out = "";
+  for (ch in split(str(value), "")) {
+    if (ch == "&") { out = out + "&amp;"; }
+    else if (ch == "<") { out = out + "&lt;"; }
+    else if (ch == ">") { out = out + "&gt;"; }
+    else { out = out + ch; }
+  }
+  return out;
+}
+let idle_rows = csv_parse(read_file(data_root + "/spend_detail/idle_chart.csv"), false);
+let idle_svg = '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="560"><rect id="idle" width="900" height="560" fill="#101820"/><g font-family="Noto Sans">';
+idle_svg = idle_svg + '<text x="50" y="56" font-size="25" fill="#f8fafc">Idle resources: review before changing</text><text x="50" y="86" font-size="13" fill="#94a3b8">Monthly reference estimate; no resources were changed</text>';
+idle_svg = idle_svg + '<rect x="45" y="110" width="810" height="40" fill="#26394d"/><g font-size="14" fill="#e2e8f0"><text x="60" y="136">Resource</text><text x="410" y="136">State</text><text x="650" y="136">Monthly USD</text></g>';
+for (i in range(1, len(idle_rows))) {
+  let row = idle_rows[i];
+  if (len(row) >= 3) {
+    let y = 150 + (i - 1) * 35;
+    idle_svg = idle_svg + '<rect x="45" y="' + str(y) + '" width="810" height="35" fill="#172637"/><g font-size="13" fill="#dbeafe"><text x="60" y="' + str(y + 24) + '">' + xml_text(row[0]) + '</text><text x="410" y="' + str(y + 24) + '">' + xml_text(row[1]) + '</text><text x="650" y="' + str(y + 24) + '" fill="#fbbf24">' + xml_text(row[2]) + '</text></g>';
+  }
+}
+idle_svg = idle_svg + '<text x="50" y="530" font-size="12" fill="#94a3b8">Inventory scope and reference price assumptions are recorded in report.json</text></g></svg>';
+let draw_root = data_root + "/spend_detail/drawing";
+mkdir(draw_root + "/assets", true);
+mkdir(draw_root + "/images", true);
+let idle_svg_path = draw_root + "/assets/idle.svg";
+write_file(idle_svg_path, idle_svg);
+let gauge_rows = csv_parse(read_file(data_root + "/spend_detail/gauge_chart.csv"), false);
+let percentage = num(str(gauge_rows[1][1]));
+let gauge_status = str(gauge_rows[1][2]);
+let gauge_svg = '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="560"><rect id="gauge" width="900" height="560" fill="#101820"/><g font-family="Noto Sans"><text x="65" y="80" font-size="28" fill="#f8fafc">Savings Plan coverage</text><text x="65" y="115" font-size="15" fill="#94a3b8">Share of eligible compute spend covered in the period</text><rect x="100" y="220" width="700" height="70" fill="#334155"/>';
+if (gauge_status == "observed") {
+  if (percentage > 0) { gauge_svg = gauge_svg + '<rect x="100" y="220" width="' + str(percentage * 7) + '" height="70" fill="#22c55e"/>'; }
+  gauge_svg = gauge_svg + '<text x="100" y="340" font-size="26" fill="#e2e8f0">' + str(percentage) + '% covered</text>';
+} else {
+  gauge_svg = gauge_svg + '<text x="100" y="340" font-size="22" fill="#fbbf24">Coverage unavailable: inspect report flags</text>';
+}
+gauge_svg = gauge_svg + '<text x="65" y="470" font-size="14" fill="#94a3b8">Coverage is not utilization; unused commitment is listed separately.</text></g></svg>';
+let gauge_svg_path = draw_root + "/assets/gauge.svg";
+write_file(gauge_svg_path, gauge_svg);
+draw = _lmcode_ cli="lmdraw" install="github:lmctl-ai/lmdraw@latest";
+scene.canvas(900, 560, "#101820");
+scene.load_svg("assets/idle.svg", "idle");
+scene.render_png("images/idle.png", 900, 560, 1);
+scene.canvas(900, 560, "#101820");
+scene.load_svg("assets/gauge.svg", "gauge");
+scene.render_png("images/gauge.png", 900, 560, 1);
+end _lmcode_
+savedsl(draw, draw_root + "/figures.dslb");
+r = system(concat(dsl_cli(draw), ["--dsl", "figures.dslb"]), {cwd: draw_root, timeoutMs: 120000});
+if (r.code != 0) { println(r.stdout); println(r.stderr); }
+assert(r.code == 0);
+copy_file(draw_root + "/images/idle.png", image_root + "/spend_idle_resources.png");
+copy_file(draw_root + "/images/gauge.png", image_root + "/spend_savings_plan_gauge.png");
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${image_root} + "/spend_transfer_breakdown.png", 900, 560);
+plot.cmd("set datafile separator ','; set style data histograms; set style fill solid 0.85; set key off; set ylabel 'Period USD'; set grid ytics; set title 'Transfer breakdown'; plot '" + ${data_root} + "/spend_detail/transfer_chart.csv' using 2:xtic(1) title 'amount USD'");
+plot.close();
+end _dsl_
+savedsl(plot, "spend_transfer-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl "spend_transfer-plot.dslb";
+if (r.code != 0) { println(r.stdout); println(r.stderr); }
+assert(r.code == 0);
+
+let estimate_line = "";
+for (line in lines(spend_stdout)) {
+  if (starts_with(line, "Cost Explorer requests:") || starts_with(line, "CloudWatch metric requests:")) { println(line); }
+  if (starts_with(line, "estimated cost: $")) { estimate_line = line; }
+}
+assert(starts_with(estimate_line, "estimated cost: $"));
+println(estimate_line);

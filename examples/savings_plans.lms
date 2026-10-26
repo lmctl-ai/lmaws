@@ -1,0 +1,35 @@
+let days = len(ARGV) > 0 ? num(ARGV[0]) : 30;
+let top_n = len(ARGV) > 1 ? num(ARGV[1]) : 10;
+let cap = len(ARGV) > 2 ? num(ARGV[2]) : 0.25;
+mkdir("images");
+mkdir("data");
+let root = "data"; let image = "images";
+if (getenv("LMAWS_SPEND_LIVE", "0") == "1" && getenv("LMAWS_LIVE", "0") == "1") { mkdir(".lmaws-local"); mkdir(".lmaws-local/spend"); root = ".lmaws-local/spend"; image = ".lmaws-local/spend"; }
+aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let spend = aws.spend("savings_plans", ${days}, ${top_n}, str_to_float(str(${cap})));
+spend.write(${root} + "/savings_plans");
+end _dsl_
+savedsl(aws, "savings_plans-aws.dslb");
+r = system(concat(dsl_cli(aws), ["--dsl", "savings_plans-aws.dslb"]), {timeoutMs: 900000});
+let spend_stdout = r.stdout;
+if (r.code != 0) { println(r.stdout); println(r.stderr); }
+if (r.code != 0) { println(r.stdout); println(r.stderr); }
+assert(r.code == 0);
+copy_file(root + "/savings_plans/topic_chart.csv", root + "/savings_plans.csv");
+plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${image} + "/savings_plans.png", 900, 560);
+plot.cmd("set datafile separator ','; set style data histograms; set style fill solid 0.85; set key off; set xtics rotate by -25 font ',10'; set bmargin 7; set grid ytics; plot '" + ${root} + "/savings_plans/topic_chart.csv' using 2:xtic(1) title 'coverage'");
+plot.close();
+end _dsl_
+savedsl(plot, "savings_plans-plot.dslb");
+r = system ${dsl_cli(plot)} --dsl "savings_plans-plot.dslb";
+if (r.code != 0) { println(r.stdout); println(r.stderr); }
+assert(r.code == 0);
+
+let estimate_line = "";
+for (line in lines(spend_stdout)) {
+  if (starts_with(line, "Cost Explorer requests:") || starts_with(line, "CloudWatch metric requests:")) { println(line); }
+  if (starts_with(line, "estimated cost: $")) { estimate_line = line; }
+}
+assert(starts_with(estimate_line, "estimated cost: $"));
+println(estimate_line);

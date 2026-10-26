@@ -58,6 +58,7 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","spend",List.of("string","int","int","float"),"Spend",(c,s,a)->{
             if(billing!=null||!spendLedgers.isEmpty())throw VmException.host("spend must be the sole cost-capped report/session in its host program");
             String topic=text(a[0]);long days=a[1].asInt(),top=a[2].asInt();double cap=a[3].asFloat();
+            if(!Set.of("all","ec2_spend","savings_plans","eip_audit","ebs_audit","bandwidth","lambda_spend","dynamodb_spend").contains(topic))throw VmException.host("unknown spend topic");
             if(days<1||days>366||top<1||top>100||!Double.isFinite(cap)||cap<0||cap>0.25)throw VmException.host("spend: days 1..366, top 1..100 and cap $0..$0.25 required");
             boolean requested="1".equals(System.getenv("LMAWS_SPEND_LIVE"))&&!Boolean.getBoolean("lmaws.dryRun");
             boolean fakeHttp=requested&&!System.getenv().getOrDefault("LMAWS_ENDPOINT","").isBlank();
@@ -74,8 +75,9 @@ public final class CloudHost implements AutoCloseable {
             try(SpendSource source=requested?new SpendAwsSource(ledger):new SpendFakeSource(ledger)){
                 report=SpendReport.collect(source,topic,end,(int)days,(int)top,ledger);
             }
+            spendLedgers.put(report,ledger);
             c.charge(256L+report.json().getBytes(java.nio.charset.StandardCharsets.UTF_8).length*2L);
-            spendLedgers.put(report,ledger);return Value.object("Spend",report);
+            return Value.object("Spend",report);
         });
         r.method("Spend","section",List.of("string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(((SpendReport)s.asObject()).section(text(a[0])),c)));
         r.method("Spend","json",List.of(),"string",(c,s,a)->Value.ofString(((SpendReport)s.asObject()).json()));

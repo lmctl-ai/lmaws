@@ -168,3 +168,11 @@ and single-number version output work; the former v0.1.9 blockers are resolved.
 Set a scratch `TF_PLUGIN_CACHE_DIR` before comparisons to reuse the ~676 MiB
 provider. Results describe observed resources and selected numeric outputs,
 not complete API parity. No cloud credentials or OIDC belong in public CI.
+
+
+## Read-only spend report
+
+The new eight spend examples are synthetic by default. See
+[SPEND_REPORT.md](SPEND_REPORT.md) for the separate default-profile live opt-in,
+private output directory, CE/metric query cap and pricing assumptions. Never
+commit real report contents or pictures; this guide contains no live spend values.

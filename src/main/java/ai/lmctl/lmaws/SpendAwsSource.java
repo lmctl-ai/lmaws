@@ -38,6 +38,7 @@ public final class SpendAwsSource implements SpendSource {
     private final Map<String,List<Map<String,String>>> cache=new LinkedHashMap<>();
     private final Map<String,Map<String,String>> prices=new LinkedHashMap<>();
     private int cacheHits;
+    private final List<Map<String,String>> warnings=new ArrayList<>();
     public SpendAwsSource(){this(null);}
     public SpendAwsSource(CostLedger ledger){this(ledger,null,null);}
     SpendAwsSource(CostLedger ledger,URI endpoint){this(ledger,endpoint,null);}
@@ -48,9 +49,15 @@ public final class SpendAwsSource implements SpendSource {
         if(this.endpoint==null&&Set.of("true","1","yes").contains(System.getenv().getOrDefault("CI","").toLowerCase(Locale.ROOT)))throw new Unavailable("spend","LIVE_FORBIDDEN_IN_CI");
         this.credentials=testCredentials!=null?testCredentials:this.endpoint!=null?StaticCredentialsProvider.create(AwsBasicCredentials.create("test","test")):ProfileCredentialsProvider.create("default");
         this.config=ClientOverrideConfiguration.builder().retryPolicy(RetryPolicy.none()).apiCallTimeout(Duration.ofSeconds(25)).apiCallAttemptTimeout(Duration.ofSeconds(15)).build();
-        String scope=System.getenv().getOrDefault("LMAWS_SPEND_REGIONS",System.getenv().getOrDefault("AWS_REGION",System.getenv().getOrDefault("AWS_DEFAULT_REGION","us-east-1")));
-        regions=Arrays.stream(scope.split(",")).map(String::trim).filter(x->!x.isBlank()).distinct().toList();
-        if(regions.isEmpty()||regions.size()>40||regions.stream().anyMatch(x->!x.matches("[a-z]{2}(?:-[a-z]+)+-[0-9]")))throw new Unavailable("spend","INVALID_REGION_SCOPE");
+        String fallback=System.getenv().getOrDefault("AWS_REGION",System.getenv().getOrDefault("AWS_DEFAULT_REGION","us-east-1"));
+        String scope=System.getenv().getOrDefault("LMAWS_SPEND_REGIONS",endpoint==null?"all":fallback);
+        List<String> selected;
+        if(scope.equalsIgnoreCase("all")){
+            try{charge("ec2","DescribeRegions");selected=ec2(fallback).describeRegions(DescribeRegionsRequest.builder().allRegions(false).build()).regions().stream().map(x->x.regionName()).sorted().toList();}
+            catch(RuntimeException error){selected=List.of(fallback);warnings.add(row("feature","region_discovery","region",fallback,"status","unavailable","reason",safeReason(error)));}
+        }else selected=Arrays.stream(scope.split(",")).map(String::trim).filter(x->!x.isBlank()).distinct().toList();
+        if(selected.isEmpty()||selected.size()>40||selected.stream().anyMatch(x->!x.matches("[a-z]{2}(?:-[a-z]+)+-[0-9]")))throw new Unavailable("spend","INVALID_REGION_SCOPE");
+        regions=List.copyOf(selected);
     }
     private static URI checkedEndpoint(URI u){if(u==null)return null;if(!Set.of("127.0.0.1","localhost","[::1]","::1").contains(u.getHost())||!Set.of("http","https").contains(u.getScheme())||u.getUserInfo()!=null)throw new Unavailable("spend","ENDPOINT_MUST_BE_LOOPBACK");return u;}
     private <T> T client(String key,java.util.function.Supplier<T> make){return (T)clients.computeIfAbsent(key,k->make.get());}
@@ -62,6 +69,11 @@ public final class SpendAwsSource implements SpendSource {
     private DynamoDbClient dynamo(String region){return client("ddb:"+region,()->{var b=DynamoDbClient.builder().region(Region.of(region)).credentialsProvider(credentials).overrideConfiguration(config).httpClientBuilder(UrlConnectionHttpClient.builder());if(endpoint!=null)b.endpointOverride(endpoint);return b.build();});}
     private CloudWatchClient cw(String region){return client("cw:"+region,()->{var b=CloudWatchClient.builder().region(Region.of(region)).credentialsProvider(credentials).overrideConfiguration(config).httpClientBuilder(UrlConnectionHttpClient.builder());if(endpoint!=null)b.endpointOverride(endpoint);return b.build();});}
     private void charge(String service,String operation){if(ledger!=null)ledger.request(service,operation);}
+    private static String safeReason(RuntimeException e){
+        if(e instanceof Unavailable u)return u.reason;
+        if(e instanceof AwsServiceException a&&a.awsErrorDetails()!=null)return a.awsErrorDetails().errorCode();
+        return e.getClass().getSimpleName();
+    }
     private RuntimeException failure(String feature,RuntimeException e){
         if(e instanceof CostLedger.BudgetExceeded||e instanceof Unavailable)return e;
         if(e instanceof AwsServiceException aws){String code=aws.awsErrorDetails()==null?aws.getClass().getSimpleName():aws.awsErrorDetails().errorCode();
@@ -101,8 +113,9 @@ public final class SpendAwsSource implements SpendSource {
         String key="inventory:"+kind;var hit=cached(key);if(hit!=null)return hit;List<Map<String,String>> out=new ArrayList<>();
         try{
             if(kind.equals("savings_plans"))return remember(key,SpendCommitments.plans(plans(),ledger));
-            for(String region:regions){Set<String> seen=new HashSet<>();String next=null;do{switch(kind){
+            for(String region:regions){try{Set<String> seen=new HashSet<>();String next=null;do{switch(kind){
                 case "ec2"->{charge("ec2","DescribeInstances");var page=ec2(region).describeInstances(DescribeInstancesRequest.builder().nextToken(next).build());for(var reservation:page.reservations())for(var x:reservation.instances())out.add(row("region",region,"instance_id",x.instanceId(),"instance_type",x.instanceTypeAsString(),"state",x.state()==null?"unknown":x.state().nameAsString(),"platform",x.platformDetails(),"public_ip",x.publicIpAddress()==null?"":x.publicIpAddress()));next=token(page.nextToken(),seen);}
+                case "public_ipv4"->{charge("ec2","DescribeNetworkInterfaces");var page=ec2(region).describeNetworkInterfaces(DescribeNetworkInterfacesRequest.builder().nextToken(next).build());for(var x:page.networkInterfaces())if(x.association()!=null&&x.association().publicIp()!=null)out.add(row("region",region,"network_interface_id",x.networkInterfaceId(),"public_ip",x.association().publicIp(),"instance_id",x.attachment()==null?"":x.attachment().instanceId(),"interface_type",x.interfaceTypeAsString(),"requester_managed",x.requesterManaged()));next=token(page.nextToken(),seen);}
                 case "eips"->{charge("ec2","DescribeAddresses");for(var x:ec2(region).describeAddresses().addresses())out.add(row("region",region,"allocation_id",x.allocationId(),"public_ip",x.publicIp(),"association_id",x.associationId()==null?"":x.associationId(),"instance_id",x.instanceId()==null?"":x.instanceId()));next=null;}
                 case "ebs"->{charge("ec2","DescribeVolumes");var page=ec2(region).describeVolumes(DescribeVolumesRequest.builder().nextToken(next).build());for(var x:page.volumes())out.add(row("region",region,"volume_id",x.volumeId(),"volume_type",x.volumeTypeAsString(),"size_gib",x.size(),"iops",x.iops(),"throughput_mib_s",x.throughput(),"state",x.stateAsString(),"attached_instance_id",x.attachments().isEmpty()?"":x.attachments().getFirst().instanceId()));next=token(page.nextToken(),seen);}
                 case "snapshots"->{charge("ec2","DescribeSnapshots");var page=ec2(region).describeSnapshots(DescribeSnapshotsRequest.builder().ownerIds("self").nextToken(next).build());for(var x:page.snapshots())out.add(row("region",region,"snapshot_id",x.snapshotId(),"size_gib",x.volumeSize(),"start_time",x.startTime(),"state",x.stateAsString()));next=token(page.nextToken(),seen);}
@@ -110,8 +123,10 @@ public final class SpendAwsSource implements SpendSource {
                 case "lambda"->{charge("lambda","ListFunctions");var page=lambda(region).listFunctions(software.amazon.awssdk.services.lambda.model.ListFunctionsRequest.builder().marker(next).build());for(var x:page.functions())out.add(row("region",region,"function_name",x.functionName(),"resource_id",x.functionArn(),"memory_mb",x.memorySize(),"architecture",x.architecturesAsStrings().isEmpty()?"unknown":x.architecturesAsStrings().getFirst()));next=token(page.nextMarker(),seen);}
                 case "dynamodb"->{charge("dynamodb","ListTables");var page=dynamo(region).listTables(software.amazon.awssdk.services.dynamodb.model.ListTablesRequest.builder().exclusiveStartTableName(next).build());for(String name:page.tableNames()){charge("dynamodb","DescribeTable");var x=dynamo(region).describeTable(a->a.tableName(name)).table();out.add(row("region",region,"table_name",name,"table_id",x.tableArn(),"billing_mode",x.billingModeSummary()==null?"PROVISIONED":x.billingModeSummary().billingModeAsString(),"size_bytes",x.tableSizeBytes(),"item_count",x.itemCount(),"read_capacity",x.provisionedThroughput()==null?"0":x.provisionedThroughput().readCapacityUnits(),"write_capacity",x.provisionedThroughput()==null?"0":x.provisionedThroughput().writeCapacityUnits()));}next=token(page.lastEvaluatedTableName(),seen);}
                 default->throw new Unavailable(kind,"UNSUPPORTED_INVENTORY");
-            }if(out.size()>MAX_ROWS)throw new Unavailable(kind,"RESULT_LIMIT_EXCEEDED");}while(next!=null);}
-        }catch(RuntimeException e){throw failure(kind,e);}return remember(key,out);
+            }if(out.size()>MAX_ROWS)throw new Unavailable(kind,"RESULT_LIMIT_EXCEEDED");}while(next!=null);}catch(CostLedger.BudgetExceeded e){throw e;}catch(RuntimeException e){warnings.add(row("feature",kind,"region",region,"status","unavailable","reason",safeReason(e)));}}
+        }catch(RuntimeException e){throw failure(kind,e);}
+        if(out.isEmpty()&&warnings.stream().anyMatch(x->x.get("feature").equals(kind)))throw new Unavailable(kind,"REGIONAL_INVENTORY_INCOMPLETE");
+        return remember(key,out);
     }
     @Override public List<Map<String,String>> commitment(String kind,LocalDate start,LocalDate end){String key="commitment:"+kind+start+end;var hit=cached(key);if(hit!=null)return hit;try{return remember(key,SpendCommitments.read(ce(),ledger,kind,start,end));}catch(RuntimeException e){throw failure(kind,e);}}
     @Override public List<Map<String,String>> metrics(List<Metric> queries,Instant start,Instant end){
@@ -145,6 +160,6 @@ public final class SpendAwsSource implements SpendSource {
         }while(next!=null);}catch(RuntimeException e){throw failure("ec2_price",e);}var result=row("hourly_usd","unknown","pricing_status","no_matching_catalog_product");prices.put(key,result);return result;
     }
     private static software.amazon.awssdk.services.pricing.model.Filter filter(String field,String value){return software.amazon.awssdk.services.pricing.model.Filter.builder().type("TERM_MATCH").field(field).value(value).build();}
-    @Override public Map<String,Object> diagnostics(){return Map.of("profile","default","inventory_regions",regions,"inventory_scope","explicit regions only; set LMAWS_SPEND_REGIONS for additional regions","cost_scope","account primary billing view across all regions","cache_hits",cacheHits,"endpoint",endpoint==null?"aws":"loopback","read_only",true);}
+    @Override public Map<String,Object> diagnostics(){return Map.of("profile","default","inventory_regions",regions,"inventory_scope","enabled regions by default; LMAWS_SPEND_REGIONS can restrict scope","cost_scope","account primary billing view across all regions","cache_hits",cacheHits,"warnings",List.copyOf(warnings),"endpoint",endpoint==null?"aws":"loopback","read_only",true);}
     @Override public void close(){for(Object client:clients.values())if(client instanceof AutoCloseable c)try{c.close();}catch(Exception ignored){}clients.clear();if(credentials instanceof AutoCloseable c)try{c.close();}catch(Exception ignored){}}
 }

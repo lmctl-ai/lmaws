@@ -43,7 +43,7 @@ def run_examples():
     runner = shutil.which("lmscript")
     if runner is None:
         raise SystemExit("gallery --run: lmscript is not on PATH")
-    offline_env = dict(os.environ, LMAWS_LIVE="0", AWS_EC2_METADATA_DISABLED="true")
+    offline_env = dict(os.environ, LMAWS_LIVE="0", LMAWS_SPEND_LIVE="0", AWS_EC2_METADATA_DISABLED="true")
     offline_env.pop("LMAWS_ENDPOINT", None)
     evidence = {"examples": len(examples), "passed": [], "failed": [], "timeout_seconds": 120, "live_forced_off": True}
     outputs = {}

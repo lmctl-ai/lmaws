@@ -11,10 +11,11 @@ import software.amazon.awssdk.auth.credentials.*;
 
 /** Actual AWS SDK protocols against loopback fixtures; this main is a JVM-only test entry. */
 public final class SpendSourceChecks {
+    private static String nativeBinary;
     private SpendSourceChecks(){}
     public static void dateRange(LocalDate start,LocalDate end){if(start==null||end==null||!start.isBefore(end))throw new SpendSource.Unavailable("costs","INVALID_DATE_RANGE");}
     public static void dimension(String name){if(!Set.of("SERVICE","INSTANCE_TYPE","RESOURCE_ID","SERVICE_USAGE_TYPE").contains(name))throw new SpendSource.Unavailable("costs","INVALID_DIMENSION");}
-    public static void main(String[]args)throws Exception{httpSmoke();}
+    public static void main(String[]args)throws Exception{nativeBinary=args.length==1?args[0]:null;httpSmoke();}
     public static void httpSmoke() throws Exception {
         HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         List<String> operations=new ArrayList<>();String[] mode={"normal"};List<String> bodies=new ArrayList<>();
@@ -41,7 +42,7 @@ public final class SpendSourceChecks {
             try(var source=new SpendAwsSource(ledger,endpoint,credentials)){
                 var report=SpendReport.collect(source,"all",end,30,10,ledger);
                 if(!report.summary().get("status").equals("complete"))throw new AssertionError("SDK report failed: "+report.json());assertions++;
-                for(String op:List.of("DescribeInstances","DescribeAddresses","DescribeVolumes","DescribeSnapshots","DescribeReservedInstances","ListFunctions","ListTables","DescribeTable","DescribeSavingsPlans","GetMetricData","GetProducts","GetSavingsPlansUtilization","GetSavingsPlansCoverage","GetSavingsPlansPurchaseRecommendation","GetReservationUtilization","GetReservationCoverage","GetReservationPurchaseRecommendation")){if(!operations.contains(op))throw new AssertionError("SDK path not exercised "+op);assertions++;}
+                for(String op:List.of("DescribeInstances","DescribeNetworkInterfaces","DescribeAddresses","DescribeVolumes","DescribeSnapshots","DescribeReservedInstances","ListFunctions","ListTables","DescribeTable","DescribeSavingsPlans","GetMetricData","GetProducts","GetSavingsPlansUtilization","GetSavingsPlansCoverage","GetSavingsPlansPurchaseRecommendation","GetReservationUtilization","GetReservationCoverage","GetReservationPurchaseRecommendation")){if(!operations.contains(op))throw new AssertionError("SDK path not exercised "+op);assertions++;}
                 if(!report.section("sp_utilization").getFirst().get("unused_commitment_usd").equals("30"))throw new AssertionError("SP typed numeric projection");assertions++;
                 if(!report.section("ri_utilization").getFirst().get("unused_amortized_usd").equals("20"))throw new AssertionError("RI unused cost must not use total amortized fee");assertions++;
                 if(!report.section("lambda_spend").getFirst().get("metric_status").equals("complete")||!report.section("dynamodb_spend").getFirst().get("metric_status").equals("complete"))throw new AssertionError("CBOR metric results must actually join workloads");assertions++;
@@ -61,8 +62,28 @@ public final class SpendSourceChecks {
             mode[0]="empty";try(var source=new SpendAwsSource(null,endpoint,credentials)){if(!source.inventory("savings_plans").isEmpty()&&!source.inventory("savings_plans").getFirst().getOrDefault("status","").equals("no_data"))throw new AssertionError("absent plans must be explicit");assertions++;if(!source.costs(end.minusDays(1),end,"DAILY","SERVICE","",false).isEmpty())throw new AssertionError("empty CE");assertions++;}
             mode[0]="normal";CostLedger cap=new CostLedger("cap","cap","us-east-1",dir.resolve("cap.jsonl"),new BigDecimal("0.01"),false);
             try(var source=new SpendAwsSource(cap,endpoint,credentials)){source.costs(end.minusDays(1),end,"DAILY","SERVICE","",false);int before=operations.size();boolean refused=false;try{source.costs(end.minusDays(2),end,"DAILY","SERVICE","",false);}catch(CostLedger.BudgetExceeded e){refused=true;}if(!refused||before!=operations.size())throw new AssertionError("cap must refuse before HTTP");assertions++;}
+            if(nativeBinary!=null){
+                mode[0]="normal";Path nativeDir=Files.createDirectories(dir.resolve("native"));Path schema=nativeDir.resolve("schema.json"),program=nativeDir.resolve("run.lms"),bytecode=nativeDir.resolve("run.dslb");
+                ProcessBuilder schemaCommand=new ProcessBuilder(nativeBinary,"--dsl-schema","--json").redirectOutput(schema.toFile()).redirectError(nativeDir.resolve("schema.log").toFile());
+                waitFor(schemaCommand.start(),60,"native schema");
+                String source="p = _lmcode_ schema="+Jsons.encode(schema.toString().replace('\\','/'))+";\nlet spend = aws.spend(\"all\",30,10,0.25);\nspend.write(\"native-report\");\nend _lmcode_\nsavedsl(p,"+Jsons.encode(bytecode.toString().replace('\\','/'))+");\n";
+                Files.writeString(program,source);
+                List<String> compile=new ArrayList<>();if(System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win"))compile.addAll(List.of("cmd.exe","/c"));compile.add(System.getenv().getOrDefault("LMSCRIPT_BIN","lmscript"));compile.add(program.toString());
+                ProcessBuilder compiler=new ProcessBuilder(compile).directory(nativeDir.toFile()).redirectOutput(nativeDir.resolve("compile.log").toFile()).redirectErrorStream(true);
+                compiler.environment().put("LMAWS_SPEND_LIVE","0");compiler.environment().put("LMAWS_LIVE","0");waitFor(compiler.start(),90,"native fixture compile");
+                ProcessBuilder run=new ProcessBuilder(nativeBinary,"--dsl",bytecode.toString()).directory(nativeDir.toFile()).redirectOutput(nativeDir.resolve("run.log").toFile()).redirectErrorStream(true);
+                run.environment().putAll(Map.of("AWS_PROFILE","default","AWS_DEFAULT_PROFILE","default","AWS_REGION","us-east-1","LMAWS_SPEND_REGIONS","us-east-1","LMAWS_ENDPOINT",endpoint.toString(),"LMAWS_SPEND_LIVE","1","LMAWS_LIVE","1","CI","true"));
+                waitFor(run.start(),180,"native SDK fixture");
+                var result=software.amazon.awssdk.protocols.jsoncore.JsonNodeParser.create().parse(Files.readString(nativeDir.resolve("native-report/report.json")));
+                if(!result.field("summary").orElseThrow().field("status").orElseThrow().asString().equals("complete"))throw new AssertionError("native SDK fixture returned incomplete report; inspect "+nativeDir);
+                assertions++;
+            }
         } finally {server.stop(0);}
         System.out.println("PASS "+assertions+" SDK loopback checks: every spend section, pagination, denied, empty, disabled, prices and pre-dispatch cap");
+    }
+    private static void waitFor(Process process,int seconds,String label)throws Exception{
+        if(!process.waitFor(seconds,java.util.concurrent.TimeUnit.SECONDS)){process.destroyForcibly();throw new AssertionError(label+" timed out");}
+        if(process.exitValue()!=0)throw new AssertionError(label+" exited "+process.exitValue());
     }
     private static Object plain(software.amazon.awssdk.protocols.jsoncore.JsonNode node){
         if(node.isObject()){Map<String,Object> out=new LinkedHashMap<>();node.asObject().forEach((k,v)->out.put(k,plain(v)));return out;}
@@ -105,6 +126,7 @@ public final class SpendSourceChecks {
         }
         String payload=switch(op){
             case "DescribeInstances"->"<reservationSet><item><instancesSet><item><instanceId>i-synthetic</instanceId><instanceType>t3.micro</instanceType><instanceState><name>running</name><code>16</code></instanceState><platformDetails>Linux/UNIX</platformDetails></item></instancesSet></item></reservationSet>";
+            case "DescribeNetworkInterfaces"->"<networkInterfaceSet><item><networkInterfaceId>eni-synthetic</networkInterfaceId><association><publicIp>198.51.100.9</publicIp></association><interfaceType>interface</interfaceType></item></networkInterfaceSet>";
             case "DescribeAddresses"->"<addressesSet><item><allocationId>eipalloc-synthetic</allocationId><publicIp>198.51.100.7</publicIp></item></addressesSet>";
             case "DescribeVolumes"->"<volumeSet><item><volumeId>vol-synthetic</volumeId><size>40</size><volumeType>gp2</volumeType><status>available</status><iops>120</iops></item></volumeSet>";
             case "DescribeSnapshots"->"<snapshotSet><item><snapshotId>snap-synthetic</snapshotId><volumeSize>100</volumeSize><status>completed</status></item></snapshotSet>";

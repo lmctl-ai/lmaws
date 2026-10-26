@@ -31,3 +31,7 @@ retained rows are charged, bytecode/inventories are bounded, and `RuntimeBudget`
 restarts with a heap cap of approximately 75% when needed. Budgets below 16 MiB
 fail execution. This bounds VM/Java heap allocation, not process RSS or OS memory;
 the host does not set rlimits. Native and JVM error paths are tested.
+
+The read-only Spend API adds nine own signatures (52 own /124 including std):
+CE costs/resources, SP/RI commitments, regional inventories, Pricing and batched
+CloudWatch metrics. See [spend reports](08-spend-reports.md).

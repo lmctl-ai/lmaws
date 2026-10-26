@@ -1,6 +1,6 @@
 # Examples and cost labels
 
-There are 68 runnable `.lms` examples: 38 synthetic-only recipe demonstrations
+There are 76 runnable `.lms` examples: eight spend reports, 38 synthetic-only recipe demonstrations
 plus the original 30 stories: 19 read-only stories, seven
 write/lifecycle stories and four IAM-dependent stories. See [README](../README.md)
 for the complete image gallery and cost captions; [USER_TEST](../docs/USER_TEST.md)
@@ -28,3 +28,8 @@ read-only results display `$0.00`; S3 bucket/object and the six lifecycle storie
 have measured price-table estimates after the federated session was re-issued.
 Four IAM examples remain estimated only. The price table is not an invoice.
 See [safety/cost](07-example-costs.md) for price-table limits.
+
+Eight additional deterministic spend examples bring the current gallery to 76. They
+use aws.spend rather than the owned-resource example runner and generate 12
+figures. Their paid-query planning estimates are explicit; actual fixture runs
+cost no AWS money. See [spend reports](08-spend-reports.md).

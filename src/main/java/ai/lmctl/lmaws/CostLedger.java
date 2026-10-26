@@ -31,7 +31,7 @@ public final class CostLedger {
     private final Map<String,Resource> resources=new LinkedHashMap<>();
     private final Map<String,Charge> requests=new LinkedHashMap<>();
     private final List<Map<String,Object>> failedCreates=new ArrayList<>();
-    private BigDecimal requestTotal=BigDecimal.ZERO; private Resource current,pending; private String lastOperation=""; private int cleanupDepth; private int refusals;
+    private BigDecimal requestTotal=BigDecimal.ZERO; private Resource current,pending; private String lastOperation=""; private int cleanupDepth; private int refusals; private long lastCeDispatch;
     private static final class Charge { long requests,units; BigDecimal cost=BigDecimal.ZERO,unit=BigDecimal.ZERO;
         Map<String,Object> report(){return Map.of("requests",requests,"billing_units",units,"unit_price_usd",unit,"estimated_usd",cost);} }
     private static final class Resource {
@@ -74,6 +74,11 @@ public final class CostLedger {
     private void recordRequest(String svc,String operation,String op,long units){
         BigDecimal unit=unitPrice(svc,op),charge=unit.multiply(BigDecimal.valueOf(units));
         requireBudget(charge,"SDK request");
+        if(live&&svc.equals("costexplorer")){
+            long wait=500_000_000L-(System.nanoTime()-lastCeDispatch);
+            if(wait>0)try{Thread.sleep(wait/1_000_000L,(int)(wait%1_000_000L));}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException("spend request interrupted");}
+            lastCeDispatch=System.nanoTime();
+        }
         lastOperation=operation;requestTotal=requestTotal.add(charge);String key=svc+"."+operation;
         add(requests,key,units,unit,charge);Resource owner=current==null?pending:current;
         if(owner!=null)add(owner.requests,key,units,unit,charge);

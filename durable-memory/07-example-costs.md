@@ -27,7 +27,7 @@ contents, account IDs or credentials into evidence or documentation.
 `CostLedger` embeds its us-east-1 price snapshot in each ledger with decimal unit
 prices, resource lifetimes in minutes, SDK transmission attempts/retries, billing
 units and storage upper bounds. Prices are estimates, vary by region/time and
-ignore free-tier credits; no billing or Cost Explorer calls are made. SQS/SNS
+ignore free-tier credits; the original owned-test flows make no billing calls. The new Spend API explicitly meters paid CE pages and metric requests under its own <=$0.25 cap. SQS/SNS
 payload accounting uses 64 KiB units; DynamoDB writes round to 1 KiB; storage uses
 a 30-day month. Cleanup headroom is reserved before another creation/request;
 cleanup remains allowed after cap exhaustion.
@@ -40,3 +40,8 @@ prices; read-only output is `estimated cost: $0.00`, writes retain fractional
 estimates (including denied attempts). Private raw ledgers retain exact resource
 IDs for recovery; public output masks account IDs and never includes credentials,
 secret values, payload contents or raw SDK errors. See [live results](03-live.md).
+
+Read-only Spend reports are an explicit paid-query exception: Cost Explorer
+$0.01/page and CloudWatch metrics are admitted before dispatch, including failed
+attempts. Billing estimates are not hidden as $0.00 merely because no resource
+was created. See [spend safety](08-spend-reports.md).
