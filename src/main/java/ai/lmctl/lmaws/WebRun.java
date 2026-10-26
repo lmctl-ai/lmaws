@@ -56,7 +56,9 @@ final class WebRun implements AutoCloseable {
         if(estimate().compareTo(new java.math.BigDecimal(state.getOrDefault("cost_cap","0.10")))>=0)throw new CostLedger.BudgetExceeded("web run cost cap reached before step");
         state.put("intent",op);persist();long start=System.nanoTime();
         try{if(backend.isDemo()) demoStep(op,args);else liveStep(op,args);}
-        catch(RuntimeException failure){try{down();}catch(RuntimeException cleanup){failure.addSuppressed(cleanup);}throw failure;}
+        catch(RuntimeException failure){
+            if(failure instanceof software.amazon.awssdk.awscore.exception.AwsServiceException service&&service.awsErrorDetails()!=null){state.put("provider_error_detail",service.awsErrorDetails().errorMessage());state.put("provider_error_code",service.awsErrorDetails().errorCode());persist();}
+            try{down();}catch(RuntimeException cleanup){failure.addSuppressed(cleanup);}throw failure;}
         state.put("step_"+op,"done");state.put("seconds_"+op,String.valueOf((System.nanoTime()-start)/1e9));state.put("status","up");state.remove("intent");persist();return summary();
     }
     private String arg(Map<String,Object> a,String k,String fallback){return a.containsKey(k)?String.valueOf(a.get(k)):fallback;}
@@ -122,6 +124,10 @@ final class WebRun implements AutoCloseable {
     private String read(Path f){if(size(f)>16384)throw new IllegalArgumentException("user data exceeds 16 KiB");try{return Files.readString(f);}catch(java.io.IOException e){throw new IllegalArgumentException("user data read failed",e);}}
     Map<String,String> summary(){Map<String,String> row=new LinkedHashMap<>();for(String k:List.of("run_id","status","demo","certificate_status","https"))row.put(k,state.getOrDefault(k,""));row.put("site_url",(state.containsKey("https")?"https://":"http://")+state.get("site"));row.put("cf_url","http://"+state.getOrDefault("cf_domain",""));row.put("app_url","http://"+state.get("app"));state.forEach((k,v)->{if(k.startsWith("seconds_"))row.put(k,v);});row.put("estimated_cost_usd",estimate().toPlainString());return row;}
     List<Map<String,String>> status(){return List.of(summary());}
+    List<Map<String,String>> leftovers(){
+        if(backend.isDemo())return "down".equals(state.get("status"))?List.of():List.of(Map.of("kind","fixture","run_id",run));
+        List<Map<String,String>> rows=new ArrayList<>(aws().recoverOwned());rows.addAll(new WebCompute(backend).inventory(run));return rows;
+    }
     private java.math.BigDecimal estimate(){
         if(backend.isDemo())return java.math.BigDecimal.ZERO;
         var total=new java.math.BigDecimal(state.getOrDefault("request_cost_prior","0")).add(recordedCost?java.math.BigDecimal.ZERO:cost.total());
