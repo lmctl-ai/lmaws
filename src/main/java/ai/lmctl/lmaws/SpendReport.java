@@ -234,7 +234,7 @@ public final class SpendReport {
         if(ledger.live())SpendOutputs.createPrivate(directory);
         try{Files.createDirectories(directory);Files.writeString(directory.resolve("report.json"),json());
             for(var e:sections.entrySet()){Files.writeString(directory.resolve(e.getKey()+".json"),Jsons.encode(e.getValue())+"\n");StringBuilder csv=new StringBuilder();LinkedHashSet<String> fields=new LinkedHashSet<>();e.getValue().forEach(r->fields.addAll(r.keySet()));csv.append(String.join(",",fields)).append('\n');
-                for(var row:e.getValue()){List<String> cells=new ArrayList<>();for(String field:fields){String value=Jsons.mask(row.getOrDefault(field,""));if(!value.isEmpty()&&"=+-@\t\r".indexOf(value.charAt(0))>=0)value="'"+value;cells.add("\""+value.replace("\"","\"\"")+"\"");}csv.append(String.join(",",cells)).append('\n');}
+                for(var row:e.getValue()){List<String> cells=new ArrayList<>();for(String field:fields){String value=Jsons.mask(field,row.getOrDefault(field,""));if(!value.isEmpty()&&"=+-@\t\r".indexOf(value.charAt(0))>=0)value="'"+value;cells.add("\""+value.replace("\"","\"\"")+"\"");}csv.append(String.join(",",cells)).append('\n');}
                 Files.writeString(directory.resolve(e.getKey()+".csv"),csv);}
             SpendCharts.write(this,directory,metadata.get("topic").toString(),top);
         }catch(IOException e){throw new IllegalStateException("cannot write spend report");}

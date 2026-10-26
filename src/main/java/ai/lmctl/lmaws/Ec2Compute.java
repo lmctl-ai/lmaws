@@ -185,7 +185,7 @@ final class Ec2Compute {
                     .statisticsWithStrings("Average", "Maximum", "Sum")).datapoints();
             for (var p : points.stream().sorted(Comparator.comparing(software.amazon.awssdk.services.cloudwatch.model.Datapoint::timestamp)).toList())
                 rows.add(row("kind", "metric", "instance", id, "metric", metric, "time", p.timestamp().toString(),
-                        "average", fixed(p.average()), "maximum", fixed(p.maximum()), "sum", fixed(p.sum())));
+                        "average", text(p.average()), "maximum", text(p.maximum()), "sum", text(p.sum())));
         }
         return rows;
     }
@@ -612,8 +612,7 @@ final class Ec2Compute {
     private static BigDecimal ebsCost(long seconds) {
         return GP3_GB_MONTH.multiply(BigDecimal.valueOf(ROOT_GIB)).multiply(BigDecimal.valueOf(seconds)).divide(BigDecimal.valueOf(43200L * 60), 10, RoundingMode.CEILING);
     }
-    /** Fixed 4-decimal text: long digit runs would otherwise be masked as account ids by Rows.json(). */
-    private static String fixed(Double v) { return v == null ? "" : String.format(Locale.ROOT, "%.4f", v); }
+    private static String text(Double v) { return v == null ? "" : String.valueOf(v); }
     static String code(AwsServiceException e) { return e.awsErrorDetails() == null || e.awsErrorDetails().errorCode() == null ? "AWS_SERVICE_ERROR" : e.awsErrorDetails().errorCode(); }
     private static void requireInstanceId(String id) { if (id == null || !id.matches("i-[0-9a-z]{1,32}")) throw new IllegalArgumentException("instance id required (i-...)"); }
     private static String tag(List<Tag> tags, String key) { return tags == null ? "" : tags.stream().filter(t -> key.equals(t.key())).map(Tag::value).findFirst().orElse(""); }

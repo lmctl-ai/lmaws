@@ -594,7 +594,7 @@ public final class AwsBackend implements AutoCloseable {
     }
     private <T extends AutoCloseable> T register(T c) { clients.add(c); return c; }
 
-    private Map<String, String> identity() { var i = sts().getCallerIdentity(GetCallerIdentityRequest.builder().build()); return row("kind", "identity", "id", safeId(i.account()), "name", safeId(i.arn())); }
+    private Map<String, String> identity() { var i = sts().getCallerIdentity(GetCallerIdentityRequest.builder().build()); Jsons.knownAccount(i.account()); return row("kind", "identity", "id", safeId(i.account()), "name", safeId(i.arn())); }
     private static String safeId(String s) { return s == null ? "" : s.replaceAll("\\d(?=\\d{4})", "*"); }
     private static String last(String s) { int i = s.lastIndexOf('/'); if (i < 0) i = s.lastIndexOf(':'); return i < 0 ? s : s.substring(i + 1); }
     private static String openPorts(List<IpPermission> permissions) { List<String> ports = new ArrayList<>(); for (var p : permissions) { boolean broad = p.ipRanges().stream().anyMatch(r -> "0.0.0.0/0".equals(r.cidrIp())) || p.ipv6Ranges().stream().anyMatch(r -> "::/0".equals(r.cidrIpv6())); if (!broad) continue; if (p.fromPort() == null || p.toPort() == null) ports.add("-1"); else if (p.fromPort().intValue() == p.toPort().intValue()) ports.add(Integer.toString(p.fromPort())); else ports.add(p.fromPort() + "-" + p.toPort()); } return String.join(",", ports); }

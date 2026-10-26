@@ -53,7 +53,19 @@ public final class SafetyChecks {
             namespaces.create("parameter","shared","x");
             check(namespaces.remaining()==2,"service namespaces are independent");
         }
-        check(Jsons.mask("arn:aws:sns:us-east-1:123456789012:demo").contains("************"),"account masked");
+        check(Jsons.mask("arn:aws:sns:us-east-1:123456789012:demo").equals("arn:aws:sns:us-east-1:************:demo"),"account masked in an ARN");
+        check(Jsons.mask("arn:aws:iam::123456789012:role/x").equals("arn:aws:iam::************:role/x"),"account masked in a global ARN");
+        check(Jsons.mask("User: arn:aws:sts::123456789012:federated-user/u is not authorized").contains("sts::************:federated-user"),"account masked in an error message");
+        check(Jsons.mask("not in account 123456789012.").equals("not in account ************."),"labelled account masked");
+        check(Jsons.mask("1233.123456789012").equals("1233.123456789012"),"long float digits kept");
+        check(Jsons.mask("123456789012").equals("123456789012"),"plain 12-digit number kept");
+        check(Jsons.mask("bytes 1234567890123").equals("bytes 1234567890123"),"13-digit byte count kept");
+        check(Jsons.mask("AKIAABCDEFGHIJKLMNOP").equals("[redacted-key]"),"access key redacted");
+        check(Jsons.encode(java.util.Map.of("balance","2303.999999999999")).contains("2303.999999999999"),"Rows.json keeps balances");
+        check(Jsons.encode(java.util.Map.of("owner_id","123456789012")).contains("************"),"account field masked");
+        check(Jsons.encode(java.util.Map.of("size_bytes","123456789012")).contains("123456789012"),"byte count field kept");
+        Jsons.knownAccount("210987654321");
+        check(Jsons.mask("cdk-assets-210987654321-us-east-1").equals("cdk-assets-************-us-east-1"),"known identity account masked anywhere");
         try(CloudHost host=new CloudHost()) {
             var registry=host.registry();
             boolean invalidUtf8=false;

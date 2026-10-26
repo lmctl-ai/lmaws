@@ -20,6 +20,13 @@ There is no general AWS dispatcher, secret-value API, IAM user/key mutation,
 compute/network creation or Lambda deployment. Account IDs are masked in public
 outputs; raw ownership identifiers stay in private recovery ledgers.
 
+Masking (`Jsons.mask`, used by `Rows.json/csv`, spend exports and error messages) replaces the
+account field of ARNs, values labelled account/owner (`account 123...`, `"OwnerId": "123..."`),
+map/CSV fields named account/account_id/owner/owner_id, and the caller's own account id once
+`identity()` has seen it; access-key ids are redacted. Plain numbers are never masked: before
+v0.1.8 any standalone 12-digit run was replaced, which corrupted balances such as
+`1233.123456789012` and 12-digit byte counts. Self-tests cover both directions.
+
 `AwsBackend` uses the synchronous URLConnection transport. Real clients use
 `ProfileCredentialsProvider` with the selected profile, not the unrestricted
 default credential chain. Demo mode resolves no credentials; loopback HTTP fake
