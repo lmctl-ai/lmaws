@@ -5,7 +5,7 @@ Current maintenance notes:
 - [01-architecture.md](01-architecture.md): SDK, schema, curated API and memory budget.
 - [02-build-test.md](02-build-test.md): local verification gate and five-platform tooling.
 - [03-live.md](03-live.md): canonical live procedure, current results and zero leftovers.
-- [04-examples.md](04-examples.md): 76 examples, autoruns, images and cost labels.
+- [04-examples.md](04-examples.md): 85 examples, autoruns, images and cost labels.
 - [05-release.md](05-release.md): published versions, distribution and genuinely open items.
 - [06-comparisons.md](06-comparisons.md): lmcloud equivalents, findings and safety checks.
 - [09-spend-reports.md](09-spend-reports.md): capped read-only billing analysis and private output.

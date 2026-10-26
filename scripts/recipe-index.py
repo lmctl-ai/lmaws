@@ -66,6 +66,8 @@ def read_recipe(path: Path) -> Recipe:
     meta["access"] = re.split(r"[;(]", meta.get("access", ""), maxsplit=1)[0].strip()
     if meta["access"].startswith("Write with the lmaws profile"):
         meta["access"] = "Write with the lmaws profile"
+    elif meta["access"].startswith("Write with the admin profile"):
+        meta["access"] = "Write with the admin profile"
     missing = [key for key in KEYS if key not in meta]
     if missing:
         raise ValueError(f"{path}: missing metadata header(s): {', '.join(missing)}")
@@ -79,8 +81,8 @@ def read_recipe(path: Path) -> Recipe:
             meta.setdefault("function", function_names[0])
     if not meta["function"].strip():
         raise ValueError(f"{path}: function metadata is empty")
-    if meta["access"] not in {"Read-only", "Write with the lmaws profile", "Read-only with the lmaws-ec2 profile", "Write with the lmaws-ec2 profile"}:
-        raise ValueError(f"{path}: access must be Read-only or Write with the lmaws/lmaws-ec2 profile")
+    if meta["access"] not in {"Read-only", "Write with the lmaws profile", "Read-only with the lmaws-ec2 profile", "Write with the lmaws-ec2 profile", "Write with the admin profile"}:
+        raise ValueError(f"{path}: access must be Read-only or Write with the lmaws/lmaws-ec2/admin profile")
     if meta["category"] not in CATEGORIES:
         raise ValueError(f"{path}: unknown category {meta['category']!r}")
     return Recipe(path.relative_to(ROOT), meta)

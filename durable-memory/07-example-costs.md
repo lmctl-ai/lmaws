@@ -8,21 +8,24 @@ exceptions and shutdown. Failed cleanup remains recoverable, not falsely deleted
 Sweeping (`lmaws --sweep DIR --older-than-hours 0` or `Cloud.sweep`) is local,
 dry-run only; it never authorizes deletion of discovered account resources.
 
-Real mutations require `LMAWS_LIVE=1` and active profile exactly `lmaws`.
-Profile resolution is AWS_PROFILE, AWS_DEFAULT_PROFILE, then default; real clients
-use that named profile. Default is read-only. Use us-east-1; live cost sessions
-reject other regions. Do not use admin/agentcore-poc or alter IAM/credentials/
-profiles. IAM examples stay skipped under the federated setup. No OIDC or cloud
-credentials belong in CI; demo and loopback fakes bypass real credentials only.
-The `lmaws` profile is issued by the existing local session helper at
-`~/.aws/session-tools/scripts/aws-profile-session.py` from
-`~/.aws/session-tools/tasks/iam-snapshots/local-lmaws-session.json`; its session
-policy permits both `lmaws_` and `lmaws-` resource names for SQS, SSM, DynamoDB,
-SNS and Logs, and `lmaws-` S3 names, with `lmaws_test` ownership tags. STS caps
-the combined plaintext inline and managed policy at 2,048 characters, so keep
-additions concise and re-issue the session through the same helper when it
-expires. Never copy policy
-contents, account IDs or credentials into evidence or documentation.
+Real resource mutations require `LMAWS_LIVE=1` and active profile `lmaws` (service
+sandboxes) or `lmaws-ec2` (EC2 spot nano sandbox) in `us-east-1`. The only
+exception is customer-managed `lmaws_` IAM policy mutation (`iam_policy_put` and
+`iam_policy_delete`), which requires `AWS_PROFILE=admin`, `LMAWS_ADMIN_GRANT=1`,
+`--apply` (`LMAWS_APPLY=1`), `LMAWS_LIVE=1`, and a policy name matching
+`^lmaws_[a-z0-9_-]{1,64}$`. The `admin` profile is refused for every other
+mutating call, and `lmaws`/`lmaws-ec2` are refused for IAM policy writes.
+Inline STS session policies are capped at 2,048 characters, whereas customer-managed
+IAM policies allow up to 6,144 compact characters. Before any `iam_policy_put`,
+`IamPolicies.lint` verifies valid JSON, compact length `<= 6144`,
+`"Version": "2012-10-17"`, and that every `Allow` statement is either read/inventory
+or scoped by `lmaws-*`/`lmaws_*` resource name, `lmaws_test` tag, or condition,
+while refusing `iam:*`, `sts:AssumeRole*`, `organizations:*`, `account:*`, `kms:*`,
+`secretsmanager:*`, bare `'*'`, or `'Resource': '*'` with a write action. The
+managed policy `lmaws_session` (4,839 compact characters, 20 statements, `v2`) was
+applied live via `recipes/grant_session_policy.lms` and verified byte-for-byte with
+`iam_policy_get` and `iam_policy_versions`. Never copy real policy contents,
+account IDs or credentials into repository files.
 
 `CostLedger` embeds its us-east-1 price snapshot in each ledger with decimal unit
 prices, resource lifetimes in minutes, SDK transmission attempts/retries, billing

@@ -5,6 +5,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -45,7 +46,13 @@ import software.amazon.awssdk.services.ec2.model.IpPermission;
 import software.amazon.awssdk.services.ecs.EcsClient;
 import software.amazon.awssdk.services.ecs.model.ListClustersRequest;
 import software.amazon.awssdk.services.iam.IamClient;
+import software.amazon.awssdk.services.iam.model.CreatePolicyVersionResponse;
+import software.amazon.awssdk.services.iam.model.GetPolicyResponse;
+import software.amazon.awssdk.services.iam.model.GetPolicyVersionResponse;
 import software.amazon.awssdk.services.iam.model.ListRolesRequest;
+import software.amazon.awssdk.services.iam.model.NoSuchEntityException;
+import software.amazon.awssdk.services.iam.model.Policy;
+import software.amazon.awssdk.services.iam.model.PolicyVersion;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.ListFunctionsRequest;
 import software.amazon.awssdk.services.route53.Route53Client;
@@ -97,8 +104,10 @@ public final class AwsBackend implements AutoCloseable {
     private final CostLedger cost;
     private final Map<String, Map<String, String>> demoResources = new LinkedHashMap<>();
     private final Map<String, java.util.Set<String>> bucketObjects = new LinkedHashMap<>();
+    private final Map<String, DemoPolicyState> demoPolicies = new LinkedHashMap<>();
     private final List<AutoCloseable> clients = new ArrayList<>();
     private final ClientOverrideConfiguration config;
+    private String cachedAccountId;
 
     private S3Client s3; private SqsClient sqs; private SnsClient sns; private SsmClient ssm; private DynamoDbClient ddb;
     private CloudWatchLogsClient logs; private CloudWatchClient cloudwatch; private Ec2Client ec2; private LambdaClient lambda;
@@ -291,7 +300,14 @@ public final class AwsBackend implements AutoCloseable {
     private Route53Client route53() { return route53 == null ? route53 = register(base(Route53Client.builder()).build()) : route53; }
     private SecretsManagerClient secrets() { return secrets == null ? secrets = register(base(SecretsManagerClient.builder()).build()) : secrets; }
     private EcsClient ecs() { return ecs == null ? ecs = register(base(EcsClient.builder()).build()) : ecs; }
-    private IamClient iam() { return iam == null ? iam = register(base(IamClient.builder()).build()) : iam; }
+    private IamClient iam() {
+        if (iam == null) {
+            var b = base(IamClient.builder());
+            if (endpoint == null) b.region(Region.AWS_GLOBAL);
+            iam = register(b.build());
+        }
+        return iam;
+    }
     private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { b.region(region).overrideConfiguration(config); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))); else b.credentialsProvider(ProfileCredentialsProvider.builder().profileName(activeProfile()).build()); return b; }
 
     private static final class CostInterceptor implements ExecutionInterceptor {
@@ -340,12 +356,11 @@ public final class AwsBackend implements AutoCloseable {
 
     /** Real mutations require the explicitly provisioned lmaws profile. */
     private void requireWriteEnabled() {
+        if ("admin".equals(activeProfile())) {
+            throw new IllegalStateException("The 'admin' profile is reserved exclusively for lmaws_ IAM policy grants; refusing regular resource mutation");
+        }
         if (demo || endpoint != null) return;
-        if (!"1".equals(System.getenv("LMAWS_LIVE")))
-            throw new IllegalStateException("live writes require LMAWS_LIVE=1");
-        String profile = activeProfile();
-        if (!MUTATING_PROFILES.contains(profile))
-            throw new IllegalStateException("live mutations require AWS_PROFILE=lmaws or lmaws-ec2 (active profile: " + profile + ")");
+        IamPolicies.checkMutationGuard(false, activeProfile(), isLiveEnabled(), false, false, null);
     }
 
     /** Profiles provisioned for owned writes; every other profile is read-only to lmaws. */
@@ -358,10 +373,457 @@ public final class AwsBackend implements AutoCloseable {
             throw new IllegalStateException("live spot sandboxes require us-east-1 (active region: " + regionName + ")");
     }
 
+    private void requireIamPolicyWriteEnabled(String policyName) {
+        boolean liveOrEndpoint = demo || endpoint != null || isLiveEnabled();
+        IamPolicies.checkMutationGuard(
+            true,
+            activeProfile(),
+            liveOrEndpoint,
+            "1".equals(System.getenv("LMAWS_ADMIN_GRANT")),
+            isApplyEnabled(),
+            policyName
+        );
+    }
+
+    public static boolean isLiveEnabled() {
+        if (Boolean.getBoolean("lmaws.dryRun")) return false;
+        return Boolean.getBoolean("lmaws.live") || "1".equals(System.getenv("LMAWS_LIVE"));
+    }
+
+    public static boolean isApplyEnabled() {
+        if (Boolean.getBoolean("lmaws.dryRun")) return false;
+        return Boolean.getBoolean("lmaws.apply") || "1".equals(System.getenv("LMAWS_APPLY"));
+    }
+
     public static String activeProfile() {
+        String prop = System.getProperty("lmaws.profile");
+        if (prop != null && !prop.isBlank()) return prop;
         String profile = System.getenv("AWS_PROFILE");
         if (profile == null || profile.isBlank()) profile = System.getenv("AWS_DEFAULT_PROFILE");
         return profile == null || profile.isBlank() ? "default" : profile;
+    }
+
+    public static String activeRegion() {
+        String prop = System.getProperty("lmaws.region");
+        if (prop != null && !prop.isBlank()) return prop;
+        return System.getenv().getOrDefault("AWS_REGION", System.getenv().getOrDefault("AWS_DEFAULT_REGION", ""));
+    }
+
+    public Map<String, String> iamPolicyLint(String documentJson) {
+        if (cost != null) cost.request("iam", "LintPolicyDocument");
+        IamPolicies.LintResult lint = IamPolicies.lint(documentJson);
+        System.out.println(lint.summaryLine());
+        return lint.toMap();
+    }
+
+    public Map<String, String> iamPolicyGet(String policyName) {
+        IamPolicies.requireValidPolicyName(policyName);
+        if (cost != null) cost.request("iam", "GetPolicy");
+        if (demo) {
+            DemoPolicyState state = demoPolicies.get(policyName);
+            if (state == null) {
+                return row(
+                    "kind", "iam_policy",
+                    "name", policyName,
+                    "arn", "arn:aws:iam::************:policy/" + policyName,
+                    "exists", "false",
+                    "default_version_id", "",
+                    "attachment_count", "0",
+                    "version_count", "0",
+                    "compact_length", "0",
+                    "document", "",
+                    "normalized_json", ""
+                );
+            }
+            DemoPolicyVersion def = state.defaultVersion();
+            IamPolicies.LintResult lint = IamPolicies.lint(def.document);
+            Map<String, String> m = new LinkedHashMap<>();
+            m.put("kind", "iam_policy");
+            m.put("name", policyName);
+            m.put("arn", "arn:aws:iam::************:policy/" + policyName);
+            m.put("exists", "true");
+            m.put("default_version_id", def.versionId);
+            m.put("attachment_count", String.valueOf(state.attachmentCount));
+            m.put("version_count", String.valueOf(state.versions.size()));
+            m.put("compact_length", String.valueOf(lint.compactLength()));
+            m.put("statement_count", String.valueOf(lint.statementCount()));
+            m.put("document", lint.prettyDocument());
+            m.put("normalized_json", lint.compactDocument());
+            return m;
+        }
+        String policyArn = resolvePolicyArn(policyName);
+        Policy policy = getPolicyIfPresent(policyArn);
+        if (policy == null) {
+            return row(
+                "kind", "iam_policy",
+                "name", policyName,
+                "arn", Jsons.mask(policyArn),
+                "exists", "false",
+                "default_version_id", "",
+                "attachment_count", "0",
+                "version_count", "0",
+                "compact_length", "0",
+                "document", "",
+                "normalized_json", ""
+            );
+        }
+        String defVer = policy.defaultVersionId();
+        GetPolicyVersionResponse verResp = iam().getPolicyVersion(r -> r.policyArn(policyArn).versionId(defVer));
+        String decoded = IamPolicies.decodeAwsDocument(verResp.policyVersion().document());
+        List<PolicyVersion> versions = iam().listPolicyVersions(r -> r.policyArn(policyArn)).versions();
+        IamPolicies.LintResult lint = IamPolicies.lint(decoded);
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("kind", "iam_policy");
+        m.put("name", policyName);
+        m.put("arn", Jsons.mask(policy.arn() == null ? policyArn : policy.arn()));
+        m.put("exists", "true");
+        m.put("default_version_id", defVer == null ? "" : defVer);
+        m.put("attachment_count", String.valueOf(policy.attachmentCount() == null ? 0 : policy.attachmentCount()));
+        m.put("version_count", String.valueOf(versions.size()));
+        m.put("compact_length", String.valueOf(lint.compactLength()));
+        m.put("statement_count", String.valueOf(lint.statementCount()));
+        m.put("document", lint.prettyDocument());
+        m.put("normalized_json", lint.compactDocument());
+        return m;
+    }
+
+    public List<Map<String, String>> iamPolicyVersions(String policyName) {
+        IamPolicies.requireValidPolicyName(policyName);
+        if (cost != null) cost.request("iam", "ListPolicyVersions");
+        if (demo) {
+            DemoPolicyState state = demoPolicies.get(policyName);
+            if (state == null) return List.of();
+            List<Map<String, String>> out = new ArrayList<>();
+            for (DemoPolicyVersion v : state.versions) {
+                out.add(row(
+                    "kind", "iam_policy_version",
+                    "name", policyName,
+                    "version_id", v.versionId,
+                    "is_default", String.valueOf(v.isDefault),
+                    "created", v.created
+                ));
+            }
+            return out;
+        }
+        String policyArn = resolvePolicyArn(policyName);
+        Policy policy = getPolicyIfPresent(policyArn);
+        if (policy == null) return List.of();
+        List<PolicyVersion> versions = iam().listPolicyVersions(r -> r.policyArn(policyArn)).versions();
+        List<Map<String, String>> out = new ArrayList<>();
+        for (PolicyVersion v : versions) {
+            out.add(row(
+                "kind", "iam_policy_version",
+                "name", policyName,
+                "version_id", v.versionId(),
+                "is_default", String.valueOf(Boolean.TRUE.equals(v.isDefaultVersion())),
+                "created", String.valueOf(v.createDate())
+            ));
+        }
+        return out;
+    }
+
+    public Map<String, String> iamPolicyPut(String policyName, String documentJson, boolean apply) {
+        IamPolicies.requireValidPolicyName(policyName);
+        IamPolicies.LintResult lint = IamPolicies.lint(documentJson);
+        System.out.println(lint.summaryLine());
+        lint.requireValid();
+        if (apply) {
+            requireIamPolicyWriteEnabled(policyName);
+        }
+        if (cost != null) cost.request("iam", apply ? "PutPolicy" : "DiffPolicy");
+
+        if (demo) {
+            DemoPolicyState state = demoPolicies.get(policyName);
+            String currentDoc = state == null ? "" : state.defaultVersion().document;
+            String currentVer = state == null ? "" : state.defaultVersion().versionId;
+            IamPolicies.DiffResult diff = IamPolicies.diff(currentDoc, lint.prettyDocument());
+            printDiff(policyName, diff);
+            String action = "dry_run";
+            String versionId = currentVer;
+            String deletedVersionId = "";
+            if (apply) {
+                if (state == null) {
+                    state = new DemoPolicyState(policyName, 0);
+                    state.versions.add(new DemoPolicyVersion("v1", true, "2026-01-01T00:00:00Z", lint.prettyDocument()));
+                    demoPolicies.put(policyName, state);
+                    action = "created";
+                    versionId = "v1";
+                } else {
+                    if (state.versions.size() >= IamPolicies.MAX_POLICY_VERSIONS) {
+                        DemoPolicyVersion oldest = state.oldestNonDefault();
+                        if (oldest != null) {
+                            state.versions.remove(oldest);
+                            deletedVersionId = oldest.versionId;
+                        }
+                    }
+                    for (DemoPolicyVersion v : state.versions) v.isDefault = false;
+                    String nextVer = "v" + (++state.nextVersionNum);
+                    state.versions.add(new DemoPolicyVersion(nextVer, true, Instant.now().toString(), lint.prettyDocument()));
+                    action = "updated";
+                    versionId = nextVer;
+                }
+            }
+            return buildPutRow(
+                policyName,
+                "arn:aws:iam::************:policy/" + policyName,
+                state != null,
+                apply,
+                action,
+                versionId,
+                deletedVersionId,
+                lint,
+                diff
+            );
+        }
+
+        String policyArn = resolvePolicyArn(policyName);
+        Policy existing = getPolicyIfPresent(policyArn);
+        String currentDoc = "";
+        String currentVer = "";
+        if (existing != null && existing.defaultVersionId() != null) {
+            currentVer = existing.defaultVersionId();
+            GetPolicyVersionResponse verResp = iam().getPolicyVersion(
+                r -> r.policyArn(policyArn).versionId(existing.defaultVersionId()));
+            currentDoc = IamPolicies.decodeAwsDocument(verResp.policyVersion().document());
+        }
+        IamPolicies.DiffResult diff = IamPolicies.diff(currentDoc, lint.prettyDocument());
+        printDiff(policyName, diff);
+
+        if (!apply) {
+            return buildPutRow(
+                policyName,
+                Jsons.mask(policyArn),
+                existing != null,
+                false,
+                "dry_run",
+                currentVer,
+                "",
+                lint,
+                diff
+            );
+        }
+
+        String deletedVersionId = "";
+        String newVersionId;
+        String action;
+        if (existing == null) {
+            var createResp = iam().createPolicy(r -> r
+                .policyName(policyName)
+                .policyDocument(lint.prettyDocument())
+                .description("Managed session policy for lmaws (" + policyName + ")"));
+            Policy created = createResp.policy();
+            newVersionId = created != null && created.defaultVersionId() != null ? created.defaultVersionId() : "v1";
+            action = "created";
+        } else {
+            List<PolicyVersion> versions = iam().listPolicyVersions(r -> r.policyArn(policyArn)).versions();
+            if (versions.size() >= IamPolicies.MAX_POLICY_VERSIONS) {
+                PolicyVersion oldestNonDefault = versions.stream()
+                    .filter(v -> !Boolean.TRUE.equals(v.isDefaultVersion()))
+                    .min(Comparator
+                        .comparing((PolicyVersion v) -> v.createDate() == null ? Instant.EPOCH : v.createDate())
+                        .thenComparingInt(v -> parseVersionNumber(v.versionId())))
+                    .orElseThrow(() -> new IllegalStateException("Cannot rotate 5 policy versions: no non-default version found"));
+                deletedVersionId = oldestNonDefault.versionId();
+                iam().deletePolicyVersion(r -> r.policyArn(policyArn).versionId(oldestNonDefault.versionId()));
+            }
+            CreatePolicyVersionResponse verResp = iam().createPolicyVersion(
+                r -> r.policyArn(policyArn).policyDocument(lint.prettyDocument()).setAsDefault(true));
+            newVersionId = verResp.policyVersion() != null ? verResp.policyVersion().versionId() : "";
+            action = "updated";
+        }
+        return buildPutRow(
+            policyName,
+            Jsons.mask(policyArn),
+            true,
+            true,
+            action,
+            newVersionId,
+            deletedVersionId,
+            lint,
+            diff
+        );
+    }
+
+    public Map<String, String> iamPolicyDelete(String policyName, boolean apply) {
+        IamPolicies.requireValidPolicyName(policyName);
+        if (apply) {
+            requireIamPolicyWriteEnabled(policyName);
+        }
+        if (cost != null) cost.request("iam", apply ? "DeletePolicy" : "CheckDeletePolicy");
+
+        if (demo) {
+            DemoPolicyState state = demoPolicies.get(policyName);
+            if (state == null) {
+                throw new IllegalStateException("IAM policy '" + policyName + "' does not exist");
+            }
+            if (state.attachmentCount > 0) {
+                throw new IllegalStateException(
+                    "Refusing to delete IAM policy '" + policyName + "' because it is attached to "
+                        + state.attachmentCount + " entity/entities");
+            }
+            List<String> nonDefault = state.versions.stream()
+                .filter(v -> !v.isDefault)
+                .map(v -> v.versionId)
+                .toList();
+            if (apply) {
+                demoPolicies.remove(policyName);
+            }
+            return row(
+                "kind", "iam_policy",
+                "name", policyName,
+                "arn", "arn:aws:iam::************:policy/" + policyName,
+                "applied", String.valueOf(apply),
+                "action", apply ? "deleted" : "dry_run",
+                "attachment_count", "0",
+                "deleted_versions", String.join(",", nonDefault)
+            );
+        }
+
+        String policyArn = resolvePolicyArn(policyName);
+        Policy existing = getPolicyIfPresent(policyArn);
+        if (existing == null) {
+            throw new IllegalStateException("IAM policy '" + policyName + "' does not exist");
+        }
+        int attachments = existing.attachmentCount() == null ? 0 : existing.attachmentCount();
+        if (attachments > 0) {
+            throw new IllegalStateException(
+                "Refusing to delete IAM policy '" + policyName + "' because it is attached to "
+                    + attachments + " entity/entities");
+        }
+        List<PolicyVersion> versions = iam().listPolicyVersions(r -> r.policyArn(policyArn)).versions();
+        List<String> nonDefaultIds = versions.stream()
+            .filter(v -> !Boolean.TRUE.equals(v.isDefaultVersion()))
+            .map(PolicyVersion::versionId)
+            .toList();
+        if (apply) {
+            for (String verId : nonDefaultIds) {
+                iam().deletePolicyVersion(r -> r.policyArn(policyArn).versionId(verId));
+            }
+            iam().deletePolicy(r -> r.policyArn(policyArn));
+        }
+        return row(
+            "kind", "iam_policy",
+            "name", policyName,
+            "arn", Jsons.mask(policyArn),
+            "applied", String.valueOf(apply),
+            "action", apply ? "deleted" : "dry_run",
+            "attachment_count", "0",
+            "deleted_versions", String.join(",", nonDefaultIds)
+        );
+    }
+
+    private Map<String, String> buildPutRow(
+            String policyName,
+            String maskedArn,
+            boolean exists,
+            boolean applied,
+            String action,
+            String versionId,
+            String deletedVersionId,
+            IamPolicies.LintResult lint,
+            IamPolicies.DiffResult diff) {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("kind", "iam_policy");
+        m.put("name", policyName);
+        m.put("arn", maskedArn);
+        m.put("exists", String.valueOf(exists));
+        m.put("applied", String.valueOf(applied));
+        m.put("action", action);
+        m.put("version_id", versionId == null ? "" : versionId);
+        m.put("deleted_version_id", deletedVersionId == null ? "" : deletedVersionId);
+        m.put("compact_length", String.valueOf(lint.compactLength()));
+        m.put("max_length", String.valueOf(IamPolicies.MANAGED_POLICY_LIMIT));
+        m.put("inline_limit", String.valueOf(IamPolicies.INLINE_SESSION_POLICY_LIMIT));
+        m.put("statement_count", String.valueOf(lint.statementCount()));
+        m.put("allow_read_statements", String.valueOf(lint.allowReadStatements()));
+        m.put("allow_scoped_statements", String.valueOf(lint.allowScopedStatements()));
+        m.put("deny_statements", String.valueOf(lint.denyStatements()));
+        m.put("lint_valid", String.valueOf(lint.valid()));
+        m.put("lint_summary", lint.summaryLine());
+        m.put("changed", String.valueOf(diff.changed()));
+        m.put("added_count", String.valueOf(diff.addedCount()));
+        m.put("modified_count", String.valueOf(diff.modifiedCount()));
+        m.put("removed_count", String.valueOf(diff.removedCount()));
+        m.put("unchanged_count", String.valueOf(diff.unchangedCount()));
+        m.put("diff_summary", diff.summary());
+        m.put("diff_lines", diff.formattedLines());
+        m.put("statement_diffs", Jsons.encode(diff.statementDiffs()));
+        m.put("normalized_json", lint.compactDocument());
+        m.put("document", lint.prettyDocument());
+        return m;
+    }
+
+    private static void printDiff(String policyName, IamPolicies.DiffResult diff) {
+        System.out.println("IAM policy diff (" + policyName + "): " + diff.summary());
+        for (String line : diff.lines()) {
+            System.out.println("  " + line);
+        }
+    }
+
+    private static int parseVersionNumber(String versionId) {
+        if (versionId == null) return Integer.MAX_VALUE;
+        String digits = versionId.startsWith("v") || versionId.startsWith("V") ? versionId.substring(1) : versionId;
+        try {
+            return Integer.parseInt(digits);
+        } catch (NumberFormatException ex) {
+            return Integer.MAX_VALUE;
+        }
+    }
+
+    private String resolvePolicyArn(String policyName) {
+        if (cachedAccountId == null) {
+            cachedAccountId = sts().getCallerIdentity(GetCallerIdentityRequest.builder().build()).account();
+        }
+        return "arn:aws:iam::" + cachedAccountId + ":policy/" + policyName;
+    }
+
+    private Policy getPolicyIfPresent(String policyArn) {
+        try {
+            GetPolicyResponse resp = iam().getPolicy(r -> r.policyArn(policyArn));
+            return resp.policy();
+        } catch (NoSuchEntityException ex) {
+            return null;
+        }
+    }
+
+    private static final class DemoPolicyVersion {
+        final String versionId;
+        boolean isDefault;
+        final String created;
+        final String document;
+
+        DemoPolicyVersion(String versionId, boolean isDefault, String created, String document) {
+            this.versionId = versionId;
+            this.isDefault = isDefault;
+            this.created = created;
+            this.document = document;
+        }
+    }
+
+    private static final class DemoPolicyState {
+        final String name;
+        int attachmentCount;
+        int nextVersionNum = 1;
+        final List<DemoPolicyVersion> versions = new ArrayList<>();
+
+        DemoPolicyState(String name, int attachmentCount) {
+            this.name = name;
+            this.attachmentCount = attachmentCount;
+        }
+
+        DemoPolicyVersion defaultVersion() {
+            for (DemoPolicyVersion v : versions) {
+                if (v.isDefault) return v;
+            }
+            return versions.get(versions.size() - 1);
+        }
+
+        DemoPolicyVersion oldestNonDefault() {
+            for (DemoPolicyVersion v : versions) {
+                if (!v.isDefault) return v;
+            }
+            return null;
+        }
     }
     private static boolean ciEnvironment() {
         String value = System.getenv("CI");
@@ -385,6 +847,23 @@ public final class AwsBackend implements AutoCloseable {
                 demoResources.put(id, r);
             }
         }
+        DemoPolicyState sessionPolicy = new DemoPolicyState("lmaws_session", 0);
+        sessionPolicy.versions.add(new DemoPolicyVersion(
+            "v1",
+            true,
+            "2026-01-01T00:00:00Z",
+            IamPolicies.lint(IamPolicies.sanitizedBaselinePolicyJson()).prettyDocument()
+        ));
+        demoPolicies.put("lmaws_session", sessionPolicy);
+
+        DemoPolicyState attachedPolicy = new DemoPolicyState("lmaws_attached_demo", 1);
+        attachedPolicy.versions.add(new DemoPolicyVersion(
+            "v1",
+            true,
+            "2026-01-01T00:00:00Z",
+            IamPolicies.lint(IamPolicies.sanitizedBaselinePolicyJson()).prettyDocument()
+        ));
+        demoPolicies.put("lmaws_attached_demo", attachedPolicy);
     }
     private static String inventoryKind(String inventory) {
         return switch(inventory) {

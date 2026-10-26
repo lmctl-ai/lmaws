@@ -4,7 +4,15 @@ import fake_ec2,http.server,json,os,pathlib,subprocess,sys,threading,tempfile,ur
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 class Fake(http.server.BaseHTTPRequestHandler):
-    requests=[]; created={}; ever=set(); deleted=set(); objects={}; lock=threading.Lock()
+    requests=[]; created={}; ever=set(); deleted=set(); objects={}; iam_policies={
+        "arn:aws:iam::000000000000:policy/lmaws_attached_test": {
+            "name": "lmaws_attached_test",
+            "arn": "arn:aws:iam::000000000000:policy/lmaws_attached_test",
+            "attachment_count": 1,
+            "next_ver": 2,
+            "versions": [{"id": "v1", "default": True, "created": "2026-01-01T00:00:00Z", "doc": '{"Version":"2012-10-17","Statement":[{"Sid":"Reads","Effect":"Allow","Action":"sts:GetCallerIdentity","Resource":"*"}]}'}]
+        }
+    }; lock=threading.Lock()
     def log_message(self,*a): pass
     def do_POST(self): self.handle_request()
     def do_GET(self): self.handle_request()
@@ -25,6 +33,8 @@ class Fake(http.server.BaseHTTPRequestHandler):
             self.ddb(op,body)
         elif action in ("CreateTopic","ListTopics","ListTags","ListTagsForResource","DeleteTopic","Publish"):
             self.sns(action,{**query,**form})
+        elif action in ("GetPolicy","GetPolicyVersion","ListPolicyVersions","CreatePolicy","CreatePolicyVersion","DeletePolicyVersion","DeletePolicy"):
+            self.iam_policy(action,{**query,**form})
         elif action=="GetCallerIdentity": self.xml("<GetCallerIdentityResponse><GetCallerIdentityResult><Account>000000000000</Account><Arn>arn:aws:iam::000000000000:user/fake</Arn><UserId>fake</UserId></GetCallerIdentityResult></GetCallerIdentityResponse>")
         elif urllib.parse.urlsplit(self.path).path.startswith("/lmaws-"): return self.s3(query,body)
         elif action=="GetBucketTagging" or "tagging" in query: self.send_bytes(200,"application/xml",b'<Tagging xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><TagSet><Tag><Key>lmaws_test</Key><Value>queue01</Value></Tag></TagSet></Tagging>')
@@ -115,6 +125,52 @@ class Fake(http.server.BaseHTTPRequestHandler):
         elif op=="DeleteTopic":self.created.pop(("topic",arn));self.xml("<DeleteTopicResponse/>")
         elif op=="Publish":self.xml("<PublishResponse><PublishResult><MessageId>fake</MessageId></PublishResult></PublishResponse>")
         else:self.xml("<Response/>")
+    def iam_policy(self,op,q):
+        arn=q.get("PolicyArn",[""])[0];name=q.get("PolicyName",[""])[0];ver_id=q.get("VersionId",[""])[0];doc=q.get("PolicyDocument",[""])[0]
+        if op=="GetPolicy":
+            pol=self.iam_policies.get(arn)
+            if not pol:return self.send(404,"text/xml","<ErrorResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"><Error><Type>Sender</Type><Code>NoSuchEntity</Code><Message>Policy not found</Message></Error></ErrorResponse>")
+            def_ver=next(v["id"] for v in pol["versions"] if v["default"])
+            return self.xml(f"<GetPolicyResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"><GetPolicyResult><Policy><PolicyName>{pol['name']}</PolicyName><Arn>{pol['arn']}</Arn><DefaultVersionId>{def_ver}</DefaultVersionId><AttachmentCount>{pol['attachment_count']}</AttachmentCount><CreateDate>2026-01-01T00:00:00Z</CreateDate><UpdateDate>2026-01-01T00:00:00Z</UpdateDate></Policy></GetPolicyResult></GetPolicyResponse>")
+        elif op=="GetPolicyVersion":
+            pol=self.iam_policies.get(arn)
+            ver=next((v for v in (pol["versions"] if pol else []) if v["id"]==ver_id),None)
+            if not ver:return self.send(404,"text/xml","<ErrorResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"><Error><Type>Sender</Type><Code>NoSuchEntity</Code><Message>Version not found</Message></Error></ErrorResponse>")
+            encoded=urllib.parse.quote(ver["doc"],safe="")
+            is_def="true" if ver["default"] else "false"
+            return self.xml(f"<GetPolicyVersionResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"><GetPolicyVersionResult><PolicyVersion><Document>{encoded}</Document><VersionId>{ver['id']}</VersionId><IsDefaultVersion>{is_def}</IsDefaultVersion><CreateDate>{ver['created']}</CreateDate></PolicyVersion></GetPolicyVersionResult></GetPolicyVersionResponse>")
+        elif op=="ListPolicyVersions":
+            pol=self.iam_policies.get(arn)
+            if not pol:return self.send(404,"text/xml","<ErrorResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"><Error><Type>Sender</Type><Code>NoSuchEntity</Code><Message>Policy not found</Message></Error></ErrorResponse>")
+            members="".join(f"<member><VersionId>{v['id']}</VersionId><IsDefaultVersion>{'true' if v['default'] else 'false'}</IsDefaultVersion><CreateDate>{v['created']}</CreateDate></member>" for v in pol["versions"])
+            return self.xml(f"<ListPolicyVersionsResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"><ListPolicyVersionsResult><Versions>{members}</Versions><IsTruncated>false</IsTruncated></ListPolicyVersionsResult></ListPolicyVersionsResponse>")
+        elif op=="CreatePolicy":
+            assert name.startswith("lmaws_"),name
+            arn=f"arn:aws:iam::000000000000:policy/{name}"
+            self.iam_policies[arn]={"name":name,"arn":arn,"attachment_count":0,"next_ver":2,"versions":[{"id":"v1","default":True,"created":"2026-01-01T00:00:01Z","doc":doc}]}
+            return self.xml(f"<CreatePolicyResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"><CreatePolicyResult><Policy><PolicyName>{name}</PolicyName><Arn>{arn}</Arn><DefaultVersionId>v1</DefaultVersionId><AttachmentCount>0</AttachmentCount></Policy></CreatePolicyResult></CreatePolicyResponse>")
+        elif op=="CreatePolicyVersion":
+            pol=self.iam_policies[arn]
+            assert len(pol["versions"])<5,"AWS IAM allows at most 5 policy versions"
+            set_def=q.get("SetAsDefault",["false"])[0].lower()=="true"
+            if set_def:
+                for v in pol["versions"]:v["default"]=False
+            vid=f"v{pol['next_ver']}";pol["next_ver"]+=1
+            created=f"2026-01-01T00:00:0{pol['next_ver']}Z"
+            pol["versions"].append({"id":vid,"default":set_def,"created":created,"doc":doc})
+            return self.xml(f"<CreatePolicyVersionResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"><CreatePolicyVersionResult><PolicyVersion><VersionId>{vid}</VersionId><IsDefaultVersion>{'true' if set_def else 'false'}</IsDefaultVersion><CreateDate>{created}</CreateDate></PolicyVersion></CreatePolicyVersionResult></CreatePolicyVersionResponse>")
+        elif op=="DeletePolicyVersion":
+            pol=self.iam_policies[arn]
+            ver=next(v for v in pol["versions"] if v["id"]==ver_id)
+            assert not ver["default"],"cannot delete default policy version"
+            pol["versions"]=[v for v in pol["versions"] if v["id"]!=ver_id]
+            return self.xml("<DeletePolicyVersionResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"/>")
+        elif op=="DeletePolicy":
+            pol=self.iam_policies[arn]
+            assert pol["attachment_count"]==0,"cannot delete attached policy"
+            assert len(pol["versions"])==1 and pol["versions"][0]["default"],"must delete non-default versions before DeletePolicy"
+            self.iam_policies.pop(arn)
+            return self.xml("<DeletePolicyResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"/>")
     def s3(self,query,body):
         parts=urllib.parse.unquote(urllib.parse.urlsplit(self.path).path).strip("/").split("/",1);bucket=parts[0];key=parts[1] if len(parts)>1 else None
         identity=("bucket",bucket)
@@ -194,12 +250,14 @@ def run(host):
         with tempfile.TemporaryDirectory(prefix="lmaws-fake-") as td:
             work=pathlib.Path(td);schema=work/"schema.json"
             schema.write_bytes(subprocess.check_output(host_prefix+["--dsl-schema"],env=env,timeout=30))
-            def execute(name,body,expected=0,extra=None):
+            def execute(name,body,expected=0,extra=None,extra_env=None,extra_flags=None):
                 src=work/(name+".lms");out=work/(name+".dslb")
                 src.write_text('p = _dsl_ schema='+json.dumps(str(schema))+';\n'+body+'\nend _dsl_\nsavedsl(p, '+json.dumps(str(out))+');\n')
                 compiled=subprocess.run([runner,str(src)],cwd=work,env=env,text=True,encoding="utf-8",capture_output=True,timeout=60)
                 assert compiled.returncode==0,compiled.stderr
-                result=subprocess.run(host_prefix+["--dsl",str(out)],cwd=work,env=dict(env,**(extra or {})),text=True,encoding="utf-8",capture_output=True,timeout=180)
+                run_env=dict(env,**(extra or {}),**(extra_env or {}))
+                flags=list(extra_flags or [])
+                result=subprocess.run(host_prefix+flags+["--dsl",str(out)],cwd=work,env=run_env,text=True,encoding="utf-8",capture_output=True,timeout=180)
                 assert result.returncode==expected,(name,result.returncode,result.stdout,result.stderr,Fake.requests[-8:])
                 assert "TOP_SECRET_SENTINEL" not in result.stdout+result.stderr,"AWS error message leaked"
                 return result
@@ -218,6 +276,62 @@ def run(host):
             assert not Fake.created,'exception teardown failed'
             execute('redaction','let cloud = aws.region("us-east-1"); let run = cloud.run("deny01", "lmaws-deny.jsonl"); let q = run.queue("error"); run.put(q, "message", "deny-fixture");',3)
             assert not Fake.created,'AWS error teardown failed'
+
+            # IAM managed-policy fake transport + 4-way profile/mutation guard + 5-version rotation + attached delete refusal
+            valid_doc=json.dumps({"Version":"2012-10-17","Statement":[{"Sid":"Reads","Effect":"Allow","Action":["sts:GetCallerIdentity","s3:ListAllMyBuckets"],"Resource":"*"},{"Sid":"Named","Effect":"Allow","Action":"s3:*","Resource":"arn:aws:s3:::lmaws-*"}]})
+            # 1) admin profile refused on regular resource mutation
+            admin_reg=execute('admin-regular-refused','let cloud = aws.region("us-east-1"); let run = cloud.run("adm01", "lmaws-adm.jsonl"); let q = run.queue("blocked");',3,extra_env={"AWS_PROFILE":"admin","LMAWS_ADMIN_GRANT":"1"})
+            assert "reserved exclusively for lmaws_ IAM policy grants" in admin_reg.stdout+admin_reg.stderr
+            # 2) lmaws profile refused on IAM policy write
+            lmaws_iam=execute('lmaws-iam-refused','let cloud = aws.region("us-east-1"); let r = cloud.iam_policy_put("lmaws_session", '+json.dumps(valid_doc)+', true);',3,extra_env={"AWS_PROFILE":"lmaws","LMAWS_ADMIN_GRANT":"1"},extra_flags=["--apply"])
+            assert "AWS_PROFILE=admin" in lmaws_iam.stdout+lmaws_iam.stderr
+            # 3) admin without LMAWS_ADMIN_GRANT=1 refused on IAM policy write
+            no_grant=execute('admin-no-grant','let cloud = aws.region("us-east-1"); let r = cloud.iam_policy_put("lmaws_session", '+json.dumps(valid_doc)+', true);',3,extra_env={"AWS_PROFILE":"admin","LMAWS_ADMIN_GRANT":"0"},extra_flags=["--apply"])
+            assert "LMAWS_ADMIN_GRANT=1" in no_grant.stdout+no_grant.stderr
+            # 4) admin without --apply refused on IAM policy write
+            no_apply=execute('admin-no-apply','let cloud = aws.region("us-east-1"); let r = cloud.iam_policy_put("lmaws_session", '+json.dumps(valid_doc)+', true);',3,extra_env={"AWS_PROFILE":"admin","LMAWS_ADMIN_GRANT":"1"})
+            assert "--apply" in no_apply.stdout+no_apply.stderr
+            # 5) Dry-run put makes zero IAM mutations, then apply creates v1, rotates across 6 puts (deleting oldest non-default v1 at 5-version cap), refuses deleting attached policy, and deletes unattached policy
+            iam_script='\n'.join([
+                'let cloud = aws.region("us-east-1");',
+                'let doc = ' + json.dumps(valid_doc) + ';',
+                'let lint = cloud.iam_policy_lint(doc);',
+                'check(lint.get("valid") == "true");',
+                'let absent = cloud.iam_policy_get("lmaws_session");',
+                'check(absent.get("exists") == "false");',
+                'let dry = cloud.iam_policy_put("lmaws_session", doc, false);',
+                'check(dry.get("applied") == "false");',
+                'check(dry.get("action") == "dry_run");',
+                'check(cloud.iam_policy_get("lmaws_session").get("exists") == "false");',
+                'let c1 = cloud.iam_policy_put("lmaws_session", doc, true);',
+                'check(c1.get("action") == "created");',
+                'check(c1.get("version_id") == "v1");',
+                'check(cloud.iam_policy_put("lmaws_session", doc, true).get("version_id") == "v2");',
+                'check(cloud.iam_policy_put("lmaws_session", doc, true).get("version_id") == "v3");',
+                'check(cloud.iam_policy_put("lmaws_session", doc, true).get("version_id") == "v4");',
+                'let c5 = cloud.iam_policy_put("lmaws_session", doc, true);',
+                'check(c5.get("version_id") == "v5");',
+                'check(c5.get("deleted_version_id") == "");',
+                'let c6 = cloud.iam_policy_put("lmaws_session", doc, true);',
+                'check(c6.get("version_id") == "v6");',
+                'check(c6.get("deleted_version_id") == "v1");',
+                'let vers = cloud.iam_policy_versions("lmaws_session");',
+                'check(vers.len() == 5);',
+                'check(vers.at(0).get("version_id") == "v2");',
+                'check(vers.at(4).get("version_id") == "v6");',
+                'check(vers.at(4).get("is_default") == "true");',
+                'let got = cloud.iam_policy_get("lmaws_session");',
+                'check(got.get("exists") == "true");',
+                'check(got.get("default_version_id") == "v6");',
+                'check(got.get("arn") == "arn:aws:iam::************:policy/lmaws_session");',
+                'let del = cloud.iam_policy_delete("lmaws_session", true);',
+                'check(del.get("action") == "deleted");',
+                'check(del.get("deleted_versions") == "v2,v3,v4,v5");',
+                'check(cloud.iam_policy_get("lmaws_session").get("exists") == "false");',
+            ])
+            execute('iam-lifecycle',iam_script,0,extra_env={"AWS_PROFILE":"admin","LMAWS_ADMIN_GRANT":"1"},extra_flags=["--apply"])
+            attached_del=execute('iam-delete-attached-refused','let cloud = aws.region("us-east-1"); cloud.iam_policy_delete("lmaws_attached_test", true);',3,extra_env={"AWS_PROFILE":"admin","LMAWS_ADMIN_GRANT":"1"},extra_flags=["--apply"])
+            assert "attached to 1 entity/entities" in attached_del.stdout+attached_del.stderr
             assert Fake.ever=={'queue','bucket','topic','parameter','table','log_group'},Fake.ever
             ec2_proof=fake_ec2.tests(execute,env)
             assert all(request[5].startswith('127.0.0.1:') for request in Fake.requests),'non-loopback HTTP host'

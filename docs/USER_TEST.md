@@ -1,4 +1,4 @@
-# Local AWS profile test procedure (v0.1.5)
+# Local AWS profile test procedure (v0.1.6)
 
 READY FOR USER TEST. All 26 live native/lmcloud pairs completed using lmcloud
 v0.1.10 and AWS provider 5.100.0: eight comparisons match and 18 retain explicit
@@ -204,3 +204,24 @@ active after termination and the session policy does not allow `ec2:CancelSpotIn
 the recipe reports `denied by the session policy` and exits nonzero; rerun teardown later with
 `cloud.spot_recover("<run id>")` (needs the local spot ledger). Never use these recipes against
 instances that do not carry this run's `lmaws_test` tag; the host refuses them.
+
+## IAM managed-policy workflow (`lmaws_session`, v0.1.6)
+
+Inline STS session policies are capped at 2,048 characters, whereas customer-managed IAM policies
+support up to 6,144 compact characters. `lmaws` includes a typed, linted customer-managed policy API
+(`iam_policy_lint`, `iam_policy_get`, `iam_policy_versions`, `iam_policy_put`, `iam_policy_delete`)
+restricted to policy names matching `^lmaws_[a-z0-9_-]{1,64}$`.
+
+- **Offline lint** of any local policy JSON file (`$0.00`, no AWS calls):
+  ```sh
+  lmctl recipes/policy_lint.lms --policy-file ~/.aws/session-tools/tasks/iam-snapshots/lmaws-managed-policy.json
+  ```
+- **Dry-run diff** against the current default version of `lmaws_session` (default mode without `--apply`):
+  ```sh
+  AWS_PROFILE=admin lmctl recipes/grant_session_policy.lms --live --profile admin --policy-name lmaws_session --policy-file ~/.aws/session-tools/tasks/iam-snapshots/lmaws-managed-policy.json
+  ```
+- **Apply a managed policy grant** (`admin` is permitted ONLY for `lmaws_` IAM policy writes when `LMAWS_ADMIN_GRANT=1`, `--apply`, and `--live` are all set; `admin` is refused for every other mutating call, and `lmaws`/`lmaws-ec2` are refused for IAM policy writes):
+  ```sh
+  AWS_PROFILE=admin LMAWS_ADMIN_GRANT=1 lmctl recipes/grant_session_policy.lms --live --apply --profile admin --policy-name lmaws_session --policy-file ~/.aws/session-tools/tasks/iam-snapshots/lmaws-managed-policy.json
+  ```
+  `lmaws_session` (`v2`, 4,839 compact characters, 20 statements, 0 lint findings) has been applied live and verified byte-for-byte via `iam_policy_get` and `iam_policy_versions`.

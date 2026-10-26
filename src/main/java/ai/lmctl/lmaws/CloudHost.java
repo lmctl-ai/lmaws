@@ -45,8 +45,8 @@ public final class CloudHost implements AutoCloseable {
     }
     private Session example(String name) {
         if(!name.matches("[a-z][a-z0-9_]{0,63}"))throw VmException.host("invalid example name");
-        boolean live="1".equals(System.getenv("LMAWS_LIVE"));
-        String region=System.getenv().getOrDefault("AWS_REGION",System.getenv().getOrDefault("AWS_DEFAULT_REGION",""));
+        boolean live=AwsBackend.isLiveEnabled();
+        String region=AwsBackend.activeRegion();
         return open(region,!live,name,true);
     }
     private Session session(Value value) {return (Session)value.asObject();}
@@ -96,6 +96,14 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","demo",List.of(),"Cloud",(c,s,a)->Value.object("Cloud",open("us-east-1",true)));
         r.method("Cloud","region",List.of("string"),"Cloud",(c,s,a)->Value.object("Cloud",open(text(a[0]),false)));
         for(String inventory:INVENTORIES) r.method("Cloud",inventory,List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.inventory(inventory),c)));
+        r.method("Cloud","iam_policy_lint",List.of("string"),"Row",(c,s,a)->{
+            Map<String,String> out=(s.asObject() instanceof Session sess)?sess.backend.iamPolicyLint(text(a[0])):IamPolicies.lint(text(a[0])).toMap();
+            return rowValue(c,out);
+        });
+        r.method("Cloud","iam_policy_get",List.of("string"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamPolicyGet(text(a[0]))));
+        r.method("Cloud","iam_policy_versions",List.of("string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.iamPolicyVersions(text(a[0])),c)));
+        r.method("Cloud","iam_policy_put",List.of("string","string","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamPolicyPut(text(a[0]),text(a[1]),a[2].asBool())));
+        r.method("Cloud","iam_policy_delete",List.of("string","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamPolicyDelete(text(a[0]),a[1].asBool())));
         r.method("Cloud","run",List.of("string","string"),"Run",(c,s,a)->{Sandbox run=new Sandbox(session(s).backend,text(a[0]),Path.of(text(a[1])),session(s).cost);runs.add(run);return Value.object("Run",run);});
         registerCompute(r);
         r.method("Rows","len",List.of(),"int",(c,s,a)->Value.ofInt(((Rows)s.asObject()).rows.size()));
@@ -156,6 +164,12 @@ public final class CloudHost implements AutoCloseable {
         catch(java.nio.charset.CharacterCodingException e){throw VmException.host("AWS host strings must contain valid UTF-8");}
     }
     @SuppressWarnings("unchecked") private static Map<String,String> row(Value value) {return (Map<String,String>)value.asObject();}
+    private static Value rowValue(Context c,Map<String,String> source) {
+        long size=128;
+        for(var field:source.entrySet()) size=Math.addExact(size,128L+2L*(field.getKey().length()+field.getValue().length()));
+        c.charge(size);
+        return Value.object("Row",Collections.unmodifiableMap(new LinkedHashMap<>(source)));
+    }
     public Context context(long budget) {Context c=new Context();c.memoryLimitBytes=budget;c.setObject("aws","Cloud",new Object());return c;}
     @Override public synchronized void close() {
         if(closed)return;

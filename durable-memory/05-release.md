@@ -1,8 +1,12 @@
 # Releases and remaining work
 
-Published versions: v0.1.0, v0.1.1, v0.1.2 and **v0.1.3**. The latest tag is
-`40f7fe2ffd7eaca5426d8dc66894ff1c92e9729d`.
-[Release proof](release-v013.json) records all five native asset digests and
+Published versions: v0.1.0, v0.1.1, v0.1.2, v0.1.3, v0.1.4, v0.1.5 and **v0.1.6**.
+v0.1.5 added EC2 compute recipes and the `lmaws-ec2` spot nano lifecycle; v0.1.6
+adds customer-managed `lmaws_` IAM policy management (`iam_policy_lint`,
+`iam_policy_get`, `iam_policy_versions`, `iam_policy_put`, `iam_policy_delete`)
+and the `policy_lint` and `grant_session_policy` recipes, and live-applied the
+`lmaws_session` managed policy (`v2`, 4,839 compact characters, 0 lint findings).
+[Release proof](release-v013.json) records the v0.1.3 five native asset digests and
 verified SHA256SUMS. [Fresh-cache proof](autorun-v013.json) records all six scoped
 lifecycle examples run offline from empty directories with the released v0.1.3
 binary; no native live writes were repeated. The earlier

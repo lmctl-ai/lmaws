@@ -22,7 +22,7 @@ class RecipeExecutionTests(unittest.TestCase):
         if not LMSCRIPT:
             self.skipTest("lmscript is not installed")
         self.env = dict(os.environ)
-        self.env["PATH"] = str(ROOT / "target") + os.pathsep + str(ROOT / "build") + os.pathsep + self.env.get("PATH", "")
+        self.env["PATH"] = str(ROOT / "target") + os.pathsep + str(ROOT / "target" / "jvm-bin") + os.pathsep + str(ROOT / "build") + os.pathsep + self.env.get("PATH", "")
         self.env.update(CI="true", LMAWS_LIVE="0", AWS_EC2_METADATA_DISABLED="true")
         for key in ("AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION"):
             self.env.pop(key, None)
@@ -59,7 +59,7 @@ class RecipeExecutionTests(unittest.TestCase):
             entry = self.work / "imports.lms"
             entry.write_text(
                 f'import "{base}/common.lms"; import "{base}/inventory.lms"; '
-                f'import "{base}/lifecycle.lms"; import "{base}/prefix.lms"; import "{base}/audits.lms"; import "{base}/spend.lms";\n',
+                f'import "{base}/lifecycle.lms"; import "{base}/prefix.lms"; import "{base}/audits.lms"; import "{base}/spend.lms"; import "{base}/iam_policy.lms";\n',
                 encoding="utf-8",
             )
             result = self.run_script(entry)
@@ -154,6 +154,40 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertIn("whole-run cap exceeded",result.stdout,result.stdout+result.stderr)
         self.assertTrue(first.exists())
         self.assertFalse(second.exists())
+
+    def test_policy_lint_and_grant_session_policy_synthetic_and_guards(self) -> None:
+        lint_out = self.work / "policy_lint"
+        lint_res = self.run_script(ROOT / "recipes" / "policy_lint.lms", "--output", str(lint_out))
+        self.assertEqual(lint_res.returncode, 0, lint_res.stdout + lint_res.stderr)
+        lint_report = json.loads(lint_out.with_suffix(".json").read_text(encoding="utf-8"))
+        self.assertTrue(lint_report["valid"])
+        self.assertEqual(lint_report["statement_count"], 8)
+        self.assertIn("estimated cost: $0.00", lint_res.stdout)
+
+        grant_out = self.work / "grant_policy"
+        grant_res = self.run_script(ROOT / "recipes" / "grant_session_policy.lms", "--output", str(grant_out))
+        self.assertEqual(grant_res.returncode, 0, grant_res.stdout + grant_res.stderr)
+        grant_report = json.loads(grant_out.with_suffix(".json").read_text(encoding="utf-8"))
+        self.assertFalse(grant_report["applied"])
+        self.assertEqual(grant_report["action"], "dry_run")
+        self.assertEqual(grant_report["added_count"], 5)
+        self.assertEqual(grant_report["modified_count"], 1)
+        self.assertIn("IAM policy diff (lmaws_session):", grant_res.stdout)
+
+        # Applying with lmaws profile or without LMAWS_ADMIN_GRANT=1 is refused before any host call
+        refused_lmaws = self.run_script(
+            ROOT / "recipes" / "grant_session_policy.lms",
+            "--live", "--apply", "--profile", "lmaws", "--output", str(self.work / "refused_lmaws")
+        )
+        self.assertNotEqual(refused_lmaws.returncode, 0)
+        self.assertFalse((self.work / "refused_lmaws.json").exists())
+
+        refused_no_grant = self.run_script(
+            ROOT / "recipes" / "grant_session_policy.lms",
+            "--live", "--apply", "--profile", "admin", "--output", str(self.work / "refused_no_grant")
+        )
+        self.assertNotEqual(refused_no_grant.returncode, 0)
+        self.assertFalse((self.work / "refused_no_grant.json").exists())
 
 
 

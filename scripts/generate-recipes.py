@@ -19,6 +19,8 @@ for name,function,category,what in [('idle_instances','recipe_idle','Idle and wa
 
 for name,what in [('spend_detail','Review account spend detail and optimization signals'),('ec2_spend','Break down EC2 compute spend and current resource signals'),('savings_plans','Review Savings Plans and Reserved Instance utilization and coverage'),('eip_audit','Review idle public IPv4 allocations and estimated run-rate'),('ebs_audit','Review EBS attachments and snapshot retention signals'),('bandwidth','Break down billed transfer categories and network counters'),('lambda_spend','Review Lambda usage and spend signals'),('dynamodb_spend','Review DynamoDB usage and spend signals')]:
  ITEMS.append(dict(name=name,category='Cost and spend',task=name,library='spend',function='recipe_spend',what=what,access='Read-only',cost='Synthetic actual $0.00; live CE $0.01/request plus metrics; default/hard cap $0.25'))
+ITEMS.append(dict(name='policy_lint',category='Identity and access posture',task='policy_lint',library='iam_policy',function='recipe_policy_lint',what='Validate and lint an IAM managed policy JSON document offline against lmaws guardrails',access='Read-only',cost='$0.00 offline lint'))
+ITEMS.append(dict(name='grant_session_policy',category='Identity and access posture',task='grant_session_policy',library='iam_policy',function='recipe_grant_session_policy',what='Preview statement-level diff or grant the lmaws_session customer-managed IAM policy',access='Write with the admin profile',cost='$0.00 IAM metadata; live apply requires AWS_PROFILE=admin and LMAWS_ADMIN_GRANT=1'))
 
 COMPUTE_ARGS='--region us-east-1 --profile default --output data/NAME [--live]'
 for name,what,access,cost,args,run in [
@@ -50,7 +52,9 @@ def generate(check=False):
   args='--task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/'+name+' [--live]'
   if item['library']=='spend':args='--period 30 --top 10 --region us-east-1 --profile default --cap 0.25 [--live] [--output PRIVATE_DIR]'
   if item['library']=='prefix':args+=' --ledger-dir .lmaws-local/recipes/ledgers --older-hours 0'
-  if item['access'].startswith('Write'):args=args.replace('--profile default','--profile lmaws')+' [--apply]'
+  if item['access']=='Write with the lmaws profile':args=args.replace('--profile default','--profile lmaws')+' [--apply]'
+  if name=='policy_lint':args='--file POLICY.json --top 20 --output data/policy_lint'
+  if name=='grant_session_policy':args='--policy lmaws_session --file POLICY.json --profile admin --top 20 --output data/grant_session_policy [--live] [--apply]'
   if 'args' in item:args=item['args']
   when={'Identity and access posture':'Before a posture review; IAM-dependent recipes remain synthetic for federated profiles','Inventory':'Before a change or when reviewing current service coverage','Cost and spend':'When investigating a billing period or prioritizing savings opportunities','Idle and waste detection':'When triaging stopped resources; confirm age and usage before action','Tag and naming compliance':'Before enforcing tag or naming policies; review unknown metadata','Leftover search and cleanup by prefix':'After a test run or shutdown to review names and local ledger records','Safe lifecycle sandboxes':'Before a service integration, validate a disposable create/cleanup path','Compute and fleet':'When reviewing a small EC2 fleet without SSH or the aws CLI, or proving a disposable spot lifecycle'}[item['category']]
   header='\n'.join('# '+k+': '+v for k,v in [('Access',item['access']),('What',item['what']),('When',when),('Run',('lmctl recipes/'+name+'.lms '+item['run']).strip() if 'run' in item else 'lmctl recipes/'+name+'.lms '+('--task queue ' if name=='lifecycle' else '')+'--top 10'),('Preview','lmctl recipes/'+name+'.lms --preview'),('Arguments',args),('Typical-cost',item['cost']),('Category',item['category']),('Library',lib),('Function',item['function']),('Example',example)])

@@ -118,9 +118,11 @@ println("matched rows:",len(report.rows));
 
 | File | What it does | Access | Arguments | Typical cost |
 |---|---|---|---|---|
+| [`grant_session_policy.lms`](recipes/grant_session_policy.lms) | Preview statement-level diff or grant the lmaws_session customer-managed IAM policy | Write with the admin profile | --policy lmaws_session --file POLICY.json --profile admin --top 20 --output data/grant_session_policy [--live] [--apply] | $0.00 IAM metadata; live apply requires AWS_PROFILE=admin and LMAWS_ADMIN_GRANT=1 |
 | [`inventory_identity.lms`](recipes/inventory_identity.lms) | Inspect bounded identity metadata (synthetic only; federated IAM cases skipped live) | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_identity [--live] | $0.00 synthetic; live capped request estimate in ledger |
 | [`inventory_roles.lms`](recipes/inventory_roles.lms) | Inspect bounded roles metadata (synthetic only; federated IAM cases skipped live) | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_roles [--live] | $0.00 synthetic; live capped request estimate in ledger |
 | [`inventory_security_groups.lms`](recipes/inventory_security_groups.lms) | Inspect bounded security groups metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_security_groups [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`policy_lint.lms`](recipes/policy_lint.lms) | Validate and lint an IAM managed policy JSON document offline against lmaws guardrails | Read-only | --file POLICY.json --top 20 --output data/policy_lint | $0.00 offline lint |
 
 ### Inventory
 
@@ -203,6 +205,15 @@ println("matched rows:",len(report.rows));
 
 Each recipe points at an offline synthetic example so its output can be previewed safely.
 
+#### grant_session_policy
+
+![Preview statement-level diff or grant the lmaws_session customer-managed IAM policy](docs/images/recipe_grant_session_policy.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_grant_session_policy.lms`
+
+Example: [`examples/recipe_grant_session_policy.lms`](examples/recipe_grant_session_policy.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/iam_policy.lms`; function `recipe_grant_session_policy`.
+
 #### inventory_identity
 
 ![Inspect bounded identity metadata (synthetic only; federated IAM cases skipped live)](docs/images/recipe_inventory_identity.png)
@@ -229,6 +240,15 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 Example: [`examples/recipe_inventory_security_groups.lms`](examples/recipe_inventory_security_groups.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/inventory.lms`; function `recipe_inventory`.
+
+#### policy_lint
+
+![Validate and lint an IAM managed policy JSON document offline against lmaws guardrails](docs/images/recipe_policy_lint.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_lint.lms`
+
+Example: [`examples/recipe_policy_lint.lms`](examples/recipe_policy_lint.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/iam_policy.lms`; function `recipe_policy_lint`.
 
 #### inventory
 
@@ -632,6 +652,10 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 | `cloud.spot_run()` then `spot.security_group(vpc)`, `launch(type,ami,subnet,sg,maxPrice)` | One run-owned t4g.nano/t3.nano one-time spot sandbox, tagged `lmaws_test` at creation, no public IPv4 |
 | `spot.wait_state(id,state,s)`, `wait_status_ok(id,s)`, `stop/start/terminate(id)` | Bounded waits; actions only on this run's tagged instances |
 | `spot.teardown()`, `verify()`, `leftovers()`, `estimated_cost()`, `cloud.spot_recover(runId)` | Teardown (also on every failure), provider proof, account leftover search, cost |
+| `cloud.iam_policy_lint(documentJson)` | Offline validator/linter (`<= 6144` compact chars, `"Version": "2012-10-17"`, scoped `Allow` rules, forbidden action/wildcard checks) |
+| `cloud.iam_policy_get(policyName)`, `cloud.iam_policy_versions(policyName)` | Read customer-managed `lmaws_` policy metadata, default document and versions |
+| `cloud.iam_policy_put(policyName, documentJson, apply)` | Statement-level diff by default; create or update default version (rotating oldest non-default at 5 versions) when `AWS_PROFILE=admin`, `LMAWS_ADMIN_GRANT=1`, `--apply` and `LMAWS_LIVE=1` |
+| `cloud.iam_policy_delete(policyName, apply)` | Delete unattached `lmaws_` policy and its non-default versions under the same `admin` + `LMAWS_ADMIN_GRANT=1` + `--apply` guard |
 
 ```lmscript
 mkdir("data");
@@ -650,7 +674,7 @@ assert(r.code == 0);
 
 For `run.put`, `key` is the S3 object key or DynamoDB `pk`; queue/topic/parameter writes use `value` as the message or parameter value, and log groups accept `key="retention_days"`.
 
-Writes are limited to those six resource kinds plus, from v0.1.5, one run-owned spot nano sandbox (instance, its root volume and network interface, one security group) under `AWS_PROFILE=lmaws-ec2`. Other compute, networking, IAM, ECS, Lambda, DNS and Secrets Manager calls are metadata-only.
+Writes are limited to those six resource kinds, one run-owned spot nano sandbox (instance, its root volume and network interface, one security group) under `AWS_PROFILE=lmaws-ec2`, and customer-managed `lmaws_` IAM session policies under `AWS_PROFILE=admin` with `LMAWS_ADMIN_GRANT=1` and `--apply`. Other compute, networking, IAM, ECS, Lambda, DNS and Secrets Manager calls are metadata-only.
 
 ## Cost per example
 
@@ -658,7 +682,7 @@ Every example prints a final `estimated cost: $...` line. The original metadata/
 
 Each ledger refuses the next creation above the example cap of $0.05 or the whole-run hard ceiling of $0.25. Evidence is stored as `evidence/live-cost-<example>-<run-id>.json`; successful entries include the price table, requests, resources and leftover count. Nineteen read-only examples retain measured $0.00 evidence. The seven write/lifecycle examples are run once with `AWS_PROFILE=lmaws`; each successful lifecycle has a measured price-table estimate and is independently verified absent with the read-only `default` profile. The four IAM-dependent examples are intentionally skipped and labelled **estimated, not measured live**.
 
-Profiles: `default` is READ-ONLY; **only `AWS_PROFILE=lmaws` (service sandboxes) or `lmaws-ec2` (the spot nano sandbox) may mutate**, in `us-east-1`. The host rejects real create/update/delete calls under any other active profile. No OIDC, IAM edits, credential/profile edits or alternate identity are used. The federated session policy at `~/.aws/session-tools/tasks/iam-snapshots/local-lmaws-session.json` is re-issued by `~/.aws/session-tools/scripts/aws-profile-session.py`; its combined plaintext inline/managed policy is limited to 2,048 characters and scopes resources to `lmaws_` / `lmaws-` names plus `lmaws_test` tags. Do not put account IDs or policy contents in this public repository.
+Profiles: `default` is READ-ONLY; **only `AWS_PROFILE=lmaws` (service sandboxes) or `lmaws-ec2` (the spot nano sandbox) may mutate resources**, in `us-east-1`. The only exception is updating a customer-managed `lmaws_` IAM policy (`recipes/grant_session_policy.lms` via `iam_policy_put` / `iam_policy_delete`), which requires `AWS_PROFILE=admin` **and** `LMAWS_ADMIN_GRANT=1` **and** `--apply` (`LMAWS_APPLY=1`) **and** `LMAWS_LIVE=1`; the `admin` profile is refused for every other mutating call, and `lmaws`/`lmaws-ec2` are refused for IAM policy writes. Inline STS session policies are capped at 2,048 characters, whereas customer-managed IAM policies support up to 6,144 compact characters (`lmaws_session` is 4,839 compact characters). Every `iam_policy_put` lints the JSON document before writing (`<= 6144` compact chars, `"Version": "2012-10-17"`, every `Allow` statement either read/inventory or scoped by `lmaws-*`/`lmaws_*` resource name, `lmaws_test` tag, or condition; refuses `iam:*`, `sts:AssumeRole*`, `organizations:*`, `account:*`, `kms:*`, `secretsmanager:*`, bare `'*'`, or `'Resource': '*'` with a write action). Do not put account IDs or real policy files in this public repository.
 
 The v0.1.3 native campaign added six successful lifecycle runs and independent
 default-profile absence checks: measured estimates total $0.00001272500021 for

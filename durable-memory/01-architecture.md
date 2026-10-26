@@ -32,6 +32,10 @@ restarts with a heap cap of approximately 75% when needed. Budgets below 16 MiB
 fail execution. This bounds VM/Java heap allocation, not process RSS or OS memory;
 the host does not set rlimits. Native and JVM error paths are tested.
 
-The read-only Spend API adds nine own signatures (52 own /124 including std):
+The read-only Spend API adds nine own signatures:
 CE costs/resources, SP/RI commitments, regional inventories, Pricing and batched
-CloudWatch metrics. See [spend reports](09-spend-reports.md).
+CloudWatch metrics. See [spend reports](09-spend-reports.md). From v0.1.5, EC2
+compute inventory/spot sandbox methods (`Ec2Compute`) add 18 own signatures; from
+v0.1.6, customer-managed `lmaws_` IAM policy management (`IamPolicies`) adds five
+own signatures (`iam_policy_lint`, `iam_policy_get`, `iam_policy_versions`,
+`iam_policy_put`, `iam_policy_delete`) for a total of 75 own / 147 total signatures.

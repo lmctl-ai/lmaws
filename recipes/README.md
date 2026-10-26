@@ -53,9 +53,11 @@ println("matched rows:",len(report.rows));
 
 | File | What it does | Access | Arguments | Typical cost |
 |---|---|---|---|---|
+| [`grant_session_policy.lms`](grant_session_policy.lms) | Preview statement-level diff or grant the lmaws_session customer-managed IAM policy | Write with the admin profile | --policy lmaws_session --file POLICY.json --profile admin --top 20 --output data/grant_session_policy [--live] [--apply] | $0.00 IAM metadata; live apply requires AWS_PROFILE=admin and LMAWS_ADMIN_GRANT=1 |
 | [`inventory_identity.lms`](inventory_identity.lms) | Inspect bounded identity metadata (synthetic only; federated IAM cases skipped live) | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_identity [--live] | $0.00 synthetic; live capped request estimate in ledger |
 | [`inventory_roles.lms`](inventory_roles.lms) | Inspect bounded roles metadata (synthetic only; federated IAM cases skipped live) | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_roles [--live] | $0.00 synthetic; live capped request estimate in ledger |
 | [`inventory_security_groups.lms`](inventory_security_groups.lms) | Inspect bounded security groups metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_security_groups [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`policy_lint.lms`](policy_lint.lms) | Validate and lint an IAM managed policy JSON document offline against lmaws guardrails | Read-only | --file POLICY.json --top 20 --output data/policy_lint | $0.00 offline lint |
 
 ## Inventory
 
@@ -138,6 +140,15 @@ println("matched rows:",len(report.rows));
 
 Each recipe points at an offline synthetic example so its output can be previewed safely.
 
+### grant_session_policy
+
+![Preview statement-level diff or grant the lmaws_session customer-managed IAM policy](../docs/images/recipe_grant_session_policy.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_grant_session_policy.lms`
+
+Example: [`examples/recipe_grant_session_policy.lms`](../examples/recipe_grant_session_policy.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/iam_policy.lms`; function `recipe_grant_session_policy`.
+
 ### inventory_identity
 
 ![Inspect bounded identity metadata (synthetic only; federated IAM cases skipped live)](../docs/images/recipe_inventory_identity.png)
@@ -164,6 +175,15 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 Example: [`examples/recipe_inventory_security_groups.lms`](../examples/recipe_inventory_security_groups.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/inventory.lms`; function `recipe_inventory`.
+
+### policy_lint
+
+![Validate and lint an IAM managed policy JSON document offline against lmaws guardrails](../docs/images/recipe_policy_lint.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_lint.lms`
+
+Example: [`examples/recipe_policy_lint.lms`](../examples/recipe_policy_lint.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/iam_policy.lms`; function `recipe_policy_lint`.
 
 ### inventory
 
