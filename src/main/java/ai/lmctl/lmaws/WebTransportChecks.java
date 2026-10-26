@@ -148,6 +148,25 @@ public final class WebTransportChecks {
                     () -> seen.put("accepted", true)));
             if (!Boolean.TRUE.equals(seen.get("accepted")))
                 throw new AssertionError("DNS state callback did not run before INSYNC timeout");
+
+            // Scenario 11 shifts the same run-scoped pair repeatedly. Each
+            // call must emit two UPSERT records and preserve the callback
+            // ordering used by durable state recovery.
+            seen.remove("foreignWeighted");
+            web.weightedSet("zone", "lmaws-weighted-" + RUN + "." + DOMAIN,
+                    "d1234567890.cloudfront.net", "192.0.2.20", 90, 10, false,
+                    () -> seen.put("weightedAccepted", true));
+            assertWeighted(seen, 90, 10, ChangeAction.UPSERT);
+            web.weightedSet("zone", "lmaws-weighted-" + RUN + "." + DOMAIN,
+                    "d1234567890.cloudfront.net", "192.0.2.20", 50, 50, false, null);
+            assertWeighted(seen, 50, 50, ChangeAction.UPSERT);
+            web.weightedSet("zone", "lmaws-weighted-" + RUN + "." + DOMAIN,
+                    "d1234567890.cloudfront.net", "192.0.2.20", 0, 100, true, null);
+            assertWeighted(seen, 0, 100, ChangeAction.DELETE);
+            if (!Boolean.TRUE.equals(seen.get("weightedAccepted"))) throw new AssertionError("weighted callback missing");
+            seen.put("foreignWeighted", true);
+            expect(() -> web.weightedSet("zone", "lmaws-weighted-" + RUN + "." + DOMAIN,
+                    "d1234567890.cloudfront.net", "192.0.2.20", 90, 10, false, null));
         } finally {
             // Proxy clients have no resources and close() is deliberately a no-op.
         }
@@ -156,6 +175,17 @@ public final class WebTransportChecks {
     private static void expect(Runnable action) {
         try { action.run(); } catch (RuntimeException expected) { return; }
         throw new AssertionError("unsafe web request was accepted");
+    }
+
+    private static void assertWeighted(Map<String,Object> seen,long staticWeight,long dynamicWeight,ChangeAction action) {
+        if (!(seen.get("changeResourceRecordSets") instanceof ChangeResourceRecordSetsRequest req)
+                || req.changeBatch().changes().size()!=2
+                || req.changeBatch().changes().stream().anyMatch(c -> c.action()!=action))
+            throw new AssertionError("weighted Route 53 request missing expected actions");
+        var a=req.changeBatch().changes().get(0).resourceRecordSet();
+        var b=req.changeBatch().changes().get(1).resourceRecordSet();
+        if(a.weight()!=staticWeight||b.weight()!=dynamicWeight||!a.setIdentifier().startsWith("static-")||!b.setIdentifier().startsWith("dynamic-"))
+            throw new AssertionError("weighted Route 53 request has wrong weights or identifiers");
     }
 
     @SuppressWarnings("unchecked")
@@ -177,6 +207,8 @@ public final class WebTransportChecks {
                     var b = GetChangeRequest.builder(); ((java.util.function.Consumer<GetChangeRequest.Builder>) consumer).accept(b); seen.put(name, b.build());
                 } else if (type == Route53Client.class && name.equals("getHostedZone")) {
                     var b = GetHostedZoneRequest.builder(); ((java.util.function.Consumer<GetHostedZoneRequest.Builder>) consumer).accept(b); seen.put(name, b.build());
+                } else if (type == Route53Client.class && name.equals("listResourceRecordSets")) {
+                    var b = ListResourceRecordSetsRequest.builder(); ((java.util.function.Consumer<ListResourceRecordSetsRequest.Builder>) consumer).accept(b); seen.put(name, b.build());
                 } else if (type == S3Client.class && name.equals("putBucketPolicy")) {
                     var b = PutBucketPolicyRequest.builder(); ((java.util.function.Consumer<PutBucketPolicyRequest.Builder>) consumer).accept(b); seen.put(name, b.build());
                 } else if (type == CloudFrontClient.class && name.equals("updateDistribution")) {
@@ -211,6 +243,11 @@ public final class WebTransportChecks {
             }
             if (type == Route53Client.class && name.equals("getHostedZone"))
                 return GetHostedZoneResponse.builder().hostedZone(HostedZone.builder().id("/hostedzone/ZTEST").name(DOMAIN + ".").build()).build();
+            if (type == Route53Client.class && name.equals("listResourceRecordSets")) {
+                if (Boolean.TRUE.equals(seen.get("foreignWeighted")))
+                    return ListResourceRecordSetsResponse.builder().resourceRecordSets(ResourceRecordSet.builder().name("lmaws-weighted-" + RUN + "." + DOMAIN + ".").type(RRType.A).setIdentifier("foreign").resourceRecords(ResourceRecord.builder().value("192.0.2.50").build()).build()).build();
+                return ListResourceRecordSetsResponse.builder().resourceRecordSets(List.of()).build();
+            }
             if (type == S3Client.class && name.equals("getBucketTagging")) {
                 if (Boolean.TRUE.equals(seen.get("allowBucket")))
                     return GetBucketTaggingResponse.builder().tagSet(software.amazon.awssdk.services.s3.model.Tag.builder().key("lmaws_test").value(RUN).build()).build();

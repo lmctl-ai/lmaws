@@ -50,10 +50,10 @@ public final class WebStackAws implements AutoCloseable {
         String name=fqdn.endsWith(".")?fqdn:fqdn+".";
         // A run may shift only the two records it created. Refuse adoption of any
         // other record at this exact name before issuing an UPSERT.
-        for(var page:route53.listResourceRecordSetsPaginator(x->x.hostedZoneId(zone).startRecordName(name).startRecordType(RRType.A)))
-            for(var existing:page.resourceRecordSets())
-                if(stripDot(existing.name()).equals(stripDot(fqdn)) && !("static-"+runId).equals(existing.setIdentifier()) && !("dynamic-"+runId).equals(existing.setIdentifier()))
-                    throw new SecurityException("weighted DNS name already contains a foreign record");
+        var existingPage=route53.listResourceRecordSets(x->x.hostedZoneId(zone).startRecordName(name).startRecordType(RRType.A).maxItems("100"));
+        for(var existing:existingPage.resourceRecordSets())
+            if(stripDot(existing.name()).equals(stripDot(fqdn)) && !("static-"+runId).equals(existing.setIdentifier()) && !("dynamic-"+runId).equals(existing.setIdentifier()))
+                throw new SecurityException("weighted DNS name already contains a foreign record");
         ResourceRecordSet alias=ResourceRecordSet.builder().name(name).type(RRType.A).setIdentifier("static-"+runId).weight(staticWeight).aliasTarget(AliasTarget.builder().dnsName(staticTarget).hostedZoneId("Z2FDTNDATAQYW2").evaluateTargetHealth(false).build()).build();
         ResourceRecordSet ip=ResourceRecordSet.builder().name(name).type(RRType.A).setIdentifier("dynamic-"+runId).weight(dynamicWeight).ttl(30L).resourceRecords(software.amazon.awssdk.services.route53.model.ResourceRecord.builder().value(dynamicIp).build()).build();
         ChangeAction action=delete?ChangeAction.DELETE:ChangeAction.UPSERT;

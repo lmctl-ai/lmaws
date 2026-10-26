@@ -63,7 +63,9 @@ final class WebRun implements AutoCloseable {
         Object parsed=Json.parse(json);if(!(parsed instanceof Map<?,?> raw))throw new IllegalArgumentException("web step arguments must be an object");
         Map<String,Object> args=(Map<String,Object>)raw;
         if("down".equals(state.get("status")))throw new IllegalStateException("run is torn down; choose a new run id");
-        if(!Set.of("record_http","reserve_http").contains(op)&&"done".equals(state.get("step_"+op)))return summary();
+        // Weighted records are intentionally repeatable: each call may shift
+        // the split (90/10 -> 50/50 -> 0/100) within the same run.
+        if(!Set.of("record_http","reserve_http","dns_weighted").contains(op)&&"done".equals(state.get("step_"+op)))return summary();
         if(estimate().add(Set.of("record_http","reserve_http").contains(op)?java.math.BigDecimal.ZERO:new java.math.BigDecimal(state.getOrDefault("http_reserved","0"))).compareTo(new java.math.BigDecimal(state.getOrDefault("cost_cap","0.10")))>=0)throw new CostLedger.BudgetExceeded("web run cost cap reached before step");
         state.put("intent",op);persist();long start=System.nanoTime();
         try{if(backend.isDemo()) demoStep(op,args);else liveStep(op,args);}
