@@ -41,7 +41,7 @@ final class LedgerCleanup {
                 FileLock lock=channel.tryLock()) {
                 if(lock==null)throw new IllegalStateException("ledger is busy");
                 // Re-read the proof after taking the lock; stale plans never authorize a delete.
-                Owned current=proofs(proof.ledger).get(key(proof.kind,proof.id));
+                Owned current=proofs(proof.ledger,channel).get(key(proof.kind,proof.id));
                 if(current==null||!current.equals(proof))throw new IllegalStateException("ledger proof changed after planning");
                 if(!proof.name.startsWith(prefix)||!backend.owned(proof.kind,proof.id,proof.run))throw new IllegalStateException("provider ownership changed after planning");
                 append(channel,proof,"recovery_delete_intent","active");
@@ -115,8 +115,25 @@ final class LedgerCleanup {
         rejectLinks(path);
         try {
             if(!Files.isRegularFile(path,LinkOption.NOFOLLOW_LINKS)||Files.size(path)>1024*1024)throw new IllegalStateException("ledger is not a bounded regular file");
+            return parseProofs(path,Files.readAllLines(path));
+        }catch(java.io.IOException e){throw new IllegalStateException("cannot read run ledger",e);}
+    }
+    /** Windows locks exclude other handles even in this JVM; retain the original lock. */
+    static Map<String,Owned> proofs(Path path,FileChannel channel) {
+        rejectLinks(path);
+        try {
+            long size=channel.size();
+            if(!Files.isRegularFile(path,LinkOption.NOFOLLOW_LINKS)||size>1024*1024)throw new IllegalStateException("ledger is not a bounded regular file");
+            var bytes=java.nio.ByteBuffer.allocate(Math.toIntExact(size));channel.position(0);
+            while(bytes.hasRemaining())if(channel.read(bytes)<0)throw new java.io.IOException("ledger changed while reading");
+            if(channel.size()!=size)throw new IllegalStateException("ledger changed while reading");
+            bytes.flip();
+            return parseProofs(path,StandardCharsets.UTF_8.newDecoder().decode(bytes).toString().lines().toList());
+        }catch(java.io.IOException e){throw new IllegalStateException("cannot read locked run ledger",e);}
+    }
+    private static Map<String,Owned> parseProofs(Path path,List<String> lines) {
             Map<String,Owned> result=new LinkedHashMap<>();Set<String> intents=new HashSet<>();
-            for(String line:Files.readAllLines(path)) {
+            for(String line:lines) {
                 if(line.isBlank())continue;
                 Map<String,Object> row=Json.object(Json.parse(line));
                 String event=text(row,"event");if(event.startsWith("cost_"))continue;
@@ -132,7 +149,6 @@ final class LedgerCleanup {
                 if(event.equals("deleted")||event.equals("not_created"))result.remove(key(kind,id));
             }
             return result;
-        }catch(java.io.IOException e){throw new IllegalStateException("cannot read run ledger",e);}
     }
     private static String text(Map<String,Object> row,String name){Object value=row.get(name);return value instanceof String s?s:"";}
     private static Instant parseTime(String value){try{return value==null||value.isBlank()?null:Instant.parse(value);}catch(RuntimeException e){return null;}}

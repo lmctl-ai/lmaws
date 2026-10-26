@@ -12,6 +12,9 @@ final class LedgerCleanupChecks {
     static void run() {
         try {
             Path dir=Files.createTempDirectory("lmaws-recovery-proof-").toRealPath();String run="rproof",name="lmaws_rproof_queue";Instant now=Instant.now(),old=now.minus(Duration.ofHours(72));Path file=ledger(dir,run,name,old);
+            try(var locked=java.nio.channels.FileChannel.open(file,StandardOpenOption.READ,StandardOpenOption.WRITE);var held=locked.lock()) {
+                check(LedgerCleanup.proofs(file,locked).size()==1,"exclusive owner reads proof through its locked channel");
+            }
             Map<String,String> row=new LinkedHashMap<>(Map.of("kind","queue","name",name,"id",name,"created_at",old.toString(),"lmaws_test","true","run_id",run));
             var candidate=LedgerCleanup.plan(List.of(row),dir,"lmaws",24,now);check(candidate.size()==1&&candidate.get(0).row().get("eligible_for_delete").equals("true"),"valid proof was not eligible");
             // A link at the ledger directory or file is refused; trusted ancestors (macOS /var) are not checked.
