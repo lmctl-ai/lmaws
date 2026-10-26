@@ -70,7 +70,9 @@ fn recipe_run(program, options) {
   mkdir(dirname(o.output),true);
   let bytecode=temp_file();savedsl(program,bytecode);
   let command=dsl_cli(program);
-  let settings={AWS_PROFILE:o.profile,AWS_DEFAULT_PROFILE:o.profile,AWS_REGION:o.region,AWS_DEFAULT_REGION:o.region,LMAWS_LIVE:o.live ? "1":"0",LMAWS_APPLY:o.apply ? "1":"0",LMAWS_SPEND_LIVE:o.live ? "1":"0",LMAWS_MAX_COST_USD:str(o.cap),LMAWS_LEDGER_DIR:o.ledger_dir,LMAWS_EVIDENCE_DIR:".lmaws-local/recipes/evidence"};
+  let ledger_dir=o.ledger_dir;let evidence_dir=".lmaws-local/recipes/evidence";
+  if(!o.live) {let scratch=temp_file();ledger_dir=dirname(scratch)+"/lmaws-synthetic/ledgers";evidence_dir=dirname(scratch)+"/lmaws-synthetic/evidence";remove_file(scratch);}
+  let settings={AWS_PROFILE:o.profile,AWS_DEFAULT_PROFILE:o.profile,AWS_REGION:o.region,AWS_DEFAULT_REGION:o.region,LMAWS_LIVE:o.live ? "1":"0",LMAWS_APPLY:o.apply ? "1":"0",LMAWS_SPEND_LIVE:o.live ? "1":"0",LMAWS_MAX_COST_USD:str(o.cap),LMAWS_LEDGER_DIR:ledger_dir,LMAWS_EVIDENCE_DIR:evidence_dir};
   let previous={};
   for(key in keys(settings)) {previous[key]=getenv(key,"");set_env(key,settings[key]);}
   let cli_args=o.apply ? ["--apply","--dsl",bytecode] : ["--dsl",bytecode];
