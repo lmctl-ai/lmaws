@@ -24,6 +24,7 @@ public final class Sandbox implements AutoCloseable {
     private final String runId;
     private final Path ledger;
     private final CostLedger cost;
+    private final RunLease lease;
     private final Map<String, Entry> resources = new LinkedHashMap<>();
     private boolean closed;
 
@@ -41,6 +42,7 @@ public final class Sandbox implements AutoCloseable {
         if (cost == null) this.ledger = openLedger(requested, runId);
         else if (requested.toAbsolutePath().normalize().equals(cost.path().toAbsolutePath().normalize())) this.ledger = cost.path();
         else { this.ledger = openLedger(requested, runId); cost.link(this.ledger); }
+        this.lease=RunLease.owner(this.ledger);
     }
 
     public synchronized Map<String, String> create(String kind, String name, String value) {
@@ -115,7 +117,7 @@ public final class Sandbox implements AutoCloseable {
         } finally { try { scope.close(); } catch (Exception ignored) {} }
     }
 
-    @Override public synchronized void close() { cleanup(); closed = true; }
+    @Override public synchronized void close() { try{cleanup();}finally{closed=true;lease.close();} }
 
     /** Returns old pending/active ledger records; this method never deletes anything. */
     public static List<Map<String, String>> leftovers(Path directory, long olderHours) {

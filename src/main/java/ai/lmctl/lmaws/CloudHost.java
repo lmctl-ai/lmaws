@@ -54,6 +54,10 @@ public final class CloudHost implements AutoCloseable {
         Registry r=new Registry();r.context("aws","Cloud");
         r.function("check",List.of("bool"),"void",(c,s,a)->{if(!a[0].asBool())throw VmException.host("check failed");return Value.none();});
         r.method("Cloud","example",List.of("string"),"Cloud",(c,s,a)->Value.object("Cloud",example(text(a[0]))));
+        r.method("Cloud","find_prefix",List.of("string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.findPrefix(text(a[0])),c)));
+        r.method("Cloud","resource_exists",List.of("string","string"),"bool",(c,s,a)->Value.ofBool(ResourceLookup.exists(session(s).backend,text(a[0]),text(a[1]))));
+        r.method("Cloud","leftovers",List.of("string","int"),"Rows",(c,s,a)->{var v=session(s);return Value.object("Rows",new Rows(LedgerCleanup.execute(v.backend,v.cost.path().toAbsolutePath().getParent(),text(a[0]),a[1].asInt(),false),c));});
+        r.method("Cloud","cleanup_prefix",List.of("string","int","bool"),"Rows",(c,s,a)->{var v=session(s);return Value.object("Rows",new Rows(LedgerCleanup.execute(v.backend,v.cost.path().toAbsolutePath().getParent(),text(a[0]),a[1].asInt(),a[2].asBool()),c));});
         r.method("Cloud","sweep",List.of("int"),"Rows",(c,s,a)->Value.object("Rows",new Rows(Sandbox.leftovers(session(s).cost.path().toAbsolutePath().getParent(),a[0].asInt()),c)));
         r.method("Cloud","is_demo",List.of(),"bool",(c,s,a)->Value.ofBool(session(s).backend.isDemo()));
         r.method("Cloud","example_run",List.of(),"Run",(c,s,a)->{Session v=session(s);Sandbox run=new Sandbox(v.backend,v.cost.runId(),v.cost.path(),v.cost);runs.add(run);return Value.object("Run",run);});

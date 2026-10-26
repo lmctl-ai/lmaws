@@ -35,16 +35,23 @@ import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
 import software.amazon.awssdk.services.cloudwatch.model.DescribeAlarmsRequest;
 import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
 import software.amazon.awssdk.services.cloudwatchlogs.model.DescribeLogGroupsRequest;
+import software.amazon.awssdk.services.cloudwatchlogs.model.LogGroup;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.ListTablesRequest;
 import software.amazon.awssdk.services.ec2.Ec2Client;
 import software.amazon.awssdk.services.ec2.model.DescribeInstancesRequest;
 import software.amazon.awssdk.services.ec2.model.DescribeSecurityGroupsRequest;
+import software.amazon.awssdk.services.ec2.model.DescribeTagsRequest;
+import software.amazon.awssdk.services.ec2.model.Filter;
 import software.amazon.awssdk.services.ec2.model.DescribeVpcsRequest;
 import software.amazon.awssdk.services.ec2.model.IpPermission;
 import software.amazon.awssdk.services.ecs.EcsClient;
 import software.amazon.awssdk.services.ecs.model.ListClustersRequest;
+import software.amazon.awssdk.services.ecs.model.DescribeClustersRequest;
+import software.amazon.awssdk.services.ecs.model.ClusterField;
+import software.amazon.awssdk.services.cloudformation.CloudFormationClient;
+import software.amazon.awssdk.services.cloudformation.model.DescribeStacksRequest;
 import software.amazon.awssdk.services.iam.IamClient;
 import software.amazon.awssdk.services.iam.model.CreatePolicyVersionResponse;
 import software.amazon.awssdk.services.iam.model.GetPolicyResponse;
@@ -96,13 +103,15 @@ public final class AwsBackend implements AutoCloseable {
     private static final Pattern KIND = Pattern.compile("[a-z_]+");
     private static final List<String> KINDS = List.of("identity", "buckets", "instances", "vpcs", "security_groups",
             "tables", "queues", "topics", "functions", "log_groups", "alarms", "zones", "secrets", "parameters",
-            "clusters", "roles");
+            "clusters", "stacks", "roles");
     private final String regionName;
+    private final String profileName;
     private final Region region;
     private final boolean demo;
     private final URI endpoint;
     private final CostLedger cost;
     private final Map<String, Map<String, String>> demoResources = new LinkedHashMap<>();
+    private final Map<String,S3Client> regionalBuckets=new LinkedHashMap<>();
     private final Map<String, java.util.Set<String>> bucketObjects = new LinkedHashMap<>();
     private final Map<String, DemoPolicyState> demoPolicies = new LinkedHashMap<>();
     private final List<AutoCloseable> clients = new ArrayList<>();
@@ -111,13 +120,16 @@ public final class AwsBackend implements AutoCloseable {
 
     private S3Client s3; private SqsClient sqs; private SnsClient sns; private SsmClient ssm; private DynamoDbClient ddb;
     private CloudWatchLogsClient logs; private CloudWatchClient cloudwatch; private Ec2Client ec2; private LambdaClient lambda;
-    private Route53Client route53; private SecretsManagerClient secrets; private EcsClient ecs; private IamClient iam; private StsClient sts;
+    private Route53Client route53; private SecretsManagerClient secrets; private EcsClient ecs; private IamClient iam; private StsClient sts; private CloudFormationClient cloudformation;
 
     public AwsBackend(String region, boolean demo) {
         this(region, demo, null);
     }
 
-    public AwsBackend(String region, boolean demo, CostLedger cost) {
+    public AwsBackend(String region, boolean demo, CostLedger cost) { this(region,demo,cost,activeProfile()); }
+
+    private AwsBackend(String region,boolean demo,CostLedger cost,String profileName) {
+        this.profileName=profileName;
         String selected = region == null || region.isBlank()
                 ? (demo ? "us-east-1" : Objects.requireNonNull(DefaultAwsRegionProviderChain.builder().build().getRegion(), "AWS region is not configured").id())
                 : region;
@@ -199,6 +211,262 @@ public final class AwsBackend implements AutoCloseable {
             case "roles" -> bounded(pages(iam().listRolesPaginator()).flatMap(p -> p.roles().stream()).map(r -> row("kind", "role", "id", r.arn(), "name", r.roleName(), "created", String.valueOf(r.createDate()))).limit(10001).toList());
             default -> throw new IllegalArgumentException("unsupported inventory kind: " + k);
         };
+    }
+
+    /** Read-only native prefix filters plus bounded client-side matching and exact tag metadata. */
+    public List<Map<String, String>> findPrefix(String prefix) {
+        requireText(prefix, "prefix");
+        if (prefix.length() > 128) throw new IllegalArgumentException("prefix is too long");
+        List<Map<String, String>> result = new ArrayList<>();
+        for (String kind : KINDS) {
+            // IAM is intentionally not queried by federated sessions.  Other
+            // inventories are read-only and may be used by the default profile.
+            if ("identity".equals(kind) || "roles".equals(kind)) continue;
+            List<Map<String, String>> rows = switch (kind) {
+                case "queues" -> demo ? inventory(kind) : prefixQueues(prefix);
+                case "log_groups" -> demo ? inventory(kind) : prefixLogGroups(prefix);
+                case "parameters" -> demo ? inventory(kind) : prefixParameters(prefix);
+                case "instances" -> demo ? inventory(kind) : prefixEc2Tags(prefix);
+                case "vpcs", "security_groups" -> demo ? inventory(kind) : List.of();
+                case "clusters" -> demo ? inventory(kind) : prefixEcsClusters(prefix);
+                case "stacks" -> demo ? List.of() : prefixStacks(prefix);
+                case "buckets" -> demo ? inventory(kind) : prefixBuckets(prefix);
+                case "topics" -> demo ? inventory(kind) : prefixTopics(prefix);
+                case "functions" -> demo ? inventory(kind) : prefixFunctions(prefix);
+                case "tables" -> demo ? inventory(kind) : prefixTables(prefix);
+                default -> inventory(kind);
+            };
+            if(demo) {
+                rows=new ArrayList<>(rows);
+                if(kind.equals("queues"))checkedSearchAdd(rows,row("kind","queue","id","lmaws_demo_queue","name","lmaws_demo_queue","region",regionName,"created","2026-10-20T00:00:00Z","run_id","demo","tags","{\"lmaws_test\":\"demo\"}"));
+                if(kind.equals("buckets"))checkedSearchAdd(rows,row("kind","bucket","id","lmaws-demo-bucket","name","lmaws-demo-bucket","region",regionName,"created","2026-10-20T00:00:00Z","run_id","demo","tags","{\"lmaws_test\":\"demo\"}"));
+                if(kind.equals("topics"))checkedSearchAdd(rows,row("kind","topic","id","lmawsOther","name","lmawsOther","region",regionName,"created","2026-10-20T00:00:00Z","tags","{}"));
+            }
+            for (Map<String, String> source : rows) {
+                String name = source.getOrDefault("name", "");
+                if (!name.startsWith(prefix)) continue;
+                Map<String, String> row = new LinkedHashMap<>();
+                row.put("service", serviceFor(kind));
+                row.put("resource_type", source.getOrDefault("kind", kind));
+                row.put("kind", source.getOrDefault("kind", kind));
+                row.put("name", name);
+                row.put("id", source.getOrDefault("id", name));
+                row.put("arn", source.getOrDefault("arn",source.getOrDefault("id","").startsWith("arn:")?source.get("id"):""));
+                row.put("region", source.getOrDefault("region", regionName));
+                row.put("created_at", source.getOrDefault("created", source.getOrDefault("created_at", "")));
+                row.put("modified_at",source.getOrDefault("modified_at",""));
+                row.put("age_basis",row.get("created_at").isBlank()?(row.get("modified_at").isBlank()?"unknown":"last_modified"):"created");
+                row.put("age_hours", ageHours(row.get("created_at").isBlank()?row.get("modified_at"):row.get("created_at")));
+                String tagJson=source.getOrDefault("tags","{}");
+                boolean knownTags=source.containsKey("tags") || !source.getOrDefault("run_id","").isBlank();
+                boolean hasTestTag=io.lmctl.lmcode.Json.object(io.lmctl.lmcode.Json.parse(tagJson)).containsKey("lmaws_test");
+                String tagged=Boolean.toString(hasTestTag || !source.getOrDefault("run_id","").isBlank());
+                row.put("tags_status",knownTags?"known":"unknown");
+                row.put("tags", source.getOrDefault("tags", "{}"));
+                row.put("lmaws_test", tagged);
+                row.put("run_id", source.getOrDefault("run_id", ""));
+                row.put("status", "ok");
+                row.put("match_field",source.getOrDefault("match_field","name"));
+                row.put("provider_state",source.getOrDefault("status",""));
+                checkedSearchAdd(result,row);
+                if (result.size() > 10000) throw new IllegalStateException("prefix search exceeds 10000 rows");
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private List<Map<String, String>> prefixQueues(String prefix) {
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (var page : prefixPages(sqs().listQueuesPaginator(ListQueuesRequest.builder().queueNamePrefix(prefix).build()))) {
+            for (String url : page.queueUrls()) {
+                String name = last(url);
+                if (!name.startsWith(prefix)) continue;
+                Map<String, String> tags = sqs().listQueueTags(x -> x.queueUrl(url)).tags();
+                var attrs=sqs().getQueueAttributes(x->x.queueUrl(url).attributeNames(software.amazon.awssdk.services.sqs.model.QueueAttributeName.CREATED_TIMESTAMP,software.amazon.awssdk.services.sqs.model.QueueAttributeName.QUEUE_ARN)).attributesAsStrings();
+                checkedSearchAdd(rows,row("kind", "queue", "id", url, "name", name, "region", regionName,"created",attrs.containsKey("CreatedTimestamp")?Instant.ofEpochSecond(Long.parseLong(attrs.get("CreatedTimestamp"))).toString():"","arn",attrs.getOrDefault("QueueArn",""),
+                        "tagged", Boolean.toString(tags.containsKey("lmaws_test")),
+                        "tags", safeSearchTags(tags), "run_id", tags.getOrDefault("lmaws_test", "")));
+            }
+        }
+        return bounded(rows);
+    }
+
+    private List<Map<String, String>> prefixLogGroups(String prefix) {
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (var page : prefixPages(logs().describeLogGroupsPaginator(DescribeLogGroupsRequest.builder().logGroupNamePrefix(prefix).build()))) {
+            for (LogGroup group : page.logGroups()) {
+                String name = group.logGroupName();
+                if (name == null || !name.startsWith(prefix)) continue;
+                Map<String, String> tags = logs().listTagsLogGroup(x -> x.logGroupName(name)).tags();
+                checkedSearchAdd(rows,row("kind", "log_group", "id", name, "name", name, "region", regionName,
+                        "created", group.creationTime() == null ? "" : Instant.ofEpochMilli(group.creationTime()).toString(),
+                        "tagged", Boolean.toString(tags.containsKey("lmaws_test")),
+                        "tags", safeSearchTags(tags), "run_id", tags.getOrDefault("lmaws_test", "")));
+            }
+        }
+        return bounded(rows);
+    }
+
+    private List<Map<String, String>> prefixParameters(String prefix) {
+        List<Map<String, String>> rows = new ArrayList<>();
+        var filter = software.amazon.awssdk.services.ssm.model.ParameterStringFilter.builder()
+                .key("Name").option("BeginsWith").values(prefix).build();
+        for (var page : prefixPages(ssm().describeParametersPaginator(DescribeParametersRequest.builder().parameterFilters(filter).build()))) {
+            for (var parameter : page.parameters()) {
+                String name = parameter.name();
+                if (name == null || !name.startsWith(prefix)) continue;
+                Map<String, String> tags = new LinkedHashMap<>();
+                try { for (var tag : ssm().listTagsForResource(x -> x.resourceType("Parameter").resourceId(name)).tagList()) tags.put(tag.key(), tag.value()); }
+                catch (RuntimeException e) { throw new IllegalStateException("prefix search could not read SSM tags", e); }
+                checkedSearchAdd(rows,row("kind", "parameter", "id", name, "name", name, "region", regionName,
+                        "modified_at", parameter.lastModifiedDate() == null ? "" : parameter.lastModifiedDate().toString(),
+                        "tagged", Boolean.toString(tags.containsKey("lmaws_test")),
+                        "tags", safeSearchTags(tags), "run_id", tags.getOrDefault("lmaws_test", "")));
+            }
+        }
+        return bounded(rows);
+    }
+
+    private List<Map<String,String>> prefixEc2Tags(String prefix) {
+        Map<String,Map<String,String>> matched=new LinkedHashMap<>();
+        var request=DescribeTagsRequest.builder().filters(Filter.builder().name("value").values(prefix+"*").build()).build();
+        for(var page:prefixPages(ec2().describeTagsPaginator(request)))for(var tag:page.tags()) {
+            if(!"Name".equals(tag.key())||tag.value()==null||!tag.value().startsWith(prefix)||matched.containsKey(tag.resourceId()))continue;
+            Map<String,String> tags=new LinkedHashMap<>();
+            var all=DescribeTagsRequest.builder().filters(Filter.builder().name("resource-id").values(tag.resourceId()).build()).build();
+            for(var tagPage:prefixPages(ec2().describeTagsPaginator(all)))for(var item:tagPage.tags())tags.put(item.key(),item.value());
+            String name=tags.getOrDefault("Name",tag.value());if(!name.startsWith(prefix))name=tag.value();
+            String type=tag.resourceTypeAsString()==null?"ec2_resource":tag.resourceTypeAsString().replace('-','_');
+            matched.put(tag.resourceId(),row("kind",type,"id",tag.resourceId(),"name",name,"region",regionName,"tags",safeSearchTags(tags),"run_id",tags.getOrDefault("lmaws_test",""),"match_field",tags.getOrDefault("Name","").equals(name)?"tag:Name":"tag:"+tag.key()));
+            if(matched.size()>10000)throw new IllegalStateException("prefix search exceeds 10000 EC2 resources");
+        }
+        var groups=DescribeSecurityGroupsRequest.builder().filters(Filter.builder().name("group-name").values(prefix+"*").build()).build();
+        for(var page:prefixPages(ec2().describeSecurityGroupsPaginator(groups)))for(var group:page.securityGroups()) {
+            if(group.groupName()==null||!group.groupName().startsWith(prefix))continue;
+            Map<String,String> tags=new LinkedHashMap<>();for(var tag:group.tags())tags.put(tag.key(),tag.value());
+            matched.putIfAbsent(group.groupId(),row("kind","security_group","id",group.groupId(),"name",group.groupName(),"region",regionName,"tags",safeSearchTags(tags),"run_id",tags.getOrDefault("lmaws_test",""),"match_field","group_name"));
+            if(matched.size()>10000)throw new IllegalStateException("prefix search exceeds 10000 EC2 resources");
+        }
+        return List.copyOf(matched.values());
+    }
+
+    private List<Map<String, String>> prefixEcsClusters(String prefix) {
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (var page : prefixPages(ecs().listClustersPaginator(ListClustersRequest.builder().build()))) {
+            for (String arn : page.clusterArns()) {
+                if(!last(arn).startsWith(prefix))continue;
+                var described = ecs().describeClusters(DescribeClustersRequest.builder().clusters(arn).include(ClusterField.TAGS).build());
+                if(!described.failures().isEmpty())throw new IllegalStateException("ECS cluster metadata unavailable; search incomplete");
+                for (var cluster : described.clusters()) {
+                    String name = cluster.clusterName();
+                    Map<String, String> tags = new LinkedHashMap<>();
+                    for (var tag : cluster.tags()) tags.put(tag.key(), tag.value());
+                    boolean match = name != null && name.startsWith(prefix);
+                    for (var tag : cluster.tags()) match |= tag.value() != null && tag.value().startsWith(prefix);
+                    if (!match) continue;
+                    checkedSearchAdd(rows,row("kind", "cluster", "id", cluster.clusterArn(), "name", name,
+                            "region", regionName, "tagged", Boolean.toString(tags.containsKey("lmaws_test")),
+                            "tags", safeSearchTags(tags), "run_id", tags.getOrDefault("lmaws_test", "")));
+                }
+            }
+        }
+        return bounded(rows);
+    }
+
+    private List<Map<String, String>> prefixBuckets(String prefix) {
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (var page : prefixPages(s3().listBucketsPaginator())) for (var bucket : page.buckets()) {
+            if (bucket.name() == null || !bucket.name().startsWith(prefix)) continue;
+            String bucketRegion=bucket.bucketRegion();
+            if(bucketRegion==null||bucketRegion.isBlank()){String found=s3().getBucketLocation(x->x.bucket(bucket.name())).locationConstraintAsString();bucketRegion=found==null||found.isBlank()?"us-east-1":found.equals("EU")?"eu-west-1":found;}
+            Map<String, String> tags = new LinkedHashMap<>();
+            try { for (var tag : regionalBucket(bucketRegion).getBucketTagging(x -> x.bucket(bucket.name())).tagSet()) tags.put(tag.key(), tag.value()); }
+            catch (S3Exception e) {String code=e.awsErrorDetails()==null?"":e.awsErrorDetails().errorCode();if("NoSuchBucket".equals(code))continue;if(!"NoSuchTagSet".equals(code))throw e;}
+            checkedSearchAdd(rows,row("kind", "bucket", "id", bucket.name(), "name", bucket.name(), "region", bucketRegion,"arn","arn:aws:s3:::"+bucket.name(),
+                    "created", bucket.creationDate() == null ? "" : bucket.creationDate().toString(),
+                    "tagged", Boolean.toString(tags.containsKey("lmaws_test")), "tags", safeSearchTags(tags), "run_id", tags.getOrDefault("lmaws_test", "")));
+        }
+        return bounded(rows);
+    }
+
+    private List<Map<String, String>> prefixTopics(String prefix) {
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (var page : prefixPages(sns().listTopicsPaginator())) for (var topic : page.topics()) {
+            String name = last(topic.topicArn()); if (!name.startsWith(prefix)) continue;
+            Map<String, String> tags = new LinkedHashMap<>();
+            for (var tag : sns().listTagsForResource(x -> x.resourceArn(topic.topicArn())).tags()) tags.put(tag.key(), tag.value());
+            checkedSearchAdd(rows,row("kind", "topic", "id", topic.topicArn(), "name", name, "region", regionName,
+                    "tagged", Boolean.toString(tags.containsKey("lmaws_test")), "tags", safeSearchTags(tags), "run_id", tags.getOrDefault("lmaws_test", "")));
+        }
+        return bounded(rows);
+    }
+
+    private List<Map<String, String>> prefixFunctions(String prefix) {
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (var page : prefixPages(lambda().listFunctionsPaginator())) for (var fn : page.functions()) {
+            if (fn.functionName() == null || !fn.functionName().startsWith(prefix)) continue;
+            Map<String, String> tags = new LinkedHashMap<>(lambda().listTags(x -> x.resource(fn.functionArn())).tags());
+            checkedSearchAdd(rows,row("kind", "function", "id", fn.functionArn(), "name", fn.functionName(), "region", regionName,
+                    "modified_at", normalizeModified(fn.lastModified()), "tagged", Boolean.toString(tags.containsKey("lmaws_test")),
+                    "tags", safeSearchTags(tags), "run_id", tags.getOrDefault("lmaws_test", "")));
+        }
+        return bounded(rows);
+    }
+
+    private List<Map<String, String>> prefixTables(String prefix) {
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (var page : prefixPages(ddb().listTablesPaginator())) for (String name : page.tableNames()) {
+            if (!name.startsWith(prefix)) continue;
+            var table = ddb().describeTable(x -> x.tableName(name)).table();
+            Map<String, String> tags = new LinkedHashMap<>();
+            if(table!=null&&table.tableArn()!=null){String token=null;int tagPages=0;do{if(++tagPages>100)throw new IllegalStateException("DynamoDB tag pagination exceeded limit");var tagResponse=ddb().listTagsOfResource(software.amazon.awssdk.services.dynamodb.model.ListTagsOfResourceRequest.builder().resourceArn(table.tableArn()).nextToken(token).build());for(var tag:tagResponse.tags())tags.put(tag.key(),tag.value());token=tagResponse.nextToken();}while(token!=null&&!token.isBlank());}
+            checkedSearchAdd(rows,row("kind", "table", "id", name, "name", name, "region", regionName,
+                    "created", table == null || table.creationDateTime() == null ? "" : table.creationDateTime().toString(),
+                    "tagged", Boolean.toString(tags.containsKey("lmaws_test")), "tags", safeSearchTags(tags), "run_id", tags.getOrDefault("lmaws_test", "")));
+        }
+        return bounded(rows);
+    }
+
+    private List<Map<String, String>> prefixStacks(String prefix) {
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (var page : prefixPages(cloudformation().describeStacksPaginator(DescribeStacksRequest.builder().build()))) {
+            for (var stack : page.stacks()) {
+                String name = stack.stackName();
+                if (name == null || !name.startsWith(prefix)) continue;
+                Map<String, String> tags = new LinkedHashMap<>();
+                for (var tag : stack.tags()) tags.put(tag.key(), tag.value());
+                checkedSearchAdd(rows,row("kind", "stack", "id", stack.stackId(), "name", name, "region", regionName,
+                        "created", stack.creationTime() == null ? "" : stack.creationTime().toString(),
+                        "status", stack.stackStatusAsString(), "tagged", Boolean.toString(tags.containsKey("lmaws_test")),
+                        "tags", safeSearchTags(tags), "run_id", tags.getOrDefault("lmaws_test", "")));
+            }
+        }
+        return bounded(rows);
+    }
+
+    private static String safeSearchTags(Map<String,String> tags){Map<String,String> safe=new LinkedHashMap<>();tags.forEach((key,value)->safe.put(key,key.toLowerCase(Locale.ROOT).matches(".*(password|passwd|secret|token|credential|api.?key|access.?key|private.?key).*")?"[redacted]":value));return Jsons.encode(safe);}
+    private static <T> Iterable<T> prefixPages(Iterable<T> source){return ()->pages(source).iterator();}
+    private static void checkedSearchAdd(List<Map<String,String>> rows,Map<String,String> row){if(rows.size()>=10000)throw new IllegalStateException("prefix search exceeds 10000 rows");rows.add(row);}
+    private static String normalizeModified(String value){if(value==null)return "";try{return Instant.parse(value).toString();}catch(RuntimeException e){try{return java.time.OffsetDateTime.parse(value,java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ")).toInstant().toString();}catch(RuntimeException ignored){return value;}}}
+    private static String serviceFor(String kind) {
+        return switch (kind) {
+            case "buckets" -> "s3"; case "instances", "vpcs", "security_groups" -> "ec2";
+            case "tables" -> "dynamodb"; case "queues" -> "sqs"; case "topics" -> "sns";
+            case "functions" -> "lambda"; case "log_groups" -> "logs"; case "alarms" -> "cloudwatch";
+            case "zones" -> "route53"; case "secrets" -> "secretsmanager"; case "parameters" -> "ssm";
+            case "clusters" -> "ecs"; case "stacks" -> "cloudformation"; default -> kind;
+        };
+    }
+
+    private static String ageHours(String created) {
+        if (created == null || created.isBlank()) return "";
+        try { return String.format(Locale.ROOT, "%.3f", Math.max(0, Duration.between(Instant.parse(created), Instant.now()).toSeconds() / 3600.0)); }
+        catch (RuntimeException ignored) { return ""; }
+    }
+
+    private static String maskIdentifier(String value) {
+        if (value == null) return "";
+        return value.replaceAll("(?<!\\d)\\d{12}(?!\\d)", "************");
     }
 
     public Map<String, String> create(String kind, String name, String value, String runId) {
@@ -285,10 +553,13 @@ public final class AwsBackend implements AutoCloseable {
         throw new IllegalStateException("resource did not become ready within 30 seconds");
     }
 
+    AwsBackend defaultReader(){return new AwsBackend(regionName,demo,cost,"default");}
+    boolean sameAccount(AwsBackend other){if(demo||endpoint!=null)return true;String left=sts().getCallerIdentity().account(),right=other.sts().getCallerIdentity().account();return left!=null&&left.matches("[0-9]{12}")&&left.equals(right);}
     @Override public void close() { for (AutoCloseable c : clients) try { c.close(); } catch (Exception ignored) { } }
 
     private StsClient sts() { return sts == null ? sts = register(base(StsClient.builder()).build()) : sts; }
     private S3Client s3() { if (s3 == null) { var b = S3Client.builder(); if (endpoint != null) b.forcePathStyle(true); s3 = register(base(b).build()); } return s3; }
+    private S3Client regionalBucket(String selected){if(endpoint!=null||selected.equals(regionName))return s3();return regionalBuckets.computeIfAbsent(selected,r->register(base(S3Client.builder()).region(Region.of(r)).build()));}
     private SqsClient sqs() { return sqs == null ? sqs = register(base(SqsClient.builder()).build()) : sqs; }
     private SnsClient sns() { return sns == null ? sns = register(base(SnsClient.builder()).build()) : sns; }
     private SsmClient ssm() { return ssm == null ? ssm = register(base(SsmClient.builder()).build()) : ssm; }
@@ -308,7 +579,8 @@ public final class AwsBackend implements AutoCloseable {
         }
         return iam;
     }
-    private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { b.region(region).overrideConfiguration(config); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))); else b.credentialsProvider(ProfileCredentialsProvider.builder().profileName(activeProfile()).build()); return b; }
+    private CloudFormationClient cloudformation() { return cloudformation == null ? cloudformation = register(base(CloudFormationClient.builder()).build()) : cloudformation; }
+    private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { b.region(region).overrideConfiguration(config); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))); else b.credentialsProvider(ProfileCredentialsProvider.builder().profileName(profileName).build()); return b; }
 
     private static final class CostInterceptor implements ExecutionInterceptor {
         private final CostLedger ledger;
@@ -876,7 +1148,7 @@ public final class AwsBackend implements AutoCloseable {
         };
     }
     private List<Map<String, String>> demoInventory(String k) { return demoResources.values().stream().filter(x -> inventoryKind(k).equals(x.get("kind"))).map(x -> (Map<String, String>) new LinkedHashMap<>(x)).toList(); }
-    private Map<String, String> demoCreate(String k, String n, String value, String runId) { String id = n; String key = demoKey(k, id); if(demoResources.containsKey(key))throw new IllegalStateException("demo resource already exists"); Map<String, String> m = row("kind", k, "id", id, "name", n, "created", Instant.now().toString(), "run_id", runId); if (value != null) m.put("value_metadata", "stored"); demoResources.put(key, m); return new LinkedHashMap<>(m); }
+    private Map<String, String> demoCreate(String k, String n, String value, String runId) { String id = n; String key = demoKey(k, id); if(demoResources.containsKey(key))throw new IllegalStateException("demo resource already exists"); Map<String, String> m = row("kind", k, "id", id, "name", n, "created", Instant.now().toString(), "run_id", runId,"tags",Jsons.encode(Map.of("lmaws_test",runId))); if (value != null) m.put("value_metadata", "stored"); demoResources.put(key, m); return new LinkedHashMap<>(m); }
     private static String demoKey(String kind, String id) { return kind + "\u0000" + id; }
 
     Ec2Client ec2Client() { return ec2(); }
