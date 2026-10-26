@@ -249,9 +249,9 @@ public final class WebTransportChecks {
                 return GetHostedZoneResponse.builder().hostedZone(HostedZone.builder().id("/hostedzone/ZTEST").name(DOMAIN + ".").build()).build();
             if (type == Route53Client.class && name.equals("listResourceRecordSets")) {
                 if (Boolean.TRUE.equals(seen.get("foreignWeighted")))
-                    return ListResourceRecordSetsResponse.builder().resourceRecordSets(ResourceRecordSet.builder().name("lmaws-weighted-" + RUN + "." + DOMAIN + ".").type(RRType.A).setIdentifier("foreign").resourceRecords(ResourceRecord.builder().value("192.0.2.50").build()).build()).build();
+                    return ListResourceRecordSetsResponse.builder().resourceRecordSets(ResourceRecordSet.builder().name("lmaws-weighted-" + RUN + "." + DOMAIN + ".").type(RRType.A).setIdentifier("foreign").resourceRecords(software.amazon.awssdk.services.route53.model.ResourceRecord.builder().value("192.0.2.50").build()).build()).build();
                 if (Boolean.TRUE.equals(seen.get("sameWeighted")))
-                    return ListResourceRecordSetsResponse.builder().resourceRecordSets(ResourceRecordSet.builder().name("lmaws-weighted-" + RUN + "." + DOMAIN + ".").type(RRType.A).setIdentifier("static-" + RUN).resourceRecords(ResourceRecord.builder().value("192.0.2.50").build()).build()).build();
+                    return ListResourceRecordSetsResponse.builder().resourceRecordSets(ResourceRecordSet.builder().name("lmaws-weighted-" + RUN + "." + DOMAIN + ".").type(RRType.A).setIdentifier("static-" + RUN).resourceRecords(software.amazon.awssdk.services.route53.model.ResourceRecord.builder().value("192.0.2.50").build()).build()).build();
                 return ListResourceRecordSetsResponse.builder().resourceRecordSets(List.of()).build();
             }
             if (type == S3Client.class && name.equals("getBucketTagging")) {
