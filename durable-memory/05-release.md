@@ -1,7 +1,7 @@
 # Releases and remaining work
 
 Published releases verified through v0.1.3. Tags v0.1.4 through v0.1.7 and v0.1.9 failed
-packaging checks and must not be described as published binaries. v0.1.12 is the
+packaging checks and must not be described as published binaries. v0.1.13 is the
 pending patch, preserving concurrent compute, IAM policy (`lmaws_session` `v2`
 live-applied), native `lmaws --credential-process <mode>` + `session_doctor`,
 account recovery, web-stack and spend-report work.
