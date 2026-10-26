@@ -1,0 +1,10 @@
+# Synthetic-only: Review all supported inventories; IAM entries are skipped live.
+# This picture-first example always disables live AWS and apply, even if inherited.
+# Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_inventory.lms
+import "../recipes/lib/inventory.lms";
+let options=recipe_options(ARGV);
+options.live=false;options.apply=false;options.preview=false;options.profile="default";
+options.task="all";options.output="data/recipe_inventory";
+let report=recipe_inventory(options);
+assert(is_array(report.rows));
+recipe_picture(report.rows,"Review all supported inventories; IAM entries are skipped live","recipe_inventory");

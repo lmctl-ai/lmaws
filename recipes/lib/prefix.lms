@@ -1,0 +1,75 @@
+# Access: Read-only. Importing this library performs no work.
+# What: Search supported account metadata and correlate local run-ledger leftovers.
+# When: Locate lmaws_ / lmaws- test resources before reviewing cleanup.
+# Run: lmctl recipes/prefix_search.lms --prefix lmaws --top 20
+# Preview: lmctl recipes/prefix_search.lms --preview
+import "./inventory.lms";
+fn recipe_prefix_fixture() {
+  return [
+    {kind:"queue",name:"lmaws_rfixture1xfixture2_events",region:"us-east-1",tagged:"true",count:1},
+    {kind:"bucket",name:"lmaws-rfixture1xfixture2-artifacts",region:"us-east-1",tagged:"true",count:1},
+    {kind:"table",name:"lmaws_rfixture1xfixture2_items",region:"us-east-1",tagged:"true",count:1},
+    {kind:"topic",name:"lmaws_rfixture1xfixture2_notifications",region:"us-east-1",tagged:"true",count:1},
+    {kind:"log_group",name:"lmaws_rfixture1xfixture2_logs",region:"us-east-1",tagged:"false",count:1},
+    {kind:"parameter",name:"lmaws_rfixture1xfixture2_config",region:"us-east-1",tagged:"unknown",count:1},
+    {kind:"queue",name:"customer_events",region:"us-east-1",tagged:"true",count:1}
+  ];
+}
+fn recipe_prefix_search(options) {
+  let o=recipe_normalize(options);
+  if(o.preview) {return recipe_preview(o,"prefix_search");}
+  let rows=[];
+  if(o.live) {
+    let all=recipe_inventory(merge(o,{task:"all",top:1000}));
+    for(task in ["buckets","instances","vpcs","security_groups","tables","queues","topics","functions","log_groups","alarms","zones","secrets","parameters","clusters"]) {
+      for(row in json_parse(read_file(o.output+"."+task+".raw.json"))) {push(rows,row);}
+    }
+  } else {rows=recipe_prefix_fixture();println("estimated cost: $0.00");}
+  let found=[];
+  for(row in rows) {
+    let name=str(get(row,"name",""));
+    let matches=starts_with(name,o.prefix);
+    if(o.prefix=="lmaws") {matches=starts_with(name,"lmaws_") || starts_with(name,"lmaws-");}
+    if(matches) {push(found,row);}
+  }
+  let report={rows:recipe_select(found,o),matching_count:len(found),scanned_count:len(rows),region:o.region,profile:o.profile,synthetic:!o.live,scope:"14 supported metadata APIs in one configured region plus global inventories; IAM excluded; not every AWS service or region",cleanup_authorized:false};
+  mkdir(dirname(o.output),true);write_file(o.output+".json",json_stringify(report,2));
+  write_csv(o.output+".csv",report.rows);
+  return report;
+}
+fn recipe_ledger_name(record) {
+  let value=str(get(record,"name",get(record,"id","manual review")));
+  if(contains(value,"/")) {let parts=split(value,"/");value=parts[len(parts)-1];}
+  if(contains(value,":")) {let parts=split(value,":");value=parts[len(parts)-1];}
+  return value;
+}
+fn recipe_leftovers(options) {
+  let o=recipe_normalize(options);
+  if(o.preview) {return recipe_preview(o,"leftover_report");}
+  let rows=[];
+  if(o.live) {
+    let p=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud=aws.example("recipe_leftovers");
+file_write(${o.output+".ledger.raw.json"},cloud.sweep(${o.older_hours}).json());
+end _dsl_
+    recipe_run(p,o);rows=json_parse(read_file(o.output+".ledger.raw.json"));
+  } else {
+    rows=[{name:"lmaws_rfixture1xfixture2_events",kind:"queue",state:"active",ledger:"synthetic run ledger",count:1},{name:"lmaws-rfixture1xfixture2-artifacts",kind:"bucket",state:"pending",ledger:"synthetic run ledger",count:1}];println("estimated cost: $0.00");
+  }
+  let selected=[];
+  for(row in rows) {
+    if(has_key(row,"record")) {let record=json_parse_safe(row.record,{});row=merge(row,{name:recipe_ledger_name(record),kind:get(record,"kind","unknown"),state:get(record,"state","unknown")});}
+    let name=str(get(row,"name","manual review"));
+    if(starts_with(name,o.prefix) || name=="manual review" || o.prefix=="lmaws" && (starts_with(name,"lmaws_") || starts_with(name,"lmaws-"))) {push(selected,row);}
+  }
+  let report={rows:recipe_select(selected,o),leftover_count:len(selected),dry_run:true,synthetic:!o.live,cleanup_authorized:false};
+  mkdir(dirname(o.output),true);write_file(o.output+".json",json_stringify(report,2));write_csv(o.output+".csv",report.rows);
+  return report;
+}
+fn recipe_sweeper(options) {
+  let o=recipe_normalize(options);
+  # Prefix discovery is never authority to delete. The current host sweeper is read-only.
+  if(o.preview) {return recipe_preview(o,"sweeper");}
+  assert(!o.apply);
+  return recipe_leftovers(o);
+}

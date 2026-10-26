@@ -1,0 +1,40 @@
+# Access: Write with the lmaws profile; synthetic by default
+# What: Import-only lifecycle functions; no provider calls on import.
+# When: Compose parameterized reports or owned lifecycle sandboxes.
+# Run: lmctl recipes/lifecycle.lms --top 10
+# Preview: lmctl recipes/lifecycle.lms --preview
+import "./common.lms";
+
+// Import-only run-owned lifecycle implementation. Static calls preserve schema checking.
+fn _lifecycle_call(options, task, name, raw) {
+  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_lifecycle");
+let run = cloud.example_run();
+let row_name = "";
+if (${task} == "queue") { let row = run.queue(${name}); row_name = row.get("name"); }
+else if (${task} == "topic") { let row = run.topic(${name}); row_name = row.get("name"); }
+else if (${task} == "table") { let row = run.table(${name}); row_name = row.get("name"); }
+else if (${task} == "bucket") { let row = run.bucket(${name}); row_name = row.get("name"); }
+else if (${task} == "parameter") { let row = run.parameter(${name}, "demo"); row_name = row.get("name"); }
+else if (${task} == "log_group") { let row = run.log_group(${name}); row_name = row.get("name"); }
+else { check(false); }
+file_write(${raw}, row_name);
+run.cleanup();
+check(run.remaining() == 0);
+end _dsl_
+  let r = recipe_run(p, options);
+  return {"result": r, "raw": trim(read_file(raw))};
+}
+fn recipe_lifecycle(options) {
+  let o = recipe_normalize(options);
+  let task = str(o.task);
+  if (o.preview) { return recipe_preview(o, task); }
+  assert(!o.live || (o.apply && o.profile=="lmaws"));
+  assert(contains(["queue","topic","table","bucket","parameter","log_group"],task));
+  let name = "recipe_" + task;
+  if(task=="bucket") {name="recipe-bucket";}
+  let raw = str(o.output) + ".raw.json";
+  let selected = _lifecycle_call(o, task, name, raw);
+  write_file(str(o.output) + ".json", json_stringify({"task": task, "name": selected.raw}));
+  return {rows:[{task:task,name:selected.raw,created:1,remaining:0,count:1}],result:selected.result};
+}

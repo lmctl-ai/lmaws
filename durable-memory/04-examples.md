@@ -1,11 +1,12 @@
 # Examples and cost labels
 
-There are 30 self-contained `.lms` examples: 19 read-only stories, seven
+There are 59 runnable `.lms` examples: 29 synthetic-only recipe demonstrations
+plus the original 30 stories: 19 read-only stories, seven
 write/lifecycle stories and four IAM-dependent stories. See [README](../README.md)
 for the complete image gallery and cost captions; [USER_TEST](../docs/USER_TEST.md)
 describes the federated `lmaws` session policy and profile rules.
 
-Each script uses `aws.example(name)`: demo fixtures by default, live only with
+The original stories use `aws.example(name)`: demo fixtures by default, live only with
 `LMAWS_LIVE=1`. It asserts fixture values only in demo mode, accepts sparse real
 inventories, executes saved bytecode, exports CSV and draws its own PNG with
 lmplot/lmdraw. Offline examples need no AWS credentials. `sweeper` is a read-only
@@ -18,7 +19,9 @@ LMAWS_LIVE=0 timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/
 Autorun installs the released native host through the script's `cli`/`install`
 binding and writes `images/<name>.png` relative to the invocation directory.
 No Java or repository-relative input is required for native autoruns. Rendering
-tests run the actual scripts; `examples/render-all.lms` refreshes gallery assets.
+tests run the actual scripts; `examples/render-all.lms` refreshes the original gallery assets. New recipe
+examples call paired import-only libraries, force synthetic mode, and are
+covered by the same native gallery execution gate.
 
 All README examples label “running this example costs about $X”. Nineteen live
 read-only results display `$0.00`; S3 bucket/object and the six lifecycle stories

@@ -1,0 +1,12 @@
+# Synthetic-only: Select a disposable queue/topic/table/bucket/parameter/log-group lifecycle.
+# This picture-first example always disables live AWS and apply, even if inherited.
+# Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_lifecycle.lms
+import "../recipes/lib/lifecycle.lms";
+let options=recipe_options(ARGV);
+options.live=false;options.apply=false;options.preview=false;options.profile="default";
+options.task="queue";options.output="data/recipe_lifecycle";
+let report=recipe_lifecycle(options);
+assert(is_array(report.rows));
+assert(len(report.rows)==1 && report.rows[0].remaining==0);
+report.rows[0].name="owned synthetic queue";
+recipe_picture(report.rows,"Select a disposable queue/topic/table/bucket/parameter/log-group lifecycle","recipe_lifecycle");

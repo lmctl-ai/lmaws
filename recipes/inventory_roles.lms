@@ -1,0 +1,18 @@
+# Access: Read-only
+# What: Inspect bounded roles metadata (synthetic only; federated IAM cases skipped live)
+# When: Reusable identity and access posture; defaults to synthetic fixtures
+# Run: lmctl recipes/inventory_roles.lms --top 10
+# Preview: lmctl recipes/inventory_roles.lms --preview (or lmctl script --dry-run recipes/inventory_roles.lms)
+# Arguments: --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_roles [--live]
+# Typical-cost: $0.00 displayed; capped request estimate in ledger
+# Category: Identity and access posture
+# Library: recipes/lib/inventory.lms
+# Function: recipe_inventory
+# Example: recipe_inventory_roles
+
+import "./lib/inventory.lms";
+let options=recipe_options(ARGV);
+options.task="roles";
+if (!contains(ARGV,"--output")) {options.output="data/inventory_roles";}
+let report=recipe_inventory(options);
+if (!options.preview) {println("report:",options.output+".json");}

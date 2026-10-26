@@ -1,0 +1,18 @@
+# Access: Read-only
+# What: Review all supported inventories; IAM entries are skipped live
+# When: Reusable inventory; defaults to synthetic fixtures
+# Run: lmctl recipes/inventory.lms --top 10
+# Preview: lmctl recipes/inventory.lms --preview (or lmctl script --dry-run recipes/inventory.lms)
+# Arguments: --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory [--live]
+# Typical-cost: $0.00 displayed; request cap $0.05
+# Category: Inventory
+# Library: recipes/lib/inventory.lms
+# Function: recipe_inventory
+# Example: recipe_inventory
+
+import "./lib/inventory.lms";
+let options=recipe_options(ARGV);
+if (!contains(ARGV,"--task")) {options.task="all";}
+if (!contains(ARGV,"--output")) {options.output="data/inventory";}
+let report=recipe_inventory(options);
+if (!options.preview) {println("report:",options.output+".json");}

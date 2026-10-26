@@ -1,0 +1,10 @@
+# Synthetic-only: Dry-run leftover review; discovery never authorizes deletion.
+# This picture-first example always disables live AWS and apply, even if inherited.
+# Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_sweeper.lms
+import "../recipes/lib/prefix.lms";
+let options=recipe_options(ARGV);
+options.live=false;options.apply=false;options.preview=false;options.profile="default";
+options.task="sweeper";options.output="data/recipe_sweeper";
+let report=recipe_sweeper(options);
+assert(is_array(report.rows));
+recipe_picture(report.rows,"Dry-run leftover review; discovery never authorizes deletion","recipe_sweeper");

@@ -1,0 +1,10 @@
+# Synthetic-only: Inspect aged active/pending records in the local run ledgers.
+# This picture-first example always disables live AWS and apply, even if inherited.
+# Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_leftover_report.lms
+import "../recipes/lib/prefix.lms";
+let options=recipe_options(ARGV);
+options.live=false;options.apply=false;options.preview=false;options.profile="default";
+options.task="leftover_report";options.output="data/recipe_leftover_report";
+let report=recipe_leftovers(options);
+assert(is_array(report.rows));
+recipe_picture(report.rows,"Inspect aged active/pending records in the local run ledgers","recipe_leftover_report");

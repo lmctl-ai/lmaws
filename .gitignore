@@ -33,3 +33,6 @@ compare/**/.terraform.lock.hcl
 /ledger.json
 /campaign.json
 /private-*.log
+
+# Private recipe ledgers and live reports.
+/.lmaws-local/

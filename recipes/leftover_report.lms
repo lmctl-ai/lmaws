@@ -1,0 +1,18 @@
+# Access: Read-only
+# What: Inspect aged active/pending records in the local run ledgers
+# When: Reusable leftover search and cleanup by prefix; defaults to synthetic fixtures
+# Run: lmctl recipes/leftover_report.lms --top 10
+# Preview: lmctl recipes/leftover_report.lms --preview (or lmctl script --dry-run recipes/leftover_report.lms)
+# Arguments: --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/leftover_report [--live] --ledger-dir .lmaws-local/recipes/ledgers --older-hours 0
+# Typical-cost: $0.00 synthetic; live request cap $0.05
+# Category: Leftover search and cleanup by prefix
+# Library: recipes/lib/prefix.lms
+# Function: recipe_leftovers
+# Example: recipe_leftover_report
+
+import "./lib/prefix.lms";
+let options=recipe_options(ARGV);
+options.task="leftover_report";
+if (!contains(ARGV,"--output")) {options.output="data/leftover_report";}
+let report=recipe_leftovers(options);
+if (!options.preview) {println("report:",options.output+".json");}

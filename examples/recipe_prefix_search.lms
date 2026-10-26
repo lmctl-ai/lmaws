@@ -1,0 +1,10 @@
+# Synthetic-only: Find lmaws_ and lmaws- names across supported account inventories.
+# This picture-first example always disables live AWS and apply, even if inherited.
+# Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_prefix_search.lms
+import "../recipes/lib/prefix.lms";
+let options=recipe_options(ARGV);
+options.live=false;options.apply=false;options.preview=false;options.profile="default";
+options.task="prefix_search";options.output="data/recipe_prefix_search";
+let report=recipe_prefix_search(options);
+assert(is_array(report.rows));
+recipe_picture(report.rows,"Find lmaws_ and lmaws- names across supported account inventories","recipe_prefix_search");

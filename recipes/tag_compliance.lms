@@ -1,0 +1,18 @@
+# Access: Read-only
+# What: Report missing and unknown tag presence without assuming compliance
+# When: Reusable tag and naming compliance; defaults to synthetic fixtures
+# Run: lmctl recipes/tag_compliance.lms --top 10
+# Preview: lmctl recipes/tag_compliance.lms --preview (or lmctl script --dry-run recipes/tag_compliance.lms)
+# Arguments: --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/tag_compliance [--live]
+# Typical-cost: $0.00 displayed; request cap $0.05
+# Category: Tag and naming compliance
+# Library: recipes/lib/audits.lms
+# Function: recipe_compliance
+# Example: recipe_tag_compliance
+
+import "./lib/audits.lms";
+let options=recipe_options(ARGV);
+options.task="tag_compliance";
+if (!contains(ARGV,"--output")) {options.output="data/tag_compliance";}
+let report=recipe_compliance(options);
+if (!options.preview) {println("report:",options.output+".json");}

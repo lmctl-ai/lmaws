@@ -1,0 +1,43 @@
+# Access: Read-only
+# What: Import-only inventory functions; no provider calls on import.
+# When: Compose parameterized reports or owned lifecycle sandboxes.
+# Run: lmctl recipes/inventory.lms --top 10
+# Preview: lmctl recipes/inventory.lms --preview
+import "./common.lms";
+
+// Import-only inventory implementation; all provider methods are statically checked.
+fn recipe_inventory(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, o.task); }
+  let output = str(o.output);
+  assert(contains(["identity", "buckets", "instances", "vpcs", "security_groups", "tables", "queues", "topics", "functions", "log_groups", "alarms", "zones", "secrets", "parameters", "clusters", "roles"],o.task) || o.task=="all");
+  assert(!o.live || (o.task!="identity" && o.task!="roles"));
+  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_inventory");
+if ((${o.task} == "identity" || ${o.task} == "all") && !${o.live}) { file_write(${output + ".identity.raw.json"}, cloud.identity().json()); }
+if ((${o.task} == "buckets" || ${o.task} == "all")) { file_write(${output + ".buckets.raw.json"}, cloud.buckets().json()); }
+if ((${o.task} == "instances" || ${o.task} == "all")) { file_write(${output + ".instances.raw.json"}, cloud.instances().json()); }
+if ((${o.task} == "vpcs" || ${o.task} == "all")) { file_write(${output + ".vpcs.raw.json"}, cloud.vpcs().json()); }
+if ((${o.task} == "security_groups" || ${o.task} == "all")) { file_write(${output + ".security_groups.raw.json"}, cloud.security_groups().json()); }
+if ((${o.task} == "tables" || ${o.task} == "all")) { file_write(${output + ".tables.raw.json"}, cloud.tables().json()); }
+if ((${o.task} == "queues" || ${o.task} == "all")) { file_write(${output + ".queues.raw.json"}, cloud.queues().json()); }
+if ((${o.task} == "topics" || ${o.task} == "all")) { file_write(${output + ".topics.raw.json"}, cloud.topics().json()); }
+if ((${o.task} == "functions" || ${o.task} == "all")) { file_write(${output + ".functions.raw.json"}, cloud.functions().json()); }
+if ((${o.task} == "log_groups" || ${o.task} == "all")) { file_write(${output + ".log_groups.raw.json"}, cloud.log_groups().json()); }
+if ((${o.task} == "alarms" || ${o.task} == "all")) { file_write(${output + ".alarms.raw.json"}, cloud.alarms().json()); }
+if ((${o.task} == "zones" || ${o.task} == "all")) { file_write(${output + ".zones.raw.json"}, cloud.zones().json()); }
+if ((${o.task} == "secrets" || ${o.task} == "all")) { file_write(${output + ".secrets.raw.json"}, cloud.secrets().json()); }
+if ((${o.task} == "parameters" || ${o.task} == "all")) { file_write(${output + ".parameters.raw.json"}, cloud.parameters().json()); }
+if ((${o.task} == "clusters" || ${o.task} == "all")) { file_write(${output + ".clusters.raw.json"}, cloud.clusters().json()); }
+if ((${o.task} == "roles" || ${o.task} == "all") && !${o.live}) { file_write(${output + ".roles.raw.json"}, cloud.roles().json()); }
+end _dsl_
+  let result = recipe_run(p, o);
+  let selected = [];
+  let task = str(o.task);
+  if (task == "all") { for (name in ["identity","buckets","instances","vpcs","security_groups","tables","queues","topics","functions","log_groups","alarms","zones","secrets","parameters","clusters","roles"]) { if (!o.live || (name!="identity" && name!="roles")) { for (row in json_parse(read_file(output + "." + name + ".raw.json"))) { push(selected,row); } } } }
+  else { selected = json_parse(read_file(output + "." + task + ".raw.json")); }
+  if (o.filter_prefix) { let filtered=[]; for(row in selected) {if(starts_with(str(get(row,"name","")),o.prefix)) {push(filtered,row);}} selected=filtered; }
+  selected = recipe_select(selected,o);
+  write_file(output + ".json",json_stringify(selected));
+  return {"rows":selected,"result":result};
+}

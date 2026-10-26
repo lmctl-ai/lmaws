@@ -1,0 +1,205 @@
+[
+  {
+    "example": "recipe_inventory_identity",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 21446
+  },
+  {
+    "example": "recipe_inventory_buckets",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 21075
+  },
+  {
+    "example": "recipe_inventory_instances",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 21696
+  },
+  {
+    "example": "recipe_inventory_vpcs",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 20061
+  },
+  {
+    "example": "recipe_inventory_security_groups",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 23432
+  },
+  {
+    "example": "recipe_inventory_tables",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 20744
+  },
+  {
+    "example": "recipe_inventory_queues",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 20954
+  },
+  {
+    "example": "recipe_inventory_topics",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 20637
+  },
+  {
+    "example": "recipe_inventory_functions",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 21493
+  },
+  {
+    "example": "recipe_inventory_log_groups",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 22049
+  },
+  {
+    "example": "recipe_inventory_alarms",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 20791
+  },
+  {
+    "example": "recipe_inventory_zones",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 20443
+  },
+  {
+    "example": "recipe_inventory_secrets",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 20975
+  },
+  {
+    "example": "recipe_inventory_parameters",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 22278
+  },
+  {
+    "example": "recipe_inventory_clusters",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 21107
+  },
+  {
+    "example": "recipe_inventory_roles",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 20216
+  },
+  {
+    "example": "recipe_inventory",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 23613
+  },
+  {
+    "example": "recipe_sandbox_queue",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 18940
+  },
+  {
+    "example": "recipe_sandbox_topic",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 18667
+  },
+  {
+    "example": "recipe_sandbox_table",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 18722
+  },
+  {
+    "example": "recipe_sandbox_bucket",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 19103
+  },
+  {
+    "example": "recipe_sandbox_parameter",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 20222
+  },
+  {
+    "example": "recipe_sandbox_log_group",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 20077
+  },
+  {
+    "example": "recipe_lifecycle",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 18180
+  },
+  {
+    "example": "recipe_prefix_search",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 24239
+  },
+  {
+    "example": "recipe_leftover_report",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 20030
+  },
+  {
+    "example": "recipe_sweeper",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 19347
+  },
+  {
+    "example": "recipe_idle_instances",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 20234
+  },
+  {
+    "example": "recipe_tag_compliance",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 28408
+  }
+]

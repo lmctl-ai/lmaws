@@ -9,6 +9,20 @@ import shutil
 import subprocess
 import tempfile
 
+def source_bundle(path, seen=None):
+    """Follow local source imports so modular examples keep the same run checks."""
+    seen=set() if seen is None else seen
+    path=path.resolve()
+    if path in seen:return ""
+    seen.add(path)
+    text=path.read_text(encoding="utf-8")
+    for target in re.findall(r'import\s+"([^"\n]+\.lms)"',text):
+        if "://" in target:continue
+        child=(path.parent/target).resolve()
+        if not child.is_relative_to(root):raise AssertionError("gallery import outside repository")
+        text+="\n"+source_bundle(child,seen)
+    return text
+
 root = Path(__file__).resolve().parents[1]
 examples = sorted(p.stem for p in (root / "examples").glob("*.lms") if p.stem != "render-all")
 assert len(examples) >= 30, len(examples)
@@ -20,8 +34,8 @@ for name in examples:
     data = image.read_bytes()
     assert data.startswith(b"\x89PNG\r\n\x1a\n"), image
     assert len(data) <= 300_000, image
-    source = (root / "examples" / f"{name}.lms").read_text(encoding="utf-8")
-    assert "savedsl(" in source and "assert(r.code == 0)" in source, name
+    source = source_bundle(root / "examples" / f"{name}.lms")
+    assert "savedsl(" in source and re.search(r"assert\s*\(\s*r\.code\s*==\s*0\s*\)",source), name
 assert len(re.findall(r"lmctl(?: autorun)? https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/", readme)) >= 30
 print(f"gallery: {len(examples)} examples and images verified")
 

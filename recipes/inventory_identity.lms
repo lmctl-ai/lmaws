@@ -1,0 +1,18 @@
+# Access: Read-only
+# What: Inspect bounded identity metadata (synthetic only; federated IAM cases skipped live)
+# When: Reusable identity and access posture; defaults to synthetic fixtures
+# Run: lmctl recipes/inventory_identity.lms --top 10
+# Preview: lmctl recipes/inventory_identity.lms --preview (or lmctl script --dry-run recipes/inventory_identity.lms)
+# Arguments: --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_identity [--live]
+# Typical-cost: $0.00 displayed; capped request estimate in ledger
+# Category: Identity and access posture
+# Library: recipes/lib/inventory.lms
+# Function: recipe_inventory
+# Example: recipe_inventory_identity
+
+import "./lib/inventory.lms";
+let options=recipe_options(ARGV);
+options.task="identity";
+if (!contains(ARGV,"--output")) {options.output="data/inventory_identity";}
+let report=recipe_inventory(options);
+if (!options.preview) {println("report:",options.output+".json");}

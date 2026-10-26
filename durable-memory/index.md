@@ -9,6 +9,7 @@ Current maintenance notes:
 - [05-release.md](05-release.md): published versions, distribution and genuinely open items.
 - [06-comparisons.md](06-comparisons.md): lmcloud equivalents, findings and safety checks.
 - [07-example-costs.md](07-example-costs.md): profiles, ownership, teardown, sweeper and caps.
+- [08-recipes.md](08-recipes.md): reusable recipe modules, synthetic examples and catalogue gates.
 
 Current release/comparison evidence:
 

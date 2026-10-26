@@ -1,0 +1,18 @@
+# Access: Write with the lmaws profile
+# What: Create and tear down one owned topic with its run ledger
+# When: Reusable safe lifecycle sandboxes; defaults to synthetic fixtures
+# Run: lmctl recipes/sandbox_topic.lms --top 10
+# Preview: lmctl recipes/sandbox_topic.lms --preview (or lmctl script --dry-run recipes/sandbox_topic.lms)
+# Arguments: --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile lmaws --output data/sandbox_topic [--live] [--apply]
+# Typical-cost: Synthetic $0.00; live generally below $0.0001; cap $0.05
+# Category: Safe lifecycle sandboxes
+# Library: recipes/lib/lifecycle.lms
+# Function: recipe_lifecycle
+# Example: recipe_sandbox_topic
+
+import "./lib/lifecycle.lms";
+let options=recipe_options(ARGV);
+options.task="topic";
+if (!contains(ARGV,"--output")) {options.output="data/sandbox_topic";}
+let report=recipe_lifecycle(options);
+if (!options.preview) {println("report:",options.output+".json");}

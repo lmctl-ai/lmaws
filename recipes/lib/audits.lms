@@ -1,0 +1,28 @@
+# Access: Read-only; no work is performed on import.
+# What: Bounded stopped-instance and tag/naming review examples.
+# When: Triage waste signals and missing metadata before a manual review.
+# Run: lmctl recipes/idle_instances.lms --top 10
+# Preview: lmctl recipes/idle_instances.lms --preview
+import "./inventory.lms";
+fn recipe_idle(options) {
+  let o=recipe_normalize(options);
+  if(o.preview) {return recipe_preview(o,"idle_instances");}
+  let all=recipe_inventory(merge(o,{task:"instances",top:1000}));let rows=[];
+  for(row in all.rows) {
+    if(lower(str(get(row,"state","")))=="stopped") {push(rows,merge(row,{finding:"stopped instance; review age and metrics before action",count:1}));}
+  }
+  let report={rows:recipe_select(rows,o),matching_count:len(rows),synthetic:!o.live,scope:"stopped-state signal, not a measured idle duration or deletion recommendation"};
+  write_file(o.output+".json",json_stringify(report,2));write_csv(o.output+".csv",report.rows);return report;
+}
+fn recipe_compliance(options) {
+  let o=recipe_normalize(options);
+  if(o.preview) {return recipe_preview(o,"tag_compliance");}
+  let all=recipe_inventory(merge(o,{task:"all",top:1000}));let rows=[];let unknown=0;
+  for(row in all.rows) {
+    let tagged=str(get(row,"tagged","unknown"));
+    if(tagged=="false") {push(rows,merge(row,{finding:"no tags reported",count:1}));}
+    else if(tagged!="true") {unknown=unknown+1;}
+  }
+  let report={rows:recipe_select(rows,o),matching_count:len(rows),unknown_tag_count:unknown,synthetic:!o.live,scope:"projected inventory tag presence only; unknown is not compliant"};
+  write_file(o.output+".json",json_stringify(report,2));write_csv(o.output+".csv",report.rows);return report;
+}

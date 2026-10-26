@@ -1,0 +1,10 @@
+# Synthetic-only: Inspect bounded zones metadata.
+# This picture-first example always disables live AWS and apply, even if inherited.
+# Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_inventory_zones.lms
+import "../recipes/lib/inventory.lms";
+let options=recipe_options(ARGV);
+options.live=false;options.apply=false;options.preview=false;options.profile="default";
+options.task="zones";options.output="data/recipe_inventory_zones";
+let report=recipe_inventory(options);
+assert(is_array(report.rows));
+recipe_picture(report.rows,"Inspect bounded zones metadata","recipe_inventory_zones");
