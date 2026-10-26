@@ -14,10 +14,11 @@ Current release/comparison evidence:
 
 - [release-v012.json](release-v012.json): v0.1.2 asset digests and platform proof.
 - [autorun-v012.json](autorun-v012.json): 30 fresh-directory released-native autoruns.
+- [../evidence/live-cost-summary-v013.json](../evidence/live-cost-summary-v013.json): six scoped lifecycle runs and zero-leftover proof.
 
 Canonical external records: [USER_TEST](../docs/USER_TEST.md),
 [live campaign](../evidence/live-cost-campaign-v012.json),
 [comparison results](../compare/RESULTS.md),
-[current comparison campaign](../evidence/comparison-campaign-v0110.json),
+[current comparison campaign](../evidence/comparison-campaign-v013.json),
 [provider findings](../compare/PROVIDER_TEST.md).
 Superseded release/candidate notes and evidence are available in Git history.

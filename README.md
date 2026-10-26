@@ -5,7 +5,7 @@ AWS read-only inventory and safely owned test resources for lmscript, powered by
 |---|---|---|
 | ![Cloud inventory](docs/images/inventory.png) | Cloud inventory at a glance — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms` | running this example costs about $0.00 ([live evidence](evidence/live-cost-inventory-r71d606a0xcaf04f53.json)).
 | ![Network topology](docs/images/vpcs.png) | Network topology overview — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/vpcs.lms` | running this example costs about $0.00 ([live evidence](evidence/live-cost-vpcs-r62eeb5c9x53334996.json)).
-| ![Queue pipeline](docs/images/queue_pipeline.png) | Queue lifecycle simulation — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms` | running this example costs about $0.0001 (estimated from price table, not yet measured live).
+| ![Queue pipeline](docs/images/queue_pipeline.png) | Queue lifecycle simulation — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms` | running this example costs about $0.00000360 (measured live; independently verified deletion).
 | ![Safety audit](docs/images/read_only_audit.png) | Read-only safety audit — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/read_only_audit.lms` | running this example costs about $0.00 (estimated, not measured live; IAM intentionally skipped for federated profiles).
 | ![Resource graph](docs/images/resource_graph.png) | Resource relationship graph — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/resource_graph.lms` | running this example costs about $0.00 ([live evidence](evidence/live-cost-resource_graph-r2511a45fxb4544623.json)).
 
@@ -17,7 +17,7 @@ Install the single native executable from the latest GitHub release:
 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms
 ```
 
-Every example uses `aws.example("name")`: demo data by default, and real AWS only when `LMAWS_LIVE=1` with `default` for read-only calls or `lmaws` for writes, in us-east-1. Public CI forces `LMAWS_LIVE=0`, uses fakes only, and has no OIDC or cloud credentials. The live test ledger owns every mutation and tears it down on success or failure. S3 names use `lmaws-<run-id>-...` plus the `lmaws_test=<run-id>` tag; other resources use the `lmaws_<run-id>_` prefix.
+Every example uses `aws.example("name")`: demo data by default, and real AWS only when `LMAWS_LIVE=1` with `default` for read-only calls or `lmaws` for writes, in us-east-1. Public CI forces `LMAWS_LIVE=0`, uses fakes only, and has no OIDC or cloud credentials. The live test ledger owns every mutation and tears it down on success or failure. S3 names use `lmaws-<run-id>-...` plus the `lmaws_test=<run-id>` tag; other resources use the `lmaws_<run-id>_` prefix. The federated `lmaws` session is re-issued by the existing local session tooling; its scoped policy permits both patterns (S3 uses the hyphen because bucket names cannot contain underscores).
 
 The typed API covers inventory and owned test flows for buckets, EC2 instances, VPCs, security groups, DynamoDB tables, SQS queues, SNS topics, Lambda metadata, CloudWatch log groups and alarms, Route 53 zones, Secrets Manager metadata, SSM parameters, ECS clusters and IAM role metadata. Secret-value APIs, access-key APIs, and session-token APIs are not exposed. Lambda examples describe metadata and do not deploy functions.
 
@@ -57,36 +57,38 @@ assert(r.code == 0);
 
 For `run.put`, `key` is the S3 object key or DynamoDB `pk`; queue/topic/parameter writes use `value` as the message or parameter value, and log groups accept `key="retention_days"`.
 
-v0.1.2 writes are limited to those six resource kinds. Compute, networking, IAM, ECS, Lambda, DNS and Secrets Manager are metadata-only.
+v0.1.3 writes are limited to those six resource kinds. Compute, networking, IAM, ECS, Lambda, DNS and Secrets Manager are metadata-only.
 
 ## Cost per example
 
 Every example prints a final `estimated cost: $...` line. Read-only examples use `$0.00`; write examples estimate each request and resource from a price table, exact request counts, fractional minutes alive and fractional GB-month storage. The table uses conservative us-east-1 prices as of 2026-10-25, ignores free-tier credits, and does not call Cost Explorer. Prices vary by region and change over time.
 
-Each ledger refuses the next creation above the example cap of $0.05 or the whole-run hard ceiling of $0.25. Evidence is stored as `evidence/live-cost-<example>-<run-id>.json`; successful entries include the price table, requests, resources and leftover count. Nineteen read-only examples retain measured $0.00 evidence. In the v0.1.2 campaign, all seven write/lifecycle examples were attempted once using `AWS_PROFILE=lmaws`: S3 bucket/object passed at a measured estimated $0.00001781; SQS (two examples), SSM, DynamoDB, SNS and Logs creation were denied. Every attempted name was independently verified absent with the read-only `default` profile. Those six complete lifecycle costs remain price-table estimates, not successful live measurements. The four IAM-dependent examples are intentionally skipped and labelled **estimated, not measured live**.
+Each ledger refuses the next creation above the example cap of $0.05 or the whole-run hard ceiling of $0.25. Evidence is stored as `evidence/live-cost-<example>-<run-id>.json`; successful entries include the price table, requests, resources and leftover count. Nineteen read-only examples retain measured $0.00 evidence. The seven write/lifecycle examples are run once with `AWS_PROFILE=lmaws`; each successful lifecycle has a measured price-table estimate and is independently verified absent with the read-only `default` profile. The four IAM-dependent examples are intentionally skipped and labelled **estimated, not measured live**.
 
-Profiles: `default` is READ-ONLY; **only `AWS_PROFILE=lmaws` may mutate**, in `us-east-1`. The host rejects real create/update/delete calls under any other active profile. No OIDC, IAM edits, credential/profile edits or alternate identity are used. Denied requests can still have a request-price estimate; their evidence retains the actual failure and unrounded estimate.
+Profiles: `default` is READ-ONLY; **only `AWS_PROFILE=lmaws` may mutate**, in `us-east-1`. The host rejects real create/update/delete calls under any other active profile. No OIDC, IAM edits, credential/profile edits or alternate identity are used. The federated session policy at `~/.aws/session-tools/tasks/iam-snapshots/local-lmaws-session.json` is re-issued by `~/.aws/session-tools/scripts/aws-profile-session.py`; its combined plaintext inline/managed policy is limited to 2,048 characters and scopes resources to `lmaws_` / `lmaws-` names plus `lmaws_test` tags. Do not put account IDs or policy contents in this public repository.
 
-The native v0.1.2 baseline campaign estimated total, including both independent deletion-check passes, was **$0.00004640**, with one S3 bucket and its tiny object created and deleted and **zero leftovers**. This is price-table accounting from observed native SDK requests and lifetimes, not an AWS invoice measurement. See [live campaign evidence](evidence/live-cost-campaign-v012.json).
+The v0.1.3 native campaign added six successful lifecycle runs and independent
+default-profile absence checks: measured estimates total $0.00001272500021 for
+the six resource operations plus $0.00000130 for their verification reads. All
+resources were deleted with **zero leftovers**. This is price-table accounting
+from observed SDK requests and lifetimes, not an AWS invoice measurement.
 
 All 30 examples have [lmcloud/OpenTofu equivalents and results](compare/RESULTS.md).
-With released **lmcloud v0.1.10** and AWS provider 5.100.0, all **19 read-only pairs
-and the bucket/object pair completed live**: **7 matching comparisons and 13
-explicit differences** in supported outputs or local-state semantics. Six prior
-denied write cases remain not comparable; four IAM cases are skipped. The SDK
+With released **lmcloud v0.1.10** and AWS provider 5.100.0, all **26 live pairs
+completed**: **8 matching comparisons and 18 explicit differences** in supported
+outputs or local-state semantics. Four IAM cases are skipped. The SDK
 and OpenTofu each created one run-owned bucket and tiny object; all were deleted
 and independently verified absent with `default`. There are **zero leftovers**.
 
-The [new comparison campaign](evidence/comparison-campaign-v0110.json) records
-native estimates of about **$0.00004000** across all attempts and a provider
-request **upper bound of $0.0575**, including retries. Total conservative campaign
-accounting is **$0.05754170**, below the $0.25 cap. Provider SDK request counts are
+The [v0.1.3 comparison campaign](evidence/comparison-campaign-v013.json) records
+conservative total accounting of **$0.02001532500021**, below the $0.25 cap,
+including provider retries and two preflight rejects. Provider SDK request counts are
 opaque, so its 500-request/$0.0025 per-attempt allowance is reserved before plan;
 it is **not a measured AWS charge**. Timings in RESULTS include native rendering
 and multiple provider phases with a shared warm plugin cache. See the
-[current provider notes](compare/PROVIDER_TEST.md) and [cleanup proof](evidence/comparison-cleanup-v0110.json).
+[current provider notes](compare/PROVIDER_TEST.md) and [cleanup proof](evidence/comparison-cleanup-v013.json).
 
-The unmeasured write estimates are planning allowances: $0.0001 for tiny DynamoDB, SQS and SNS flows; Standard SSM and empty log-group/retention flows use $0.00 table pricing. Per-run ledgers include preflight/tag/verification requests, retries and storage. Prices vary by region and time. [Local test steps and permissions](docs/USER_TEST.md).
+Per-run ledgers include preflight/tag/verification requests, retries and storage. Prices vary by region and time. [Local test steps and profile model](docs/USER_TEST.md).
 
 ## Resource limits and build
 
@@ -125,17 +127,17 @@ Each example writes its image to `images/<name>.png` in the current directory an
 - **identity** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/identity.lms` — running this example costs about $0.00 (estimated, not measured live; IAM intentionally skipped for federated profiles). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/identity/identity.lms`
 - **resource_graph** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/resource_graph.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-resource_graph-r2511a45fxb4544623.json)). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/resource_graph/resource_graph.lms`
 - **tag_compliance** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tag_compliance.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-tag_compliance-r7cb07155x9d6941ad.json)). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/tag_compliance/tag_compliance.lms`
-- **queue_pipeline** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms` — running this example costs about $0.0001 (estimated from price table, not yet measured live; lmaws profile SQS CreateQueue denied). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/queue_pipeline/queue_pipeline.lms`
-- **sandbox_lifecycle** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sandbox_lifecycle.lms` — running this example costs about $0.000000 (estimated from price table, not yet measured live; lmaws profile ssm:PutParameter denied). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/sandbox_lifecycle/sandbox_lifecycle.lms`
-- **before_after** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/before_after.lms` — running this example costs about $0.0001 (estimated from price table, not yet measured live; lmaws profile SQS CreateQueue denied). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/before_after/before_after.lms`
+- **queue_pipeline** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms` — running this example costs about $0.00000360 (measured live; independently verified deletion). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/queue_pipeline/queue_pipeline.lms`
+- **sandbox_lifecycle** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sandbox_lifecycle.lms` — running this example costs about $0.00000000 (measured live; independently verified deletion). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/sandbox_lifecycle/sandbox_lifecycle.lms`
+- **before_after** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/before_after.lms` — running this example costs about $0.00000400 (measured live; independently verified deletion). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/before_after/before_after.lms`
 - **read_only_audit** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/read_only_audit.lms` — running this example costs about $0.00 (estimated, not measured live; IAM intentionally skipped for federated profiles). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/read_only_audit/read_only_audit.lms`
 - **regional_posture** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/regional_posture.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-regional_posture-r8c324e7dx1c334aa2.json)). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/regional_posture/regional_posture.lms`
 - **service_matrix** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/service_matrix.lms` — running this example costs about $0.00 (estimated, not measured live; IAM intentionally skipped for federated profiles). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/service_matrix/service_matrix.lms`
 
 - **bucket_objects** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/bucket_objects.lms` — running this example costs about $0.00001781 ([measured live estimate](evidence/live-cost-bucket_objects-raaa7c272xd3864f73.json); lmaws profile, independently verified deletion). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/bucket_objects/bucket_objects.lms`
-- **table_items** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/table_items.lms` — running this example costs about $0.0001 (estimated from price table, not yet measured live; lmaws profile dynamodb:CreateTable denied). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/table_items/table_items.lms`
-- **topic_publish** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topic_publish.lms` — running this example costs about $0.0001 (estimated from price table, not yet measured live; lmaws profile sns:CreateTopic denied). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/topic_publish/topic_publish.lms`
-- **log_retention** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_retention.lms` — running this example costs about $0.000000 (estimated from price table, not yet measured live; lmaws profile logs:CreateLogGroup denied). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/log_retention/log_retention.lms`
+- **table_items** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/table_items.lms` — running this example costs about $0.00000063 (measured live; independently verified deletion). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/table_items/table_items.lms`
+- **topic_publish** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topic_publish.lms` — running this example costs about $0.00000450 (measured live; independently verified deletion). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/topic_publish/topic_publish.lms`
+- **log_retention** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_retention.lms` — running this example costs about $0.00000000 (measured live; independently verified deletion). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/log_retention/log_retention.lms`
 
 The gallery contains 27 lmplot charts and 3 lmdraw diagrams generated from all 30 examples. `scripts/test-gallery.py` checks every URL, image and isolated demo run. Public CI forces `LMAWS_LIVE=0`, uses in-process fakes only, and never receives OIDC or cloud credentials. Live runs use the default AWS profile on this machine, with per-example ledgers, a dry-run sweeper and teardown.
 

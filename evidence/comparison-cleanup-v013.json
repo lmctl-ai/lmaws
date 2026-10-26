@@ -1,0 +1,198 @@
+{
+  "version": "0.1.3",
+  "native_runs": 6,
+  "provider_successful_lifecycles": 6,
+  "independent_readonly_profile": "default",
+  "region": "us-east-1",
+  "native_sweeper_leftover_count": 0,
+  "provider_sweeper_leftover_count": 0,
+  "leftover_count": 0,
+  "examples": [
+    {
+      "example": "before_after",
+      "native_evidence": "evidence/live-cost-before_after-r76627f89x0f3a49dd.json",
+      "comparison_evidence": "compare/evidence/before_after-r0b11d0f5xd9ecb920.json",
+      "native_independent_absence": [
+        {
+          "kind": "queue",
+          "name": "lmaws_r76627f89x0f3a49dd_audit",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "4E-7",
+          "estimated_usd": "4E-7"
+        }
+      ],
+      "provider_verification": [
+        {
+          "kind": "queue",
+          "name": "lmaws_r0b11d0f5xd9ecb920_audit",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "4E-7",
+          "estimated_usd": "4E-7"
+        }
+      ],
+      "native_leftovers": 0,
+      "provider_leftovers": 0
+    },
+    {
+      "example": "log_retention",
+      "native_evidence": "evidence/live-cost-log_retention-r0fe44e8fx750a4abd.json",
+      "comparison_evidence": "compare/evidence/log_retention-r1fdc623ex9f0e0f5c.json",
+      "native_independent_absence": [
+        {
+          "kind": "log_group",
+          "name": "lmaws_r0fe44e8fx750a4abd_sample",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "0",
+          "estimated_usd": "0"
+        }
+      ],
+      "provider_verification": [
+        {
+          "kind": "log_group",
+          "name": "lmaws_r1fdc623ex9f0e0f5c_sample",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "0",
+          "estimated_usd": "0"
+        }
+      ],
+      "native_leftovers": 0,
+      "provider_leftovers": 0
+    },
+    {
+      "example": "queue_pipeline",
+      "native_evidence": "evidence/live-cost-queue_pipeline-r434f8fcex43b4458e.json",
+      "comparison_evidence": "compare/evidence/queue_pipeline-re2a976eax4c386312.json",
+      "native_independent_absence": [
+        {
+          "kind": "queue",
+          "name": "lmaws_r434f8fcex43b4458e_pipeline",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "4E-7",
+          "estimated_usd": "4E-7"
+        }
+      ],
+      "provider_verification": [
+        {
+          "kind": "queue",
+          "name": "lmaws_re2a976eax4c386312_pipeline",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "4E-7",
+          "estimated_usd": "4E-7"
+        }
+      ],
+      "native_leftovers": 0,
+      "provider_leftovers": 0
+    },
+    {
+      "example": "sandbox_lifecycle",
+      "native_evidence": "evidence/live-cost-sandbox_lifecycle-r0c1b5e33x66744d8b.json",
+      "comparison_evidence": "compare/evidence/sandbox_lifecycle-r3b824f04xd3563432.json",
+      "native_independent_absence": [
+        {
+          "kind": "parameter",
+          "name": "lmaws_r0c1b5e33x66744d8b_lifecycle",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "0",
+          "estimated_usd": "0"
+        }
+      ],
+      "provider_verification": [
+        {
+          "kind": "parameter",
+          "name": "lmaws_r3b824f04xd3563432_lifecycle",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "0",
+          "estimated_usd": "0"
+        }
+      ],
+      "native_leftovers": 0,
+      "provider_leftovers": 0
+    },
+    {
+      "example": "table_items",
+      "native_evidence": "evidence/live-cost-table_items-r10de7334x933a47ef.json",
+      "comparison_evidence": "compare/evidence/table_items-r424fa9c6xb57fb163.json",
+      "native_independent_absence": [
+        {
+          "kind": "table",
+          "name": "lmaws_r10de7334x933a47ef_sample",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "0",
+          "estimated_usd": "0"
+        }
+      ],
+      "provider_verification": [
+        {
+          "kind": "table",
+          "name": "lmaws_r424fa9c6xb57fb163_sample",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "0",
+          "estimated_usd": "0"
+        }
+      ],
+      "native_leftovers": 0,
+      "provider_leftovers": 0
+    },
+    {
+      "example": "topic_publish",
+      "native_evidence": "evidence/live-cost-topic_publish-rae595e31x72b24f0c.json",
+      "comparison_evidence": "compare/evidence/topic_publish-r24510ae5x1d1307ee.json",
+      "native_independent_absence": [
+        {
+          "kind": "topic",
+          "name": "lmaws_rae595e31x72b24f0c_sample",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "5E-7",
+          "estimated_usd": "5E-7"
+        }
+      ],
+      "provider_verification": [
+        {
+          "kind": "topic",
+          "name": "lmaws_r24510ae5x1d1307ee_sample",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "5E-7",
+          "estimated_usd": "5E-7"
+        }
+      ],
+      "native_leftovers": 0,
+      "provider_leftovers": 0
+    }
+  ]
+}

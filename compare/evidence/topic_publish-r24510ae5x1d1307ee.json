@@ -1,0 +1,334 @@
+{
+  "recorded_at": 1793039099.274417,
+  "example": "topic_publish",
+  "run_id": "r24510ae5x1d1307ee",
+  "profile": "lmaws",
+  "region": "us-east-1",
+  "native": {
+    "schema": "lmaws-cost-v2",
+    "run_id": "rae595e31x72b24f0c",
+    "example": "topic_publish",
+    "region": "us-east-1",
+    "live": true,
+    "cap_usd": 0.05,
+    "hard_ceiling_usd": 0.25,
+    "total_estimated_usd": 4.5e-06,
+    "reserved_future_usd": 0,
+    "price_table": {
+      "sqs.request_64kib": 4e-07,
+      "dynamodb.write_1kib": 6.25e-07,
+      "s3.write_or_list_request": 5e-06,
+      "sns.request_64kib": 5e-07,
+      "dynamodb.storage_gb_month": 0.25,
+      "s3.get_or_head_request": 4e-07,
+      "secretsmanager.api_request": 5e-06,
+      "conservative_unknown_api_request": 5e-06,
+      "s3.storage_gb_month": 0.023
+    },
+    "price_metadata": {
+      "sources": [
+        "https://aws.amazon.com/s3/pricing/",
+        "https://aws.amazon.com/sqs/pricing/",
+        "https://aws.amazon.com/sns/pricing/",
+        "https://aws.amazon.com/dynamodb/pricing/",
+        "https://aws.amazon.com/systems-manager/pricing/",
+        "https://aws.amazon.com/secrets-manager/pricing/"
+      ],
+      "price_region": "us-east-1",
+      "free_tier_credits_applied": false,
+      "month_minutes": 43200,
+      "currency": "USD",
+      "unknown_calls": "conservative $5 per million attempts",
+      "estimate_only": true,
+      "as_of": "2026-10-25"
+    },
+    "resources": [
+      {
+        "kind": "topic",
+        "id": "arn:aws:sns:us-east-1:************:lmaws_rae595e31x72b24f0c_sample",
+        "name": "lmaws_rae595e31x72b24f0c_sample",
+        "minutes_alive": 0.039998897467,
+        "stored_bytes_upper_bound": 0,
+        "requests": {
+          "sns.ListTopics": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-07,
+            "estimated_usd": 5e-07
+          },
+          "sns.CreateTopic": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-07,
+            "estimated_usd": 5e-07
+          },
+          "sns.ListTagsForResource": {
+            "billing_units": 4,
+            "requests": 4,
+            "unit_price_usd": 5e-07,
+            "estimated_usd": 2e-06
+          },
+          "sns.Publish": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-07,
+            "estimated_usd": 5e-07
+          },
+          "sns.DeleteTopic": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-07,
+            "estimated_usd": 5e-07
+          },
+          "sns.GetTopicAttributes": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-07,
+            "estimated_usd": 5e-07
+          }
+        },
+        "storage_unit_price_usd_gb_month": 0,
+        "request_cost_usd": 4.5e-06,
+        "storage_cost_usd": 0,
+        "cost_subtotal_usd": 4.5e-06,
+        "tags": {
+          "lmaws_test": "rae595e31x72b24f0c"
+        }
+      }
+    ],
+    "rejected_creations": [],
+    "service_requests": {
+      "sns.ListTopics": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 5e-07,
+        "estimated_usd": 5e-07
+      },
+      "sns.CreateTopic": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 5e-07,
+        "estimated_usd": 5e-07
+      },
+      "sns.ListTagsForResource": {
+        "billing_units": 4,
+        "requests": 4,
+        "unit_price_usd": 5e-07,
+        "estimated_usd": 2e-06
+      },
+      "sns.Publish": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 5e-07,
+        "estimated_usd": 5e-07
+      },
+      "sns.DeleteTopic": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 5e-07,
+        "estimated_usd": 5e-07
+      },
+      "sns.GetTopicAttributes": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 5e-07,
+        "estimated_usd": 5e-07
+      }
+    },
+    "cap_refusals": 0,
+    "leftover_count": 0,
+    "provider_verification": [
+      {
+        "kind": "topic",
+        "name": "lmaws_rae595e31x72b24f0c_sample",
+        "absent": true
+      }
+    ],
+    "sweeper_leftover_count": 0,
+    "profile": "lmaws",
+    "estimated_cost_display": "$0.00000450",
+    "finished_at": "2026-10-26T18:18:10.312709620Z",
+    "independent_readonly_verification": [
+      {
+        "kind": "topic",
+        "name": "lmaws_rae595e31x72b24f0c_sample",
+        "absent": true,
+        "profile": "default",
+        "region": "us-east-1",
+        "requests": 1,
+        "unit_price_usd": "5E-7",
+        "estimated_usd": "5E-7"
+      }
+    ],
+    "independent_verification_estimated_usd": "5E-7",
+    "wall_seconds": 6.294791,
+    "tags_verification": "Host ownership-tag reads before update/delete; independent default-profile absence check after teardown",
+    "outputs_csv": "phase,count\ncreated,1\npublished,1\ncleaned,0\n",
+    "example_exit_code": 0,
+    "png_generated": true,
+    "ledger_updates": [
+      {
+        "kind": "topic",
+        "action": "update:message"
+      }
+    ],
+    "user_test_command": "lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topic_publish.lms",
+    "status": "passed",
+    "observed_resources": [
+      {
+        "kind": "topic",
+        "id": "arn:aws:sns:us-east-1:************:lmaws_rae595e31x72b24f0c_sample",
+        "name": "lmaws_rae595e31x72b24f0c_sample",
+        "minutes_alive": 0.039998897467,
+        "stored_bytes_upper_bound": 0,
+        "requests": {
+          "sns.ListTopics": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-07,
+            "estimated_usd": 5e-07
+          },
+          "sns.CreateTopic": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-07,
+            "estimated_usd": 5e-07
+          },
+          "sns.ListTagsForResource": {
+            "billing_units": 4,
+            "requests": 4,
+            "unit_price_usd": 5e-07,
+            "estimated_usd": 2e-06
+          },
+          "sns.Publish": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-07,
+            "estimated_usd": 5e-07
+          },
+          "sns.DeleteTopic": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-07,
+            "estimated_usd": 5e-07
+          },
+          "sns.GetTopicAttributes": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-07,
+            "estimated_usd": 5e-07
+          }
+        },
+        "storage_unit_price_usd_gb_month": 0,
+        "request_cost_usd": 4.5e-06,
+        "storage_cost_usd": 0,
+        "cost_subtotal_usd": 4.5e-06,
+        "tags": {
+          "lmaws_test": "rae595e31x72b24f0c"
+        }
+      }
+    ]
+  },
+  "lmcloud": {
+    "engine_version": "lmcloud 0.1.10",
+    "engine_sha256": "f2013424e5d5319a765de476cc68d6267c71ab36eb0922ffd1f41e559db99f80",
+    "config_sha256": "3f947d0b18358c9c8d0a821f90daf57e3343390c732f6a080817e679b9288c15",
+    "schema": "lmaws-tofu-ledger-v2",
+    "example": "topic_publish",
+    "run_id": "r24510ae5x1d1307ee",
+    "profile": "lmaws",
+    "region": "us-east-1",
+    "live": true,
+    "resources": [
+      {
+        "kind": "topic",
+        "name": "lmaws_r24510ae5x1d1307ee_sample",
+        "tags": {
+          "lmaws_test": "r24510ae5x1d1307ee"
+        },
+        "request_unit_price_usd_upper_bound": "0.000005",
+        "request_allowance": 500,
+        "minutes_alive_upper_bound": "0.5095718788334731"
+      }
+    ],
+    "price_table": {
+      "s3.request_upper_bound": "0.000005",
+      "sqs.request": "4E-7",
+      "sns.request": "5E-7",
+      "dynamodb.write_1kib": "6.25E-7",
+      "ssm.standard": "0",
+      "logs.empty_group": "0"
+    },
+    "price_method": "Conservative upper bound of 500 provider/verification requests at the maximum table price, reserved before plan; not observed SDK request counts or an invoice measurement; tiny storage included",
+    "cap_usd": "0.0499945",
+    "request_allowance": 500,
+    "request_unit_price_usd": "0.000005",
+    "total_estimated_usd": "0.0025",
+    "leftover_count": 0,
+    "preflight_absence": [
+      {
+        "kind": "topic",
+        "name": "lmaws_r24510ae5x1d1307ee_sample",
+        "absent": true,
+        "profile": "default",
+        "region": "us-east-1",
+        "requests": 1,
+        "unit_price_usd": "5E-7",
+        "estimated_usd": "5E-7"
+      }
+    ],
+    "observed_resources": [
+      {
+        "kind": "topic",
+        "provider_type": "aws_sns_topic",
+        "name": "lmaws_r24510ae5x1d1307ee_sample",
+        "parent": "",
+        "tags": {
+          "lmaws_test": "r24510ae5x1d1307ee"
+        },
+        "address": "aws_sns_topic.topic"
+      }
+    ],
+    "independent_readonly_verification": [
+      {
+        "kind": "topic",
+        "name": "lmaws_r24510ae5x1d1307ee_sample",
+        "absent": true,
+        "profile": "default",
+        "region": "us-east-1",
+        "requests": 1,
+        "unit_price_usd": "5E-7",
+        "estimated_usd": "5E-7"
+      }
+    ],
+    "status": "passed",
+    "run_error": "",
+    "cleanup_error": "",
+    "wall_seconds": 30.574321,
+    "outputs": {
+      "estimated_cost": {
+        "sensitive": false,
+        "value": "$0.0001",
+        "type": "string"
+      },
+      "example_id": {
+        "sensitive": false,
+        "value": "topic_publish",
+        "type": "string"
+      },
+      "resource_count": {
+        "sensitive": false,
+        "value": "1",
+        "type": "string"
+      }
+    }
+  },
+  "leftover_count": 0,
+  "comparison": {
+    "resources": "same observed parent/child types, names and tags after run-ID normalization",
+    "outputs": "same supported fields; unsupported native fields: published",
+    "why": "Topic lifecycle matches; Publish is imperative and not represented by Terraform resource. Both engines passed.",
+    "estimated_cost_delta_usd": "0.0024955",
+    "wall_delta_seconds": 24.27953
+  }
+}

@@ -1,13 +1,11 @@
-# Local AWS-agent test procedure (v0.1.2)
+# Local AWS profile test procedure (v0.1.3)
 
-READY FOR USER TEST. All 19 read-only and the bucket/object native/lmcloud pairs
-completed live using lmcloud v0.1.10 and AWS provider 5.100.0: seven comparisons
-match, 13 retain explicit output or local-state differences. Six previously denied
-write/lifecycle examples remain not comparable; one metadata read per prior failure
-confirmed absence without proving create permission. Four IAM examples remain
-estimated only and must be skipped. No lmcloud core patch was needed.
-See [RESULTS](../compare/RESULTS.md), [campaign costs](../evidence/comparison-campaign-v0110.json)
-and [independent cleanup proof](../evidence/comparison-cleanup-v0110.json).
+READY FOR USER TEST. All 26 live native/lmcloud pairs completed using lmcloud
+v0.1.10 and AWS provider 5.100.0: eight comparisons match and 18 retain explicit
+output or local-state differences. Four IAM examples remain estimated only and
+must be skipped. No lmcloud core patch was needed.
+See [RESULTS](../compare/RESULTS.md), [campaign costs](../evidence/comparison-campaign-v013.json)
+and [independent cleanup proof](../evidence/comparison-cleanup-v013.json).
 
 Use lmctl/lmscript >=0.2.420. Native autoruns need no Java. Comparison autoruns also
 need Python 3, curl and AWS CLI for ledgers and independent metadata-only checks.
@@ -22,45 +20,38 @@ export AWS_EC2_METADATA_DISABLED=true LMAWS_LIVE=1
 export LMAWS_MAX_COST_USD=0.05
 export LMAWS_LEDGER_DIR="$PWD/ledgers"
 export LMAWS_EVIDENCE_DIR="$PWD/evidence"
-export LMSCRIPT_TOOL_CACHE="$PWD/.tools-lmaws-v012"
+export LMSCRIPT_TOOL_CACHE="$PWD/.tools-lmaws-v013"
 ```
 
 `default` is READ-ONLY and is used for all inventories and independent deletion
 checks. Only `lmaws` may create/update/delete; the native host and comparison
-runtime reject other profiles for writes. Both configured profiles were verified
-to target the same account without printing its ID. The host never edits IAM,
-credentials or profiles. The owner's agent may grant the following scoped actions
-to the existing lmaws role; no IAM write permissions are needed by these examples.
+runtime reject other profiles for writes. The host never edits IAM, credentials or
+profiles. The `lmaws` profile is a federated session issued by the existing local
+session tooling. The policy file is `~/.aws/session-tools/tasks/iam-snapshots/local-lmaws-session.json`.
+For SQS, SSM, DynamoDB, SNS and CloudWatch Logs it allows run-owned `lmaws_` and
+`lmaws-` names; S3 buckets and objects use `lmaws-` because underscores are not
+valid in bucket names. The `lmaws_test` ownership tag is required for mutable
+resources. IAM examples remain skipped because federated sessions cannot call IAM.
 
-| Service | Required IAM actions | Resource scope |
-| --- | --- | --- |
-| S3 | `s3:CreateBucket`, `s3:PutBucketTagging`, `s3:GetBucketTagging`, `s3:ListBucket`, `s3:DeleteBucket`; `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` | `arn:aws:s3:::lmaws-*`; object actions on `arn:aws:s3:::lmaws-*/*` |
-| SQS | `sqs:CreateQueue`, `sqs:TagQueue`, `sqs:GetQueueUrl`, `sqs:ListQueueTags`, `sqs:SendMessage`, `sqs:DeleteQueue` | `arn:aws:sqs:us-east-1:<account>:lmaws_*` |
-| SSM | `ssm:PutParameter`, `ssm:AddTagsToResource`, `ssm:ListTagsForResource`, `ssm:DeleteParameter` | `arn:aws:ssm:us-east-1:<account>:parameter/lmaws_*` (Standard String only; no value reads needed) |
-| DynamoDB | `dynamodb:CreateTable`, `dynamodb:TagResource`, `dynamodb:DescribeTable`, `dynamodb:ListTagsOfResource`, `dynamodb:PutItem`, `dynamodb:DeleteTable` | `arn:aws:dynamodb:us-east-1:<account>:table/lmaws_*` |
-| SNS | `sns:CreateTopic`, `sns:TagResource`, `sns:ListTagsForResource`, `sns:GetTopicAttributes`, `sns:Publish`, `sns:DeleteTopic` | `arn:aws:sns:us-east-1:<account>:lmaws_*` |
-| CloudWatch Logs | `logs:CreateLogGroup`, `logs:TagResource`, `logs:TagLogGroup`, `logs:ListTagsLogGroup`, `logs:PutRetentionPolicy`, `logs:DeleteLogGroup` | `arn:aws:logs:us-east-1:<account>:log-group:lmaws_*` and its `:*` form where required by the action |
+The session policy is assembled by the existing tooling at
+`~/.aws/session-tools/scripts/aws-profile-session.py` from that local task policy
+and is re-issued there when a session expires. AWS STS limits the combined
+plaintext inline and managed session policy to 2,048 characters; keep the
+service/action/resource
+patterns concise and scoped to these prefixes. Do not copy account IDs, tokens or
+policy contents into this repository, and never use the admin profile to run an
+example. S3 bucket names cannot contain underscores, so S3 always uses `lmaws-`.
+See the [STS federation policy limits](https://docs.aws.amazon.com/cli/latest/reference/sts/get-federation-token.html)
+for the plaintext policy and packed-size limits.
 
-The action table describes native SDK requests. The external AWS provider performs
-its own metadata reads; the existing lmaws profile completed the recorded
-bucket/object comparison.
+The external AWS provider performs its own metadata reads; the existing lmaws
+profile is used for the write comparison while `default` independently checks
+absence after teardown.
 
-Use your account in `<account>`. Where supported, require the creation request tag
-`aws:RequestTag/lmaws_test` and restrict tag keys to `lmaws_test`; authorize later
-mutations only for the matching `aws:ResourceTag/lmaws_test`. Consult each service's
-condition support rather than applying one blanket tag condition: S3 tags are
-applied after CreateBucket, so initial create/tag and rollback must work on the
-name scope before a tag exists. Host-side ownership checks additionally require
-the exact run ID, prefix and ledger. Do not grant writes outside these prefixes.
-
-Inventory/preflight calls that cannot use a resource ARN need `Resource: "*"`:
-`s3:ListAllMyBuckets`, `sqs:ListQueues`, `sns:ListTopics`, `dynamodb:ListTables`,
-`ssm:DescribeParameters`, `logs:DescribeLogGroups`, `ec2:DescribeInstances`,
-`ec2:DescribeVpcs`, `ec2:DescribeSecurityGroups`, `lambda:ListFunctions`,
-`cloudwatch:DescribeAlarms`, `route53:ListHostedZones`, `secretsmanager:ListSecrets`,
-`ecs:ListClusters`. These are metadata-only; no secret-value
-reads, IAM writes, EC2 creates, or Lambda creates are needed by this release.
-`sts:GetCallerIdentity` supplies masked identity metadata. Skip `roles`, `identity`, `read_only_audit` and `service_matrix` live: federated profiles cannot call IAM. No IAM grants, profile repair or identity switching are part of this test.
+The host applies ownership tags and verifies the exact run ID, prefix and ledger;
+S3 tagging occurs after bucket creation. The four IAM examples are offline-only:
+federated sessions cannot call IAM. No profile repair or identity switching is
+part of this test.
 
 AWS references: [SQS actions and tag conditions](https://docs.aws.amazon.com/service-authorization/latest/reference/list_sqs.html),
 [S3 operation permissions](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-with-s3-policy-actions.html)
@@ -69,11 +60,13 @@ AWS references: [SQS actions and tag conditions](https://docs.aws.amazon.com/ser
 
 ## Native autoruns: exact profile for each example
 
-S3 `bucket_objects`: measured estimated cost $0.00001781, independently absent after
-cleanup. Read-only examples print $0.00. The six denied lifecycle examples remain
-price-table estimates: SQS/DynamoDB/SNS $0.0001 planning allowance; Standard SSM and
-empty Logs $0.00. Actual request/lifetime estimates are written in each ledger,
-including denied attempts. Default per-example cap $0.05; hard run ceiling $0.25.
+S3 `bucket_objects` and the six lifecycle examples report measured price-table
+estimates in the evidence files; each is independently absent after cleanup.
+The six new measurements are: `before_after` $0.00000400,
+`queue_pipeline` $0.00000360, `sandbox_lifecycle` $0.00000000,
+`table_items` $0.00000063, `topic_publish` $0.00000450 and `log_retention`
+$0.00000000. Read-only examples print $0.00. Default per-example cap $0.05;
+hard run ceiling $0.25.
 
 Each command below has its own cap. For one aggregate capped batch use the checkout
 harness described below, not independent commands. Do not rerun writes merely to
@@ -115,10 +108,11 @@ AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai
 A repository checkout can enforce the aggregate campaign budget and skip IAM:
 
 ```sh
-# Install/download the v0.1.2 platform executable into target/lmaws, verify SHA256SUMS.
+# Install/download the v0.1.3 platform executable into target/lmaws, verify SHA256SUMS.
 LMAWS_LIVE=1 AWS_PROFILE=lmaws python3 scripts/test-live-examples.py --host target/lmaws --example bucket_objects
 # Reuse the successful native proof to avoid repeating its creation.
-# Other six write examples remain skipped until the owner establishes create permission.
+# The six write examples can be run once with AWS_PROFILE=lmaws after re-issuing the
+# federated session; do not repeat writes merely to refresh screenshots.
 export TF_PLUGIN_CACHE_DIR="${TMPDIR:-/tmp}/lmaws-provider-cache"
 mkdir -p "$TF_PLUGIN_CACHE_DIR"
 # Run exactly one native/lmcloud comparison:
@@ -144,7 +138,7 @@ including tiny storage. This is explicitly an allowance, not measured SDK traffi
 Reserve this upper allowance before plan for both metadata reads and writes.
 The successful campaign created one SDK bucket/object and one provider bucket/object;
 all were deleted. Total conservative campaign accounting, including retries and
-independent checks, was $0.05754170 (native $0.00004000; provider upper bound $0.0575).
+independent checks, was $0.02001532500021, below the $0.25 hard ceiling.
 
 ## Sweep and evidence
 
@@ -163,7 +157,7 @@ default-profile checks. A denied/unknown/network response is never absence. Pres
 failed comparison state under ignored `compare/runs/`; do not delete it before resolving
 cleanup. No automated sweeper deletes resources. The current comparison campaign
 created one SDK bucket/object and one provider bucket/object; all were independently
-verified absent. Its conservative total was $0.05754170, including retries and
+verified absent. Its conservative total was $0.02001532500021, including retries and
 metadata checks. Prices vary by region and time; no Cost Explorer request was made.
 
 Comparison scripts pin lmcloud v0.1.10 for reproducibility. Its provider installer

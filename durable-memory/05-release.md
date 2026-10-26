@@ -1,8 +1,8 @@
 # Releases and remaining work
 
-Published versions: v0.1.0, v0.1.1 and v0.1.2. The latest recorded release is
-v0.1.2, source `df5fea07de756b3e13114573792a99e086ebc838`; documentation commits
-after that tag do not create another release. [Release proof](release-v012.json)
+Published versions: v0.1.0, v0.1.1 and v0.1.2. v0.1.3 is the pending patch release
+for the completed six-example live campaign; update this record only after its tag,
+five assets and SHA256SUMS are published. [Release proof](release-v012.json)
 records five native executables plus SHA256SUMS and verified asset digests.
 [Autorun proof](autorun-v012.json) records all 30 examples from empty working
 directories and a fresh shared cache using that exact released binary.
@@ -18,8 +18,9 @@ five platform jobs; that automation dependency has not been removed.
 
 Genuinely open items:
 
-- User-side write permissions for the six denied examples; full lifecycle live
-  success has not been demonstrated. Four IAM examples remain skipped/estimated.
+- Four IAM examples remain skipped/estimated because federated sessions cannot
+  call IAM. The six scoped lifecycle writes now have live evidence and zero
+  leftovers; future sessions must be re-issued through the existing helper.
 - Incomplete AWS-provider list/message/category parity and opaque provider
   request accounting; see [comparisons](06-comparisons.md). Provider init/version
   blockers are resolved in lmcloud v0.1.10.

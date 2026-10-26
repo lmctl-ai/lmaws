@@ -12,11 +12,17 @@ installed provider across independent working directories. Scripts pin v0.1.10
 for reproducibility. The provider stays external; it is not bundled in lmaws.
 
 [Campaign evidence](../evidence/comparison-campaign-v0110.json) and
-[RESULTS](RESULTS.md) record 20 completed live pairs (19 read-only plus one
-bucket/object lifecycle), seven matching comparisons and 13 explicit output/
-local-state differences. Six prior denied writes were not repeated after one
-metadata-only absence recheck each; those reads do not establish create rights.
-Four IAM pairs were skipped. All observed leftovers are zero.
+[RESULTS](RESULTS.md) record the earlier 20 live pairs plus the six newly
+authorized lifecycle pairs in the v0.1.3 campaign: 26 completed pairs total,
+eight matching comparisons and 18 explicit output/local-state differences.
+All six writes passed with the lmaws_ ownership prefix/tag, were destroyed,
+and were independently absent under the default read-only profile. Four IAM
+pairs remain skipped because federated sessions cannot call IAM. All observed
+leftovers are zero.
+
+The two lifecycle fixtures that previously used leading-slash names now use
+the same lmaws_ prefix as the native examples. `scripts/test-compare.py`
+derives their rendered names from the checked-in HCL and rejects a leading slash.
 
 Real runs exposed defects in the lmaws equivalents, now fixed: ECS
 `cluster_arns`, the service-matrix Secrets Manager/Route53 references, explicit

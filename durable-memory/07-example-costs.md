@@ -14,6 +14,15 @@ use that named profile. Default is read-only. Use us-east-1; live cost sessions
 reject other regions. Do not use admin/agentcore-poc or alter IAM/credentials/
 profiles. IAM examples stay skipped under the federated setup. No OIDC or cloud
 credentials belong in CI; demo and loopback fakes bypass real credentials only.
+The `lmaws` profile is issued by the existing local session helper at
+`~/.aws/session-tools/scripts/aws-profile-session.py` from
+`~/.aws/session-tools/tasks/iam-snapshots/local-lmaws-session.json`; its session
+policy permits both `lmaws_` and `lmaws-` resource names for SQS, SSM, DynamoDB,
+SNS and Logs, and `lmaws-` S3 names, with `lmaws_test` ownership tags. STS caps
+the combined plaintext inline and managed policy at 2,048 characters, so keep
+additions concise and re-issue the session through the same helper when it
+expires. Never copy policy
+contents, account IDs or credentials into evidence or documentation.
 
 `CostLedger` embeds its us-east-1 price snapshot in each ledger with decimal unit
 prices, resource lifetimes in minutes, SDK transmission attempts/retries, billing

@@ -3,7 +3,7 @@
 There are 30 self-contained `.lms` examples: 19 read-only stories, seven
 write/lifecycle stories and four IAM-dependent stories. See [README](../README.md)
 for the complete image gallery and cost captions; [USER_TEST](../docs/USER_TEST.md)
-assigns the live profile and permissions to every example.
+describes the federated `lmaws` session policy and profile rules.
 
 Each script uses `aws.example(name)`: demo fixtures by default, live only with
 `LMAWS_LIVE=1`. It asserts fixture values only in demo mode, accepts sparse real
@@ -21,8 +21,7 @@ No Java or repository-relative input is required for native autoruns. Rendering
 tests run the actual scripts; `examples/render-all.lms` refreshes gallery assets.
 
 All README examples label “running this example costs about $X”. Nineteen live
-read-only results display `$0.00`; S3 bucket/object has measured estimated cost.
-Six denied write examples are table estimates for the full lifecycle, and four
-IAM examples are estimated only. The tiny-write planning allowance is not an
-invoice or observed full-run result. Denied requests can still have nonzero
-unrounded estimates. See [safety/cost](07-example-costs.md) for price-table limits.
+read-only results display `$0.00`; S3 bucket/object and the six lifecycle stories
+have measured price-table estimates after the federated session was re-issued.
+Four IAM examples remain estimated only. The price table is not an invoice.
+See [safety/cost](07-example-costs.md) for price-table limits.
