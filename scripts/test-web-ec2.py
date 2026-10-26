@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Loopback EC2 SDK test for WebCompute; no AWS credentials or network."""
-import http.server, pathlib, subprocess, tempfile, threading, os, urllib.parse, sys
+import http.server, pathlib, subprocess, tempfile, threading, os, urllib.parse, sys, shutil
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 class Fake(http.server.BaseHTTPRequestHandler):
     requests=[]
@@ -13,9 +13,11 @@ class Fake(http.server.BaseHTTPRequestHandler):
         else: body='<AuthorizeSecurityGroupIngressResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"/>'
         data=body.encode(); self.send_response(200); self.send_header('Content-Type','text/xml'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
 def main():
+    maven=shutil.which("mvn.cmd" if os.name=="nt" else "mvn") or "mvn"
+    maven_argv=["cmd.exe","/c",maven] if os.name=="nt" else [maven]
     srv=http.server.ThreadingHTTPServer(('127.0.0.1',0),Fake); threading.Thread(target=srv.serve_forever,daemon=True).start(); ep=f'http://127.0.0.1:{srv.server_port}'
     with tempfile.TemporaryDirectory(prefix='lmaws-web-ec2-') as td:
-        td=pathlib.Path(td); cp=td/'cp'; subprocess.run(['mvn','-q','dependency:build-classpath',f'-Dmdep.outputFile={cp}'],cwd=ROOT,check=True); classpath=str(ROOT/'target/classes')+os.pathsep+cp.read_text().strip(); src=td/'WebEc2.java'
+        td=pathlib.Path(td); cp=td/'cp'; subprocess.run(maven_argv+['-q','dependency:build-classpath',f'-Dmdep.outputFile={cp}'],cwd=ROOT,check=True,timeout=120); classpath=str(ROOT/'target/classes')+os.pathsep+cp.read_text().strip(); src=td/'WebEc2.java'
         src.write_text('''package ai.lmctl.lmaws; import java.net.*; public class WebEc2 { public static void main(String[] a){ var b=new AwsBackend("us-east-1",false,null); var w=new WebCompute(b); var checkpoints=new java.util.ArrayList<java.util.Map<String,String>>();var r=w.create("a1b2c3d4","vpc-1234abcd","subnet-1234abcd","ami-12345678","198.51.100.7/32","t3.nano",8,"#!/bin/bash\\necho lmweblab\\n",0.004,m->checkpoints.add(m)); if(checkpoints.size()<3||!checkpoints.get(0).containsKey("security_group_id")||checkpoints.get(0).containsKey("instance_id")||!checkpoints.get(1).containsKey("instance_id"))throw new AssertionError("early creation checkpoints missing");if(!r.get("public_ip").equals("198.51.100.7")) throw new Error(r.toString()); try { w.create("a1b2c3d4","vpc-1234abcd","subnet-1234abcd","ami-12345678","0.0.0.0/0","m7g.large",9,"#!/bin/bash lmweblab",0.004); throw new Error("unsafe input accepted"); } catch(RuntimeException expected){} b.close(); }}''')
         subprocess.run(['javac','-d',str(td),'-cp',classpath,str(src)],check=True); env=dict(os.environ,LMAWS_ENDPOINT=ep,LMAWS_LIVE='1',AWS_PROFILE='lmaws',AWS_REGION='us-east-1',CI='true',AWS_EC2_METADATA_DISABLED='true'); subprocess.run(['java','-cp',classpath+os.pathsep+str(td),'ai.lmctl.lmaws.WebEc2'],cwd=ROOT,env=env,check=True)
         acts=[x[0] for x in Fake.requests]; assert acts[:4]==['CreateSecurityGroup','AuthorizeSecurityGroupIngress','RunInstances','DescribeInstances'],acts

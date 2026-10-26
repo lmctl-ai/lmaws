@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Loopback AWS SDK serialization test for WebStackAws (no credentials/network)."""
-import http.server, json, pathlib, subprocess, tempfile, threading, os, sys
+import http.server, json, pathlib, subprocess, tempfile, threading, os, sys, shutil
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 class Fake(http.server.BaseHTTPRequestHandler):
@@ -21,9 +21,11 @@ class Fake(http.server.BaseHTTPRequestHandler):
         self.send_response(200); self.send_header("Content-Type",ctype); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
 
 def main():
+    maven=shutil.which("mvn.cmd" if os.name=="nt" else "mvn") or "mvn"
+    maven_argv=["cmd.exe","/c",maven] if os.name=="nt" else [maven]
     server=http.server.ThreadingHTTPServer(("127.0.0.1",0),Fake); threading.Thread(target=server.serve_forever,daemon=True).start(); endpoint=f"http://127.0.0.1:{server.server_port}"
     with tempfile.TemporaryDirectory(prefix="lmaws-web-http-") as td:
-        td=pathlib.Path(td); cpfile=td/"cp.txt"; subprocess.run(["mvn","-q","dependency:build-classpath",f"-Dmdep.outputFile={cpfile}"],cwd=ROOT,check=True)
+        td=pathlib.Path(td); cpfile=td/"cp.txt"; subprocess.run(maven_argv+["-q","dependency:build-classpath",f"-Dmdep.outputFile={cpfile}"],cwd=ROOT,check=True,timeout=120)
         cp=str(ROOT/"target/classes")+os.pathsep+cpfile.read_text().strip(); src=td/"WebHttp.java"
         src.write_text('''import ai.lmctl.lmaws.*; import software.amazon.awssdk.services.cloudfront.*; import software.amazon.awssdk.services.acm.*; import software.amazon.awssdk.services.s3.*; import software.amazon.awssdk.services.ec2.*; import software.amazon.awssdk.services.route53.*; import software.amazon.awssdk.regions.*; import software.amazon.awssdk.auth.credentials.*; public class WebHttp { public static void main(String[] a){ var c=CloudFrontClient.builder().region(Region.US_EAST_1).endpointOverride(java.net.URI.create(a[0])).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("x","x"))).build(); var ac=AcmClient.builder().region(Region.US_EAST_1).endpointOverride(java.net.URI.create(a[0])).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("x","x"))).build(); var s=S3Client.builder().region(Region.US_EAST_1).endpointOverride(java.net.URI.create(a[0])).forcePathStyle(true).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("x","x"))).build(); var r=Route53Client.builder().region(Region.AWS_GLOBAL).endpointOverride(java.net.URI.create(a[0])).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("x","x"))).build(); var e=Ec2Client.builder().region(Region.US_EAST_1).endpointOverride(java.net.URI.create(a[0])).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("x","x"))).build(); var w=new WebStackAws(r,c,ac,s,e,"a1b2c3d4","example.com"); String o=w.createOac(); if(!"oac-fixture".equals(o))throw new AssertionError("OAC response not decoded"); var dist=w.createDistribution("lmaws-site-a1b2c3d4","lmaws-site-a1b2c3d4.example.com",o); if(!"EDFIXTURE".equals(dist.id()))throw new AssertionError("distribution response not decoded");w.requestCertificate("lmaws-site-a1b2c3d4.example.com"); }}''')
         subprocess.run(["javac","-cp",cp,str(src)],check=True); subprocess.run(["java","-cp",cp+os.pathsep+str(td),"WebHttp",endpoint],check=True)

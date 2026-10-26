@@ -48,4 +48,4 @@ own signatures (`iam_policy_lint`, `iam_policy_get`, `iam_policy_versions`,
 `iam_policy_put`, `iam_policy_delete`); `CredentialProcess` adds
 `lmaws --credential-process <mode>` on the CLI and `session_doctor` on `Cloud`.
 The current merged API, including account recovery, web-stack and session-doctor methods, has
-93 own / 165 total signatures.
+94 own / 166 total signatures.
