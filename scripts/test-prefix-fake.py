@@ -99,7 +99,7 @@ def main(host):
             assert dry.returncode==0 and not Fake.deletes,(dry.stderr,Fake.deletes)
             applied=execute_body('let c=aws.example("cleanup_fixture");let rows=c.cleanup_prefix("lmaws",24,true);file_write("cleanup.json",rows.json());','lmaws')
             assert applied.returncode==0,(applied.stderr,Fake.requests)
-            assert Fake.deletes==[name],Fake.deletes
+            assert Fake.deletes==[name],(Fake.deletes,applied.stdout,(work/"cleanup.json").read_text())
             assert 'cleanup dry-run plan:' in applied.stdout
             cleaned=json.loads((work/'cleanup.json').read_text());assert any(row['name']==name and row['status']=='deleted' and row['provider_absent']=='true' for row in cleaned),cleaned
             absence=execute_body('let c=aws.example("independent_fixture");check(c.resource_exists("queue","'+name+'") == false);')
