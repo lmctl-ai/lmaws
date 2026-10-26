@@ -44,4 +44,4 @@ secret values, payload contents or raw SDK errors. See [live results](03-live.md
 Read-only Spend reports are an explicit paid-query exception: Cost Explorer
 $0.01/page and CloudWatch metrics are admitted before dispatch, including failed
 attempts. Billing estimates are not hidden as $0.00 merely because no resource
-was created. See [spend safety](08-spend-reports.md).
+was created. See [spend safety](09-spend-reports.md).

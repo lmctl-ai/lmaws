@@ -8,7 +8,7 @@ Current maintenance notes:
 - [04-examples.md](04-examples.md): 76 examples, autoruns, images and cost labels.
 - [05-release.md](05-release.md): published versions, distribution and genuinely open items.
 - [06-comparisons.md](06-comparisons.md): lmcloud equivalents, findings and safety checks.
-- [08-spend-reports.md](08-spend-reports.md): capped read-only billing analysis and private output.
+- [09-spend-reports.md](09-spend-reports.md): capped read-only billing analysis and private output.
 - [07-example-costs.md](07-example-costs.md): profiles, ownership, teardown, sweeper and caps.
 - [08-recipes.md](08-recipes.md): reusable recipe modules, synthetic examples and catalogue gates.
 

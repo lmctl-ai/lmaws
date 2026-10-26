@@ -28,7 +28,7 @@ resource costs require opt-in and only cover 14 days; the tool never enables it.
 EBS/snapshot/run-rate and workload prices are reference estimates, not invoices.
 
 Local checks: 115 numeric/privacy/cap controls, 32 JVM SDK loopback controls plus native SDK wire validation,
-12 API gate checks, all eight spend scripts and 12 synthetic figures. Managed/native gates passed, including all 67 examples; publication follows
+12 API gate checks, all eight spend scripts and 12 synthetic figures. Managed/native gates passed, including all 76 examples; publication follows
 the ordinary local gate. Live validation details remain
 private; only synthetic evidence belongs in this repository.
 

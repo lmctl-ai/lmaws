@@ -32,4 +32,4 @@ See [safety/cost](07-example-costs.md) for price-table limits.
 Eight additional deterministic spend examples bring the current gallery to 76. They
 use aws.spend rather than the owned-resource example runner and generate 12
 figures. Their paid-query planning estimates are explicit; actual fixture runs
-cost no AWS money. See [spend reports](08-spend-reports.md).
+cost no AWS money. See [spend reports](09-spend-reports.md).
