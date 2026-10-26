@@ -1,10 +1,5 @@
 name: ci
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
-    paths-ignore: ['durable-memory/**', '**.md']
-  pull_request:
   workflow_dispatch:
 env:
   PYTHONUTF8: '1'
