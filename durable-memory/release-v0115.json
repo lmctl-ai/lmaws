@@ -1,0 +1,50 @@
+{
+  "assets": [
+    {
+      "bytes": 96405624,
+      "name": "lmaws-linux-arm64",
+      "sha256": "ad4988f58083126e60b67d97726522ea49c34cfdbb13849b75efdb6665f0a638"
+    },
+    {
+      "bytes": 99944712,
+      "name": "lmaws-linux-x64",
+      "sha256": "854e11ed675cb27edb1d239d4dcd768c8b6f35b4fbfc010c897143c4b61d1708"
+    },
+    {
+      "bytes": 91915800,
+      "name": "lmaws-macos-arm64",
+      "sha256": "8b934ecdd020fdffa52e5cffdc85eca67d55f243af955e875a79f97ad5ff9676"
+    },
+    {
+      "bytes": 94706576,
+      "name": "lmaws-macos-x64",
+      "sha256": "720d84ae40587ac2d9d388ec86e5800f60f40c3035671959d14e7c1c2065fca1"
+    },
+    {
+      "bytes": 96956416,
+      "name": "lmaws-windows-x64.exe",
+      "sha256": "7e08d6d2f46d6e99bf7cf37ccf468ccd35df4b9a54f16e528fbfeebf38436b75"
+    }
+  ],
+  "aws_requests": 0,
+  "callable_host_bindings": 152,
+  "ci_conclusion": "success",
+  "ci_url": "https://github.com/lmctl-ai/lmaws/actions/runs/40417639588",
+  "implicit_contexts": 1,
+  "local_gate": {
+    "gallery_programs": 115,
+    "native_sdk_loopback_checks": 33,
+    "recipe_contracts": 75,
+    "recipe_execution_regressions": 9,
+    "spend_api_cases": 12,
+    "spend_controls": 188
+  },
+  "native_fake_assertions": 188,
+  "own_signatures": 153,
+  "release_url": "https://github.com/lmctl-ai/lmaws/releases/tag/v0.1.15",
+  "source_commit": "549ee9fd40aa8b4b92b1b1a59d2a70c265d32c72",
+  "standard_signatures": 72,
+  "synthetic_only": true,
+  "total_signatures": 225,
+  "version": "0.1.15"
+}

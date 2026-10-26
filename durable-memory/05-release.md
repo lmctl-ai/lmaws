@@ -1,20 +1,24 @@
 # Releases and remaining work
 
-Published releases verified through v0.1.3. Tags v0.1.4 through v0.1.7 and v0.1.9 failed
-packaging checks and must not be described as published binaries. v0.1.13 is the
-pending patch, preserving concurrent compute, IAM policy (`lmaws_session` 22-statement
-policy live-applied), native `lmaws --credential-process <mode>` + `session_doctor`,
-the fluent IAM Permission Builder (`Policy` + 27 recipes/examples), account recovery,
-web-stack and spend-report work.
-[Release proof](release-v013.json) records the v0.1.3 five native asset digests and
-verified SHA256SUMS. [Fresh-cache proof](autorun-v013.json) records all six scoped
-lifecycle examples run offline from empty directories with the released v0.1.3
-binary; no native live writes were repeated. The earlier
-[30-example proof](autorun-v012.json) remains the v0.1.2 baseline.
-Local JVM/native test.sh and all 30 gallery programs passed; the five-platform
-packaging run `40377920161` also completed successfully. Final provider-checksum
-verification evidence and current notes landed after the source tag without
-changing the released runtime.
+Current verified release: **v0.1.15**, source commit
+`549ee9fd40aa8b4b92b1b1a59d2a70c265d32c72`.
+[Release proof](release-v0115.json) records all five binaries, their verified
+SHA256SUMS, Linux linkage and released-native offline checks. Packaging run
+[40417639588](https://github.com/lmctl-ai/lmaws/actions/runs/40417639588) passed
+on all five platforms. The snapshot includes the spend reports and the current
+IAM permission builder, credential-process and guarded web-stack API.
+
+The local managed/native gate passed all 115 gallery programs, 75 recipe
+contracts, nine recipe execution regressions, 188 spend controls, 33 native SDK
+loopback controls and 12 spend API cases. The release has 152 callable bindings,
+153 host signature lines including its implicit context, and 225 including std.
+[Fresh-cache proof](autorun-v0115.json) records eight public spend URLs from
+empty working directories, installing v0.1.15 and producing 12 synthetic images;
+no AWS credentials or account data were used. All public proof is synthetic.
+
+Earlier [v0.1.3 release](release-v013.json), [v0.1.3 autorun](autorun-v013.json),
+[v0.1.2 release](release-v012.json) and [v0.1.2 autorun](autorun-v012.json) proofs
+remain historical baselines and do not describe the current release.
 
 The manual `ci` workflow must be dispatched with a `v*` tag ref. It builds/tests JVM and native hosts on Linux x64/ARM64, macOS
 x64/ARM64 and Windows x64, then publishes the five binaries and SHA256SUMS.

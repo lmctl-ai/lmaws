@@ -29,8 +29,9 @@ resource costs require opt-in and only cover 14 days; the tool never enables it.
 EBS/snapshot/run-rate and workload prices are reference estimates, not invoices.
 
 Local checks: 188 numeric/privacy/cap controls, 32 JVM SDK loopback controls plus native SDK wire validation,
-12 API gate checks, all eight spend scripts and 12 synthetic figures. The spend release snapshot passed managed/native gates with all 88 examples; publication follows
-the ordinary local gate. Live validation details remain
+12 API gate checks, all eight spend scripts and 12 synthetic figures. The spend release snapshot passed managed/native gates with all 115 examples; v0.1.15 passed all five platform jobs and its fresh-cache public
+eight-example proof. Synthetic recipes pass explicit `--dry-run`, including under
+inherited live flags on Windows. Live validation details remain
 private; only synthetic evidence belongs in this repository.
 
 See [the user guide](../docs/SPEND_REPORT.md) for sections, profiles, prices,

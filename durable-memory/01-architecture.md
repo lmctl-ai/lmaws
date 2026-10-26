@@ -50,5 +50,6 @@ own signatures (`iam_policy_lint`, `iam_policy_get`, `iam_policy_versions`,
 From v0.1.12, the fluent IAM Permission Builder (`PolicyBuilder`, `PolicyCatalog`,
 `PolicyAnalyzer`, `PolicySimulator`) adds the `Policy` type (46 methods) and 12
 policy analysis/simulation methods on `Cloud` (58 new own signatures).
-The current merged API, including account recovery, web-stack, session-doctor and
-permission-builder methods, has 154 own / 226 total signatures.
+The verified v0.1.15 snapshot has 152 callable host bindings, 153 host signature
+lines including the implicit context, and 225 lines including 72 standard
+signatures. Use `--dsl-signatures` to inspect later main additions.

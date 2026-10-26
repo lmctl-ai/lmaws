@@ -18,7 +18,10 @@ Current maintenance notes:
 
 Current release/comparison evidence:
 
-- [release-v013.json](release-v013.json): five current assets and verified SHA256SUMS.
+- [release-v0115.json](release-v0115.json): five v0.1.15 assets, checksums, linkage and offline checks.
+- [autorun-v0115.json](autorun-v0115.json): eight fresh-cache public spend examples and 12 synthetic images.
+
+- [release-v013.json](release-v013.json): v0.1.3 baseline assets and verified SHA256SUMS.
 - [autorun-v013.json](autorun-v013.json): six fresh-cache, empty-directory offline autoruns.
 - [release-v012.json](release-v012.json): v0.1.2 asset digests and platform proof.
 - [autorun-v012.json](autorun-v012.json): 30 fresh-directory released-native autoruns.

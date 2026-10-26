@@ -1,0 +1,116 @@
+{
+  "examples": [
+    {
+      "actual_aws_cost_usd": 0,
+      "empty_working_directory": true,
+      "images": [
+        "spend_detail.png",
+        "spend_idle_resources.png",
+        "spend_savings_plan_gauge.png",
+        "spend_services.png",
+        "spend_transfer_breakdown.png"
+      ],
+      "modeled_ce_requests": 10,
+      "modeled_estimated_query_cost_usd": 0.10018,
+      "name": "spend_detail",
+      "synthetic_only": true,
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/spend_detail.lms",
+      "version": "lmaws 0.1.15"
+    },
+    {
+      "actual_aws_cost_usd": 0,
+      "empty_working_directory": true,
+      "images": [
+        "ec2_spend.png"
+      ],
+      "modeled_ce_requests": 3,
+      "modeled_estimated_query_cost_usd": 0.03,
+      "name": "ec2_spend",
+      "synthetic_only": true,
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/ec2_spend.lms",
+      "version": "lmaws 0.1.15"
+    },
+    {
+      "actual_aws_cost_usd": 0,
+      "empty_working_directory": true,
+      "images": [
+        "savings_plans.png"
+      ],
+      "modeled_ce_requests": 7,
+      "modeled_estimated_query_cost_usd": 0.07,
+      "name": "savings_plans",
+      "synthetic_only": true,
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/savings_plans.lms",
+      "version": "lmaws 0.1.15"
+    },
+    {
+      "actual_aws_cost_usd": 0,
+      "empty_working_directory": true,
+      "images": [
+        "eip_audit.png"
+      ],
+      "modeled_ce_requests": 1,
+      "modeled_estimated_query_cost_usd": 0.01,
+      "name": "eip_audit",
+      "synthetic_only": true,
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/eip_audit.lms",
+      "version": "lmaws 0.1.15"
+    },
+    {
+      "actual_aws_cost_usd": 0,
+      "empty_working_directory": true,
+      "images": [
+        "ebs_audit.png"
+      ],
+      "modeled_ce_requests": 1,
+      "modeled_estimated_query_cost_usd": 0.01,
+      "name": "ebs_audit",
+      "synthetic_only": true,
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/ebs_audit.lms",
+      "version": "lmaws 0.1.15"
+    },
+    {
+      "actual_aws_cost_usd": 0,
+      "empty_working_directory": true,
+      "images": [
+        "bandwidth.png"
+      ],
+      "modeled_ce_requests": 2,
+      "modeled_estimated_query_cost_usd": 0.02004,
+      "name": "bandwidth",
+      "synthetic_only": true,
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/bandwidth.lms",
+      "version": "lmaws 0.1.15"
+    },
+    {
+      "actual_aws_cost_usd": 0,
+      "empty_working_directory": true,
+      "images": [
+        "lambda_spend.png"
+      ],
+      "modeled_ce_requests": 1,
+      "modeled_estimated_query_cost_usd": 0.01006,
+      "name": "lambda_spend",
+      "synthetic_only": true,
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/lambda_spend.lms",
+      "version": "lmaws 0.1.15"
+    },
+    {
+      "actual_aws_cost_usd": 0,
+      "empty_working_directory": true,
+      "images": [
+        "dynamodb_spend.png"
+      ],
+      "modeled_ce_requests": 1,
+      "modeled_estimated_query_cost_usd": 0.01008,
+      "name": "dynamodb_spend",
+      "synthetic_only": true,
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/dynamodb_spend.lms",
+      "version": "lmaws 0.1.15"
+    }
+  ],
+  "images": 12,
+  "initially_empty_tool_cache": true,
+  "synthetic_only": true,
+  "version": "0.1.15"
+}
