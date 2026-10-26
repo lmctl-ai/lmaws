@@ -12,7 +12,7 @@ fn recipe_idle(options) {
     if(lower(str(get(row,"state","")))=="stopped") {push(rows,merge(row,{finding:"stopped instance; review age and metrics before action",count:1}));}
   }
   let report={rows:recipe_select(rows,o),matching_count:len(rows),synthetic:!o.live,scope:"stopped-state signal, not a measured idle duration or deletion recommendation"};
-  write_file(o.output+".json",json_stringify(report,2));write_csv(o.output+".csv",report.rows);return report;
+  write_file(o.output+".json",json_stringify(report,2));write_csv(o.output+".csv",report.rows);return merge(report,{result:all.result});
 }
 fn recipe_compliance(options) {
   let o=recipe_normalize(options);
@@ -24,5 +24,23 @@ fn recipe_compliance(options) {
     else if(tagged!="true") {unknown=unknown+1;}
   }
   let report={rows:recipe_select(rows,o),matching_count:len(rows),unknown_tag_count:unknown,synthetic:!o.live,scope:"projected inventory tag presence only; unknown is not compliant"};
-  write_file(o.output+".json",json_stringify(report,2));write_csv(o.output+".csv",report.rows);return report;
+  write_file(o.output+".json",json_stringify(report,2));write_csv(o.output+".csv",report.rows);return merge(report,{result:all.result});
+}
+fn recipe_naming(options) {
+  let o=recipe_normalize(options);
+  if(o.preview) {return recipe_preview(o,"naming_compliance");}
+  let rows=[];let execution_result={};
+  if(o.live) {let all=recipe_inventory(merge(o,{task:"all",top:1000,filter_prefix:false}));rows=all.rows;execution_result=all.result;}
+  else {rows=[{kind:"queue",name:"lmaws_recipe_queue"},{kind:"bucket",name:"lmaws-recipe-bucket"},{kind:"queue",name:"lmawsMissingDelimiter"},{kind:"bucket",name:"lmaws.wrong-delimiter"},{kind:"queue",name:"customer_events"}];println("estimated cost: $0.00");}
+  let findings=[];let candidates=0;
+  for(row in rows) {
+    let name=str(get(row,"name",""));
+    if(starts_with(lower(name),lower(o.prefix))) {
+      candidates=candidates+1;let valid=starts_with(name,o.prefix);
+      if(o.prefix=="lmaws") {valid=starts_with(name,"lmaws_") || starts_with(name,"lmaws-");}
+      if(!valid) {push(findings,merge(row,{finding:"expected the configured case-sensitive prefix and lmaws_ / lmaws- delimiter",count:1}));}
+    }
+  }
+  let report={rows:recipe_select(findings,o),candidate_count:candidates,violation_count:len(findings),synthetic:!o.live,scope:"bounded projected names beginning with the selected base prefix; no tag ownership or cleanup authority"};
+  mkdir(dirname(o.output),true);write_file(o.output+".json",json_stringify(report,2));write_csv(o.output+".csv",report.rows);return merge(report,{result:execution_result});
 }

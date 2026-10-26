@@ -18,9 +18,9 @@ fn recipe_prefix_fixture() {
 fn recipe_prefix_search(options) {
   let o=recipe_normalize(options);
   if(o.preview) {return recipe_preview(o,"prefix_search");}
-  let rows=[];
+  let rows=[];let execution_result={};
   if(o.live) {
-    let all=recipe_inventory(merge(o,{task:"all",top:1000}));
+    let all=recipe_inventory(merge(o,{task:"all",top:1000}));execution_result=all.result;
     for(task in ["buckets","instances","vpcs","security_groups","tables","queues","topics","functions","log_groups","alarms","zones","secrets","parameters","clusters"]) {
       for(row in json_parse(read_file(o.output+"."+task+".raw.json"))) {push(rows,row);}
     }
@@ -35,7 +35,7 @@ fn recipe_prefix_search(options) {
   let report={rows:recipe_select(found,o),matching_count:len(found),scanned_count:len(rows),region:o.region,profile:o.profile,synthetic:!o.live,scope:"14 supported metadata APIs in one configured region plus global inventories; IAM excluded; not every AWS service or region",cleanup_authorized:false};
   mkdir(dirname(o.output),true);write_file(o.output+".json",json_stringify(report,2));
   write_csv(o.output+".csv",report.rows);
-  return report;
+  return merge(report,{result:execution_result});
 }
 fn recipe_ledger_name(record) {
   let value=str(get(record,"name",get(record,"id","manual review")));
@@ -46,13 +46,13 @@ fn recipe_ledger_name(record) {
 fn recipe_leftovers(options) {
   let o=recipe_normalize(options);
   if(o.preview) {return recipe_preview(o,"leftover_report");}
-  let rows=[];
+  let rows=[];let execution_result={};
   if(o.live) {
     let p=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud=aws.example("recipe_leftovers");
 file_write(${o.output+".ledger.raw.json"},cloud.sweep(${o.older_hours}).json());
 end _dsl_
-    recipe_run(p,o);rows=json_parse(read_file(o.output+".ledger.raw.json"));
+    execution_result=recipe_run(p,o);rows=json_parse(read_file(o.output+".ledger.raw.json"));
   } else {
     rows=[{name:"lmaws_rfixture1xfixture2_events",kind:"queue",state:"active",ledger:"synthetic run ledger",count:1},{name:"lmaws-rfixture1xfixture2-artifacts",kind:"bucket",state:"pending",ledger:"synthetic run ledger",count:1}];println("estimated cost: $0.00");
   }
@@ -64,7 +64,7 @@ end _dsl_
   }
   let report={rows:recipe_select(selected,o),leftover_count:len(selected),dry_run:true,synthetic:!o.live,cleanup_authorized:false};
   mkdir(dirname(o.output),true);write_file(o.output+".json",json_stringify(report,2));write_csv(o.output+".csv",report.rows);
-  return report;
+  return merge(report,{result:execution_result});
 }
 fn recipe_sweeper(options) {
   let o=recipe_normalize(options);

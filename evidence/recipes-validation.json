@@ -1,0 +1,23 @@
+{
+  "recipe_count": 38,
+  "example_count": 68,
+  "task_groups": 7,
+  "source_api_commit": "62fc11187f1a7ff7fdc7fd4b27443525a18a4eb0",
+  "jvm_test_sh": "passed",
+  "synthetic_gallery": "68/68 passed",
+  "execution_tests": 6,
+  "http_library_imports": "passed without side effects",
+  "shared_budget": "native dry-run rejects next dispatch above $0.25",
+  "visual_verdict": {
+    "recipes": 94,
+    "spend": 94
+  },
+  "aws_calls": 0,
+  "aws_credentials_in_ci": false,
+  "hosted_caption_examples_verified": [
+    "recipe_inventory_queues",
+    "recipe_prefix_search",
+    "recipe_sandbox_bucket"
+  ],
+  "spend_hosted_status": "pending concurrent spend-capable native patch release; JVM source verified"
+}

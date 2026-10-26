@@ -27,6 +27,18 @@ The native release targets five platforms and uses a 4096 MB memory budget. Linu
 
 <!-- RECIPES:START -->
 
+![Review account spend detail and optimization signals](docs/images/recipe_spend_detail.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_spend_detail.lms`
+
+![Find lmaws_ and lmaws- names across supported account inventories](docs/images/recipe_prefix_search.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_prefix_search.lms`
+
+![Create and tear down one owned queue with its run ledger](docs/images/recipe_sandbox_queue.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_sandbox_queue.lms`
+
 Reusable LMScript recipes for audits, inventory, spend review and safely owned sandboxes.
 The access column describes AWS permissions; local reports are written only when a recipe is called.
 Each generated entry is self-contained and runnable directly. Import the paired library from its raw URL when composing recipes; entry scripts perform the execution step.
@@ -43,6 +55,18 @@ Arguments override defaults. `AWS_PROFILE` / `AWS_REGION` and `LMAWS_RECIPE_PERI
 by spend recipes; prefix filters inventory when explicitly supplied. All examples force
 synthetic mode and their committed pictures contain no real account data.
 
+Inventory/sandbox caps default to $0.05. Spend reports default to the explicit $0.25
+spend cap; `--cap` or `LMAWS_MAX_COST_USD` overrides it. A script reserves each live
+recipe's full cap against a shared $0.25 ceiling before dispatch. Compose recipes
+sequentially and choose smaller individual caps for a multi-report live run.
+Synthetic spend estimates model billable requests but make no AWS calls and spend no
+real money. Read `metadata.status` in reports: missing, partial or budget-exhausted
+data must not be read as an observed zero. Live spend costs have not been measured
+as part of this recipe presentation work.
+
+Price references: [Cost Explorer](https://aws.amazon.com/aws-cost-management/aws-cost-explorer/pricing/)
+and [CloudWatch GetMetricData](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/metrics-classic-getdata.html).
+
 Import-only composition example (functions do not execute on import):
 
 ```javascript
@@ -56,40 +80,54 @@ println("matched rows:",len(report.rows));
 
 | File | What it does | Access | Arguments | Typical cost |
 |---|---|---|---|---|
-| [`inventory_identity.lms`](recipes/inventory_identity.lms) | Inspect bounded identity metadata (synthetic only; federated IAM cases skipped live) | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_identity [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_roles.lms`](recipes/inventory_roles.lms) | Inspect bounded roles metadata (synthetic only; federated IAM cases skipped live) | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_roles [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_security_groups.lms`](recipes/inventory_security_groups.lms) | Inspect bounded security groups metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_security_groups [--live] | $0.00 displayed; capped request estimate in ledger |
+| [`inventory_identity.lms`](recipes/inventory_identity.lms) | Inspect bounded identity metadata (synthetic only; federated IAM cases skipped live) | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_identity [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_roles.lms`](recipes/inventory_roles.lms) | Inspect bounded roles metadata (synthetic only; federated IAM cases skipped live) | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_roles [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_security_groups.lms`](recipes/inventory_security_groups.lms) | Inspect bounded security groups metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_security_groups [--live] | $0.00 synthetic; live capped request estimate in ledger |
 
 ### Inventory
 
 | File | What it does | Access | Arguments | Typical cost |
 |---|---|---|---|---|
-| [`inventory.lms`](recipes/inventory.lms) | Review all supported inventories; IAM entries are skipped live | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory [--live] | $0.00 displayed; request cap $0.05 |
-| [`inventory_alarms.lms`](recipes/inventory_alarms.lms) | Inspect bounded alarms metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_alarms [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_buckets.lms`](recipes/inventory_buckets.lms) | Inspect bounded buckets metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_buckets [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_clusters.lms`](recipes/inventory_clusters.lms) | Inspect bounded clusters metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_clusters [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_functions.lms`](recipes/inventory_functions.lms) | Inspect bounded functions metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_functions [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_instances.lms`](recipes/inventory_instances.lms) | Inspect bounded instances metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_instances [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_log_groups.lms`](recipes/inventory_log_groups.lms) | Inspect bounded log groups metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_log_groups [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_parameters.lms`](recipes/inventory_parameters.lms) | Inspect bounded parameters metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_parameters [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_queues.lms`](recipes/inventory_queues.lms) | Inspect bounded queues metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_queues [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_secrets.lms`](recipes/inventory_secrets.lms) | Inspect bounded secrets metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_secrets [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_tables.lms`](recipes/inventory_tables.lms) | Inspect bounded tables metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_tables [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_topics.lms`](recipes/inventory_topics.lms) | Inspect bounded topics metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_topics [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_vpcs.lms`](recipes/inventory_vpcs.lms) | Inspect bounded vpcs metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_vpcs [--live] | $0.00 displayed; capped request estimate in ledger |
-| [`inventory_zones.lms`](recipes/inventory_zones.lms) | Inspect bounded zones metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_zones [--live] | $0.00 displayed; capped request estimate in ledger |
+| [`inventory.lms`](recipes/inventory.lms) | Review all supported inventories; IAM entries are skipped live | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory [--live] | $0.00 synthetic; live request cap $0.05 |
+| [`inventory_alarms.lms`](recipes/inventory_alarms.lms) | Inspect bounded alarms metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_alarms [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_buckets.lms`](recipes/inventory_buckets.lms) | Inspect bounded buckets metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_buckets [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_clusters.lms`](recipes/inventory_clusters.lms) | Inspect bounded clusters metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_clusters [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_functions.lms`](recipes/inventory_functions.lms) | Inspect bounded functions metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_functions [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_instances.lms`](recipes/inventory_instances.lms) | Inspect bounded instances metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_instances [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_log_groups.lms`](recipes/inventory_log_groups.lms) | Inspect bounded log groups metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_log_groups [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_parameters.lms`](recipes/inventory_parameters.lms) | Inspect bounded parameters metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_parameters [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_queues.lms`](recipes/inventory_queues.lms) | Inspect bounded queues metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_queues [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_secrets.lms`](recipes/inventory_secrets.lms) | Inspect bounded secrets metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_secrets [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_tables.lms`](recipes/inventory_tables.lms) | Inspect bounded tables metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_tables [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_topics.lms`](recipes/inventory_topics.lms) | Inspect bounded topics metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_topics [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_vpcs.lms`](recipes/inventory_vpcs.lms) | Inspect bounded vpcs metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_vpcs [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`inventory_zones.lms`](recipes/inventory_zones.lms) | Inspect bounded zones metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_zones [--live] | $0.00 synthetic; live capped request estimate in ledger |
+
+### Cost and spend
+
+| File | What it does | Access | Arguments | Typical cost |
+|---|---|---|---|---|
+| [`bandwidth.lms`](recipes/bandwidth.lms) | Break down billed transfer categories and network counters | Read-only | --period 30 --top 10 --region us-east-1 --profile default --cap 0.25 [--live] [--output PRIVATE_DIR] | Synthetic actual $0.00; live CE $0.01/request plus metrics; default/hard cap $0.25 |
+| [`dynamodb_spend.lms`](recipes/dynamodb_spend.lms) | Review DynamoDB usage and spend signals | Read-only | --period 30 --top 10 --region us-east-1 --profile default --cap 0.25 [--live] [--output PRIVATE_DIR] | Synthetic actual $0.00; live CE $0.01/request plus metrics; default/hard cap $0.25 |
+| [`ebs_audit.lms`](recipes/ebs_audit.lms) | Review EBS attachments and snapshot retention signals | Read-only | --period 30 --top 10 --region us-east-1 --profile default --cap 0.25 [--live] [--output PRIVATE_DIR] | Synthetic actual $0.00; live CE $0.01/request plus metrics; default/hard cap $0.25 |
+| [`ec2_spend.lms`](recipes/ec2_spend.lms) | Break down EC2 compute spend and current resource signals | Read-only | --period 30 --top 10 --region us-east-1 --profile default --cap 0.25 [--live] [--output PRIVATE_DIR] | Synthetic actual $0.00; live CE $0.01/request plus metrics; default/hard cap $0.25 |
+| [`eip_audit.lms`](recipes/eip_audit.lms) | Review idle public IPv4 allocations and estimated run-rate | Read-only | --period 30 --top 10 --region us-east-1 --profile default --cap 0.25 [--live] [--output PRIVATE_DIR] | Synthetic actual $0.00; live CE $0.01/request plus metrics; default/hard cap $0.25 |
+| [`lambda_spend.lms`](recipes/lambda_spend.lms) | Review Lambda usage and spend signals | Read-only | --period 30 --top 10 --region us-east-1 --profile default --cap 0.25 [--live] [--output PRIVATE_DIR] | Synthetic actual $0.00; live CE $0.01/request plus metrics; default/hard cap $0.25 |
+| [`savings_plans.lms`](recipes/savings_plans.lms) | Review Savings Plans and Reserved Instance utilization and coverage | Read-only | --period 30 --top 10 --region us-east-1 --profile default --cap 0.25 [--live] [--output PRIVATE_DIR] | Synthetic actual $0.00; live CE $0.01/request plus metrics; default/hard cap $0.25 |
+| [`spend_detail.lms`](recipes/spend_detail.lms) | Review account spend detail and optimization signals | Read-only | --period 30 --top 10 --region us-east-1 --profile default --cap 0.25 [--live] [--output PRIVATE_DIR] | Synthetic actual $0.00; live CE $0.01/request plus metrics; default/hard cap $0.25 |
 
 ### Idle and waste detection
 
 | File | What it does | Access | Arguments | Typical cost |
 |---|---|---|---|---|
-| [`idle_instances.lms`](recipes/idle_instances.lms) | Flag stopped-instance state for further review; never delete | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/idle_instances [--live] | $0.00 displayed; request cap $0.05 |
+| [`idle_instances.lms`](recipes/idle_instances.lms) | Flag stopped-instance state for further review; never delete | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/idle_instances [--live] | $0.00 synthetic; live request cap $0.05 |
 
 ### Tag and naming compliance
 
 | File | What it does | Access | Arguments | Typical cost |
 |---|---|---|---|---|
-| [`tag_compliance.lms`](recipes/tag_compliance.lms) | Report missing and unknown tag presence without assuming compliance | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/tag_compliance [--live] | $0.00 displayed; request cap $0.05 |
+| [`naming_compliance.lms`](recipes/naming_compliance.lms) | Check case-sensitive lmaws_ and lmaws- naming among prefix candidates | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/naming_compliance [--live] | $0.00 synthetic; live request cap $0.05 |
+| [`tag_compliance.lms`](recipes/tag_compliance.lms) | Report missing and unknown tag presence without assuming compliance | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/tag_compliance [--live] | $0.00 synthetic; live request cap $0.05 |
 
 ### Leftover search and cleanup by prefix
 
@@ -268,6 +306,78 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 Example: [`examples/recipe_inventory_zones.lms`](examples/recipe_inventory_zones.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/inventory.lms`; function `recipe_inventory`.
 
+#### bandwidth
+
+![Break down billed transfer categories and network counters](docs/images/recipe_bandwidth.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_bandwidth.lms`
+
+Example: [`examples/recipe_bandwidth.lms`](examples/recipe_bandwidth.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/spend.lms`; function `recipe_spend`.
+
+#### dynamodb_spend
+
+![Review DynamoDB usage and spend signals](docs/images/recipe_dynamodb_spend.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_dynamodb_spend.lms`
+
+Example: [`examples/recipe_dynamodb_spend.lms`](examples/recipe_dynamodb_spend.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/spend.lms`; function `recipe_spend`.
+
+#### ebs_audit
+
+![Review EBS attachments and snapshot retention signals](docs/images/recipe_ebs_audit.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_ebs_audit.lms`
+
+Example: [`examples/recipe_ebs_audit.lms`](examples/recipe_ebs_audit.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/spend.lms`; function `recipe_spend`.
+
+#### ec2_spend
+
+![Break down EC2 compute spend and current resource signals](docs/images/recipe_ec2_spend.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_ec2_spend.lms`
+
+Example: [`examples/recipe_ec2_spend.lms`](examples/recipe_ec2_spend.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/spend.lms`; function `recipe_spend`.
+
+#### eip_audit
+
+![Review idle public IPv4 allocations and estimated run-rate](docs/images/recipe_eip_audit.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_eip_audit.lms`
+
+Example: [`examples/recipe_eip_audit.lms`](examples/recipe_eip_audit.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/spend.lms`; function `recipe_spend`.
+
+#### lambda_spend
+
+![Review Lambda usage and spend signals](docs/images/recipe_lambda_spend.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_lambda_spend.lms`
+
+Example: [`examples/recipe_lambda_spend.lms`](examples/recipe_lambda_spend.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/spend.lms`; function `recipe_spend`.
+
+#### savings_plans
+
+![Review Savings Plans and Reserved Instance utilization and coverage](docs/images/recipe_savings_plans.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_savings_plans.lms`
+
+Example: [`examples/recipe_savings_plans.lms`](examples/recipe_savings_plans.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/spend.lms`; function `recipe_spend`.
+
+#### spend_detail
+
+![Review account spend detail and optimization signals](docs/images/recipe_spend_detail.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_spend_detail.lms`
+
+Example: [`examples/recipe_spend_detail.lms`](examples/recipe_spend_detail.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/spend.lms`; function `recipe_spend`.
+
 #### idle_instances
 
 ![Flag stopped-instance state for further review; never delete](docs/images/recipe_idle_instances.png)
@@ -276,6 +386,15 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 Example: [`examples/recipe_idle_instances.lms`](examples/recipe_idle_instances.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/audits.lms`; function `recipe_idle`.
+
+#### naming_compliance
+
+![Check case-sensitive lmaws_ and lmaws- naming among prefix candidates](docs/images/recipe_naming_compliance.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_naming_compliance.lms`
+
+Example: [`examples/recipe_naming_compliance.lms`](examples/recipe_naming_compliance.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/audits.lms`; function `recipe_naming`.
 
 #### tag_compliance
 

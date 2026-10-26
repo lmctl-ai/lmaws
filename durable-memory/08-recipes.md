@@ -14,7 +14,10 @@ import against the empty working directory. Keep URL-import composition in the
 paired libraries; test empty-directory caption commands before changing this.
 
 Shared options cover period, top-N, prefix, region/profile, output, cap, preview
-and apply. Examples force synthetic mode even if live mode was inherited.
+and apply. Examples force synthetic mode even if live mode was inherited. A script
+reserves each live call's full cap against a shared $0.25 ceiling. Inventory and
+sandboxes default to $0.05; spend defaults to $0.25 unless the caller supplies a
+cap or LMAWS_MAX_COST_USD. Native ledgers still report actual modeled requests.
 
 Live inventory needs `--live`; owned sandbox writes additionally require
 `--apply --profile lmaws`. Ledger/tag/teardown behavior stays in the native host.
@@ -26,5 +29,7 @@ reported as compliant, and stopped state alone does not establish idle duration.
 
 `test.sh` checks index/header/image contracts and actual import/composition/
 preview/profile behavior without cloud credentials. The native gallery stage
-runs every recipe example. Current scaffold includes 29 recipe/example pairs;
-the independent spend work adds its recipe adapters after its API lands.
+runs every recipe example. There are 38 recipe/example pairs across all seven requested task groups,
+including the account spend detail and seven per-topic spend reports. The spend
+functions use the concurrent Spend API; their hosted commands require its
+spend-capable native release. Preview works without querying AWS.

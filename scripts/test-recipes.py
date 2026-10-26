@@ -27,6 +27,7 @@ def main() -> int:
     assert RECIPES.exists(), "recipes/ directory is required"
     assert (ROOT / "recipes" / "README.md").exists(), "run recipe-index.py first"
     assert len(items) == len(list(RECIPES.glob("*.lms")))
+    assert {item.category for item in items}==set(CATEGORIES),"all seven task groups need recipes"
     text = (ROOT / "recipes" / "README.md").read_text(encoding="utf-8")
     assert "| File | What it does | Access | Arguments | Typical cost |" in text
     for item in items:
@@ -36,12 +37,16 @@ def main() -> int:
         for field in ("access", "what", "when", "run", "preview", "arguments", "typical-cost", "example", "function", "library"):
             assert item.meta[field], (item.path, field)
         assert (item.meta["run"].startswith("lmctl ") or " lmctl " in item.meta["run"]) and ".lms" in item.meta["run"]
-        assert item.meta["preview"].startswith("lmctl ") and "dry-run" in item.meta["preview"]
+        assert item.meta["preview"].startswith("lmctl ") and any(flag in item.meta["preview"] for flag in ("--preview","--dry-run"))
         image_caption, caption, example = example_link(item)
         image_path = ROOT / "docs" / "images" / f"{example}.png"
         assert image_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), image_path
         assert caption.startswith("lmctl https://raw.githubusercontent.com/") and caption.endswith(f"/{example}.lms")
         assert "see source" not in caption.lower()
+    for path in [ROOT/"README.md",ROOT/"recipes/README.md"]:
+        for target in re.findall(r'\]\(([^)#]+)(?:#[^)]*)?\)',path.read_text()):
+            if not re.match(r'^[A-Za-z][A-Za-z0-9+.-]*:',target):
+                assert (path.parent/target).exists(),(path,target)
     generated=subprocess.run([sys.executable,str(ROOT/"scripts/generate-recipes.py"),"--check"],cwd=ROOT,text=True,capture_output=True)
     assert generated.returncode==0,generated.stdout+generated.stderr
     result = subprocess.run([sys.executable, str(ROOT / "scripts" / "recipe-index.py"), "--check", "--root-readme", str(ROOT/"README.md")], cwd=ROOT, text=True, capture_output=True)

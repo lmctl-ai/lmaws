@@ -1,6 +1,6 @@
 # Examples and cost labels
 
-There are 59 runnable `.lms` examples: 29 synthetic-only recipe demonstrations
+There are 68 runnable `.lms` examples: 38 synthetic-only recipe demonstrations
 plus the original 30 stories: 19 read-only stories, seven
 write/lifecycle stories and four IAM-dependent stories. See [README](../README.md)
 for the complete image gallery and cost captions; [USER_TEST](../docs/USER_TEST.md)

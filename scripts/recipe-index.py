@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Build the human-facing lmaws recipe catalogue from LMScript headers.
 
-Recipe files deliberately carry their catalogue metadata so they can be imported
-from a raw URL without depending on this repository's generator.
+Executable recipes carry catalogue metadata; paired import-only libraries are
+reusable from a raw URL without depending on this repository's generator.
 """
 from __future__ import annotations
 
 import argparse
 import re
+import posixpath
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -126,6 +127,18 @@ def render(items: list[Recipe]) -> str:
         "by spend recipes; prefix filters inventory when explicitly supplied. All examples force",
         "synthetic mode and their committed pictures contain no real account data.",
         "",
+        "Inventory/sandbox caps default to $0.05. Spend reports default to the explicit $0.25",
+        "spend cap; `--cap` or `LMAWS_MAX_COST_USD` overrides it. A script reserves each live",
+        "recipe's full cap against a shared $0.25 ceiling before dispatch. Compose recipes",
+        "sequentially and choose smaller individual caps for a multi-report live run.",
+        "Synthetic spend estimates model billable requests but make no AWS calls and spend no",
+        "real money. Read `metadata.status` in reports: missing, partial or budget-exhausted",
+        "data must not be read as an observed zero. Live spend costs have not been measured",
+        "as part of this recipe presentation work.",
+        "",
+        "Price references: [Cost Explorer](https://aws.amazon.com/aws-cost-management/aws-cost-explorer/pricing/)",
+        "and [CloudWatch GetMetricData](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/metrics-classic-getdata.html).",
+        "",
         "Import-only composition example (functions do not execute on import):",
         "",
         "```javascript",
@@ -135,6 +148,13 @@ def render(items: list[Recipe]) -> str:
         "```",
         "",
     ]
+    heroes=[]
+    for slug in ("spend_detail","prefix_search","sandbox_queue"):
+        item=next((item for item in items if item.slug==slug),None)
+        if item:
+            image,caption,_=example_link(item)
+            heroes.extend([image.replace("(docs/images/","(../docs/images/"),"",f"`{caption}`",""])
+    lines=lines[:2]+heroes+lines[2:]
     for category in CATEGORIES:
         group = [item for item in items if item.category == category]
         if not group:
@@ -167,7 +187,7 @@ def main() -> int:
             raise SystemExit(f"{args.root_readme}: add balanced {start}/{end} markers first")
         root_text = text.removeprefix('# lmaws recipes').strip()
         root_text = '\n'.join('#'+line if line.startswith('##') else line for line in root_text.splitlines())
-        root_text = root_text.replace('](', '](recipes/').replace('](recipes/../docs/images/', '](docs/images/').replace('](recipes/../examples/', '](examples/')
+        root_text = re.sub(r'\]\((?![A-Za-z][A-Za-z0-9+.-]*:|#|/)([^)]+)\)', lambda match: ']('+posixpath.normpath('recipes/'+match.group(1))+')', root_text)
         block = f"{start}\n\n{root_text}\n\n{end}"
         readme = readme[:readme.index(start)] + block + readme[readme.index(end) + len(end):]
     else:

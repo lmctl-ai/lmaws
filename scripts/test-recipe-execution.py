@@ -59,7 +59,7 @@ class RecipeExecutionTests(unittest.TestCase):
             entry = self.work / "imports.lms"
             entry.write_text(
                 f'import "{base}/common.lms"; import "{base}/inventory.lms"; '
-                f'import "{base}/lifecycle.lms"; import "{base}/prefix.lms"; import "{base}/audits.lms";\n',
+                f'import "{base}/lifecycle.lms"; import "{base}/prefix.lms"; import "{base}/audits.lms"; import "{base}/spend.lms";\n',
                 encoding="utf-8",
             )
             result = self.run_script(entry)
@@ -125,6 +125,25 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertNotEqual(live.returncode, 0)
         self.assertNotIn("--dsl", live.stdout + live.stderr)
         self.assertFalse((self.work / "live.json").exists())
+
+    def test_shared_live_budget_refuses_second_program_without_cloud_calls(self) -> None:
+        # Native --dry-run forces the Cloud fixture backend even while the outer
+        # recipe budget is in live mode. CI is also true: no AWS calls are possible.
+        first=self.work/"first-marker"
+        second=self.work/"second-marker"
+        entry=self.work/"budget.lms"
+        code='import '+json.dumps(str(ROOT/'recipes/lib/common.lms'))+';\n'
+        for symbol,path in [('one',first),('two',second)]:
+            code+=symbol+' = _dsl_ cli="lmaws --dry-run" install="github:lmctl-ai/lmaws@latest";\n'
+            code+='let cloud=aws.example("recipe_budget_fixture");\nfile_write('+json.dumps(str(path))+',"executed");\nend _dsl_\n'
+        code+='recipe_run(one,{live:true,cap:0.20,profile:"default",output:'+json.dumps(str(self.work/'one'))+'});\n'
+        code+='recipe_run(two,{live:true,cap:0.06,profile:"default",output:'+json.dumps(str(self.work/'two'))+'});\n'
+        entry.write_text(code)
+        result=self.run_script(entry)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn("whole-run cap exceeded",result.stdout,result.stdout+result.stderr)
+        self.assertTrue(first.exists())
+        self.assertFalse(second.exists())
 
 
 

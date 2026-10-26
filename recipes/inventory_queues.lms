@@ -1,27 +1,32 @@
 # Access: Read-only
 # What: Inspect bounded queues metadata
-# When: Reusable inventory; defaults to synthetic fixtures
+# When: Before a change or when reviewing current service coverage
 # Run: lmctl recipes/inventory_queues.lms --top 10
-# Preview: lmctl recipes/inventory_queues.lms --preview (or lmctl script --dry-run recipes/inventory_queues.lms)
+# Preview: lmctl recipes/inventory_queues.lms --preview
 # Arguments: --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_queues [--live]
-# Typical-cost: $0.00 displayed; capped request estimate in ledger
+# Typical-cost: $0.00 synthetic; live capped request estimate in ledger
 # Category: Inventory
 # Library: recipes/lib/inventory.lms
 # Function: recipe_inventory
 # Example: recipe_inventory_queues
 # Generated standalone entry; reusable source: recipes/lib/inventory.lms
+let recipe_budget={reserved_units:0};
 fn recipe_env(key,fallback) { let value=getenv(key,""); if(value=="") {return fallback;} return value; }
 fn recipe_normalize(options) {
-  let defaults = {period:num(recipe_env("LMAWS_RECIPE_PERIOD","30")),top:num(recipe_env("LMAWS_RECIPE_TOP","10")),prefix:recipe_env("LMAWS_RECIPE_PREFIX","lmaws"),region:recipe_env("AWS_REGION",recipe_env("AWS_DEFAULT_REGION","us-east-1")),profile:recipe_env("AWS_PROFILE",recipe_env("AWS_DEFAULT_PROFILE","default")),live:false,apply:false,preview:false,output:"data/recipe",task:"queues",cap:0.05,older_hours:0,filter_prefix:false,ledger_dir:recipe_env("LMAWS_LEDGER_DIR",".lmaws-local/recipes/ledgers")};
+  let defaults = {period:num(recipe_env("LMAWS_RECIPE_PERIOD","30")),top:num(recipe_env("LMAWS_RECIPE_TOP","10")),prefix:recipe_env("LMAWS_RECIPE_PREFIX","lmaws"),region:recipe_env("AWS_REGION",recipe_env("AWS_DEFAULT_REGION","us-east-1")),profile:recipe_env("AWS_PROFILE",recipe_env("AWS_DEFAULT_PROFILE","default")),live:false,apply:false,preview:false,output:"data/recipe",task:"queues",cap:num(recipe_env("LMAWS_MAX_COST_USD","0.05")),older_hours:0,filter_prefix:false,output_explicit:false,cap_explicit:recipe_env("LMAWS_MAX_COST_USD","")!="",ledger_dir:recipe_env("LMAWS_LEDGER_DIR",".lmaws-local/recipes/ledgers")};
   let o=merge(defaults,options);
+  if(has_key(options,"output") && !has_key(options,"output_explicit")) {o.output_explicit=true;}
+  if(has_key(options,"cap") && !has_key(options,"cap_explicit")) {o.cap_explicit=true;}
   assert(is_number(o.period) && o.period>=1 && o.period<=365 && floor(o.period)==o.period);
   assert(is_number(o.top) && o.top>=1 && o.top<=1000 && floor(o.top)==o.top);
   assert(is_number(o.cap) && o.cap>=0 && o.cap<=0.25);
   assert(is_number(o.older_hours) && o.older_hours>=0 && floor(o.older_hours)==o.older_hours);
-  assert(regex_test(o.ledger_dir,"^[A-Za-z0-9_./-]+$") && !contains(o.ledger_dir,".."));
+  o.output=replace_all(str(o.output),"\\","/");
+  o.ledger_dir=replace_all(str(o.ledger_dir),"\\","/");
+  assert(regex_test(o.ledger_dir,"^[A-Za-z0-9_./: -]+$"));
   assert(o.profile=="default" || o.profile=="lmaws");
   assert(regex_test(o.region,"^[a-z]{2}(-[a-z]+)+-[0-9]+$"));
-  assert(regex_test(o.output,"^[A-Za-z0-9_./-]+$") && !contains(o.output,".."));
+  assert(regex_test(o.output,"^[A-Za-z0-9_./: -]+$"));
   assert(is_string(o.prefix) && len(o.prefix)<=128);
   return o;
 }
@@ -36,12 +41,12 @@ fn recipe_options(argv) {
       assert(i+1<len(argv));i=i+1;let value=argv[i];
       if(key=="--period" || key=="--days") {o.period=num(value);}
       else if(key=="--top" || key=="--top-n") {o.top=num(value);}
-      else if(key=="--cap") {o.cap=num(value);}
+      else if(key=="--cap") {o.cap=num(value);o.cap_explicit=true;}
       else if(key=="--older-hours") {o.older_hours=num(value);}
       else if(key=="--prefix") {o.prefix=value;o.filter_prefix=true;}
       else if(key=="--region") {o.region=value;}
       else if(key=="--profile") {o.profile=value;}
-      else if(key=="--output") {o.output=value;}
+      else if(key=="--output") {o.output=value;o.output_explicit=true;}
       else if(key=="--ledger-dir") {o.ledger_dir=value;}
       else if(key=="--task") {o.task=value;}
       else {println("Unknown recipe argument:",key);assert(false);}
@@ -53,20 +58,28 @@ fn recipe_options(argv) {
 fn recipe_run(program, options) {
   let o=recipe_normalize(options);
   assert(!o.preview);
+  if(o.live) {
+    let units=ceil(o.cap*100000000);
+    if(recipe_budget.reserved_units+units>25000000) {println("Recipe whole-run cap exceeded; reduce per-recipe caps before another live call.");assert(false);}
+    recipe_budget.reserved_units=recipe_budget.reserved_units+units;
+  }
   mkdir(dirname(o.output),true);
   let bytecode=temp_file();savedsl(program,bytecode);
+  let command=dsl_cli(program);
   let settings={AWS_PROFILE:o.profile,AWS_DEFAULT_PROFILE:o.profile,AWS_REGION:o.region,AWS_DEFAULT_REGION:o.region,LMAWS_LIVE:o.live ? "1":"0",LMAWS_SPEND_LIVE:o.live ? "1":"0",LMAWS_MAX_COST_USD:str(o.cap),LMAWS_LEDGER_DIR:o.ledger_dir,LMAWS_EVIDENCE_DIR:".lmaws-local/recipes/evidence"};
   let previous={};
   for(key in keys(settings)) {previous[key]=getenv(key,"");set_env(key,settings[key]);}
-  let r=system(concat(dsl_cli(program),["--dsl",bytecode]),{timeoutMs:300000});
+  let r=system(concat(command,["--dsl",bytecode]),{timeoutMs:300000});
   for(key in keys(previous)) {set_env(key,previous[key]);}
   remove_file(bytecode);
   if(r.code!=0) {println("Recipe host failed; see the host's sanitized diagnostic.");println(r.stderr);}
-  assert(r.code==0);
   let found=false;
   for(line in lines(r.stdout)) {
+    if(starts_with(line,"Cost Explorer requests:") || starts_with(line,"CloudWatch metric requests:") || starts_with(line,"CloudWatch metric units:")) {println(line);}
     if(starts_with(line,"estimated cost: $")) {println(line);found=true;}
   }
+  if(!found && r.code!=0) {println("estimated cost: $"+str(o.cap)+" (reserved upper bound; host receipt unavailable)");}
+  assert(r.code==0);
   assert(found);
   return r;
 }
@@ -82,6 +95,14 @@ fn recipe_select(rows,options) {
     if(len(selected)<o.top) {push(selected,row);}
   }
   return selected;
+}
+fn recipe_cost_line(report) {
+  let answer="estimated cost: $0.00";
+  let result=get(report,"result",{});
+  for(line in lines(str(get(result,"stdout","")))) {
+    if(starts_with(line,"estimated cost: $")) {answer=line;}
+  }
+  return answer;
 }
 fn recipe_picture(rows,title,name) {
   assert(regex_test(name,"^[a-z][a-z0-9_]*$"));
@@ -151,4 +172,4 @@ let options=recipe_options(ARGV);
 options.task="queues";
 if (!contains(ARGV,"--output")) {options.output="data/inventory_queues";}
 let report=recipe_inventory(options);
-if (!options.preview) {println("report:",options.output+".json");}
+if (!options.preview) {println("report:",get(report,"output_file",options.output+".json"));println(recipe_cost_line(report));}

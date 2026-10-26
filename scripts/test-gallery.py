@@ -63,6 +63,8 @@ def run_examples():
                 continue
             csv = Path(work) / "data" / f"{name}.csv"
             count_file = Path(work) / "data" / f"{name}.count"
+            spend_chart=Path(work)/"data"/name/"topic_chart.csv"
+            if not csv.exists() and spend_chart.exists():csv=spend_chart
             if not csv.exists() and not count_file.exists():
                 evidence["failed"].append({"name": name, "output": "missing host-generated data artifact"})
                 continue

@@ -1,0 +1,27 @@
+{
+  "fresh_shared_tool_cache": true,
+  "live_forced_off": true,
+  "examples": [
+    {
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_inventory_queues.lms",
+      "exit_code": 0,
+      "synthetic": true,
+      "empty_working_directory": true,
+      "wall_seconds": 15.069
+    },
+    {
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_prefix_search.lms",
+      "exit_code": 0,
+      "synthetic": true,
+      "empty_working_directory": true,
+      "wall_seconds": 0.41
+    },
+    {
+      "url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_sandbox_bucket.lms",
+      "exit_code": 0,
+      "synthetic": true,
+      "empty_working_directory": true,
+      "wall_seconds": 0.543
+    }
+  ]
+}

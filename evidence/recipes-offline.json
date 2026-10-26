@@ -201,5 +201,68 @@
     "synthetic": true,
     "live_forced_off": true,
     "png_bytes": 28408
+  },
+  {
+    "example": "recipe_naming_compliance",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 20317
+  },
+  {
+    "example": "recipe_spend_detail",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 32172
+  },
+  {
+    "example": "recipe_ec2_spend",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 24967
+  },
+  {
+    "example": "recipe_savings_plans",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 26677
+  },
+  {
+    "example": "recipe_eip_audit",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 27336
+  },
+  {
+    "example": "recipe_ebs_audit",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 24911
+  },
+  {
+    "example": "recipe_bandwidth",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 25617
+  },
+  {
+    "example": "recipe_lambda_spend",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 24612
+  },
+  {
+    "example": "recipe_dynamodb_spend",
+    "exit_code": 0,
+    "synthetic": true,
+    "live_forced_off": true,
+    "png_bytes": 26829
   }
 ]
