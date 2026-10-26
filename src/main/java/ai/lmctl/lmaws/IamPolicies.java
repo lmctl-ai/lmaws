@@ -24,12 +24,24 @@ public final class IamPolicies {
     private static final Set<String> READ_INVENTORY_ALLOWLIST = Set.of(
         "sts:getcalleridentity",
         "s3:listallmybuckets",
+        "s3:getbucketlocation",
+        "s3:getbuckettagging",
         "ec2:describe*",
+        "ec2:describeinstances",
+        "ec2:describevolumes",
+        "ec2:describesnapshots",
+        "ec2:describeaddresses",
+        "ec2:describetags",
         "sqs:listqueues",
         "sns:listtopics",
+        "sns:listsubscriptions",
         "dynamodb:listtables",
+        "dynamodb:describelimits",
         "logs:describeloggroups",
+        "logs:describelogstreams",
         "ssm:describeparameters",
+        "ssm:getparameters",
+        "ssm:getparametersbypath",
         "route53:list*",
         "route53:gethostedzone",
         "route53:getchange",
@@ -45,8 +57,24 @@ public final class IamPolicies {
         "cloudwatch:getmetricdata",
         "cloudwatch:getmetricstatistics",
         "cloudwatch:listmetrics",
+        "tag:getresources",
+        "tag:gettagkeys",
+        "tag:gettagvalues",
         "ce:get*",
-        "savingsplans:describe*"
+        "ce:getcostandusage",
+        "ce:getdimensionvalues",
+        "ce:gettags",
+        "ce:getreservationutilization",
+        "ce:getreservationcoverage",
+        "ce:getsavingsplansutilization",
+        "ce:getsavingsplanscoverage",
+        "savingsplans:describe*",
+        "savingsplans:describesavingsplans",
+        "savingsplans:describesavingsplansofferingrates",
+        "savingsplans:describesavingsplansofferings",
+        "pricing:describeservices",
+        "pricing:getattributevalues",
+        "pricing:getproducts"
     );
 
     private static final Set<String> FORBIDDEN_ACTION_PREFIXES = Set.of(
@@ -434,8 +462,10 @@ public final class IamPolicies {
             boolean hasStarResource = resources.stream().anyMatch(r -> "*".equals(r.trim()));
             boolean allInReadAllowlist = actions.stream()
                 .allMatch(a -> READ_INVENTORY_ALLOWLIST.contains(a.trim().toLowerCase(Locale.ROOT)));
-            boolean isScopedSsmPublicRead = actions.size() == 1
-                && "ssm:getparameter".equalsIgnoreCase(actions.get(0).trim())
+            boolean isScopedSsmPublicRead = actions.stream()
+                .allMatch(a -> "ssm:getparameter".equalsIgnoreCase(a.trim())
+                    || "ssm:getparameters".equalsIgnoreCase(a.trim())
+                    || "ssm:getparametersbypath".equalsIgnoreCase(a.trim()))
                 && !hasStarResource
                 && resources.stream().allMatch(r -> r.contains(":parameter/aws/service/") || r.contains(":parameter/lmaws"));
 

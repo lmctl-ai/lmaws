@@ -1166,6 +1166,42 @@ public final class AwsBackend implements AutoCloseable {
         return CredentialProcess.sessionDoctor(this);
     }
 
+    public List<Map<String, String>> policySimulate(String policyJson, String probesSpec) {
+        return PolicySimulator.simulateCustom(
+            demo ? null : iam(),
+            cost,
+            demo,
+            !demo && endpoint == null,
+            activeProfile(),
+            policyJson,
+            probesSpec
+        );
+    }
+
+    public List<Map<String, String>> policySimulatePrincipal(String policyNameOrArn, String probesSpec) {
+        String sourceArn = policyNameOrArn == null ? "" : policyNameOrArn.trim();
+        String fallbackDoc = IamPolicies.sanitizedTemplatePolicyJson();
+        if (demo) {
+            DemoPolicyState st = demoPolicies.get(sourceArn);
+            if (st != null && !st.versions.isEmpty()) {
+                fallbackDoc = st.defaultVersion().document;
+            }
+        } else if (!sourceArn.startsWith("arn:aws:iam::")) {
+            IamPolicies.requireValidPolicyName(sourceArn);
+            sourceArn = resolvePolicyArn(sourceArn);
+        }
+        return PolicySimulator.simulatePrincipal(
+            demo ? null : iam(),
+            cost,
+            demo,
+            !demo && endpoint == null,
+            activeProfile(),
+            sourceArn,
+            fallbackDoc,
+            probesSpec
+        );
+    }
+
     private void tagBucket(String id,String runId) {
         s3().putBucketTagging(x -> x.bucket(id).tagging(t -> t.tagSet(Tag.builder().key("lmaws_test").value(runId).build())));
     }

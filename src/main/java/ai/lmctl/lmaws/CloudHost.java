@@ -117,6 +117,7 @@ public final class CloudHost implements AutoCloseable {
         r.method("Web","leftovers",List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(((WebRun)s.asObject()).leftovers(),c)));
         r.method("Web","down",List.of(),"Row",(c,s,a)->rowValue(c,((WebRun)s.asObject()).down()));
         registerCompute(r);
+        registerPolicyBuilder(r);
         r.method("Rows","len",List.of(),"int",(c,s,a)->Value.ofInt(((Rows)s.asObject()).rows.size()));
         r.method("Rows","at",List.of("int"),"Row",(c,s,a)->{Rows rows=(Rows)s.asObject();long i=a[0].asInt();if(i<0||i>=rows.rows.size())throw VmException.host("row index outside inventory");return Value.object("Row",rows.rows.get((int)i));});
         r.method("Rows","csv",List.of("string"),"void",(c,s,a)->{((Rows)s.asObject()).write(text(a[0]));return Value.none();});
@@ -171,6 +172,78 @@ public final class CloudHost implements AutoCloseable {
         r.method("Spot","denied_action",List.of(),"string",(c,s,a)->Value.ofString(spot(s).deniedAction()));
         r.method("Spot","spot_price",List.of(),"float",(c,s,a)->Value.ofFloat(spot(s).spotPrice()));
         r.method("Spot","estimated_cost",List.of(),"float",(c,s,a)->Value.ofFloat(spot(s).estimatedCost()));
+    }
+    private static PolicyBuilder policy(Value value) {return (PolicyBuilder)value.asObject();}
+    private static Value policyVal(PolicyBuilder pb) {return Value.object("Policy",pb);}
+    private void registerPolicyBuilder(Registry r) {
+        r.method("Cloud","policy",List.of("string"),"Policy",(c,s,a)->{c.charge(1024);return policyVal(new PolicyBuilder(text(a[0])));});
+        r.method("Cloud","policy_fit_inline",List.of("string"),"Row",(c,s,a)->rowValue(c,PolicyAnalyzer.fitInline(text(a[0]))));
+        r.method("Cloud","policy_split_managed",List.of("string"),"Rows",(c,s,a)->rows(PolicyAnalyzer.splitManaged(text(a[0]),IamPolicies.MANAGED_POLICY_LIMIT),c));
+        r.method("Cloud","policy_diff",List.of("string","string"),"Rows",(c,s,a)->{
+            IamPolicies.DiffResult d=IamPolicies.diff(text(a[0]),text(a[1]));
+            List<Map<String,String>> list=new ArrayList<>();
+            for(var row:d.statementDiffs()){Map<String,String> m=new LinkedHashMap<>();row.forEach((k,v)->m.put(k,String.valueOf(v)));list.add(m);}
+            return rows(list,c);
+        });
+        r.method("Cloud","policy_explain",List.of("string"),"Rows",(c,s,a)->rows(PolicyAnalyzer.explain(text(a[0])),c));
+        r.method("Cloud","policy_matrix",List.of("string"),"Rows",(c,s,a)->rows(PolicyAnalyzer.matrix(text(a[0])),c));
+        r.method("Cloud","explain_denial",List.of("string"),"Row",(c,s,a)->rowValue(c,PolicyAnalyzer.explainDenial(text(a[0]))));
+        r.method("Cloud","policy_from_ledger",List.of("string"),"Row",(c,s,a)->rowValue(c,PolicyAnalyzer.fromLedger(text(a[0]))));
+        r.method("Cloud","policy_import_json",List.of("string"),"Row",(c,s,a)->rowValue(c,PolicyAnalyzer.importJson(text(a[0]))));
+        r.method("Cloud","policy_simulate",List.of("string","string"),"Rows",(c,s,a)->{
+            List<Map<String,String>> out=(s.asObject() instanceof Session sess)?sess.backend.policySimulate(text(a[0]),text(a[1])):PolicySimulator.evaluateOffline(text(a[0]),PolicySimulator.parseProbes(text(a[1])));
+            return rows(out,c);
+        });
+        r.method("Cloud","policy_simulate_principal",List.of("string","string"),"Rows",(c,s,a)->{
+            List<Map<String,String>> out=(s.asObject() instanceof Session sess)?sess.backend.policySimulatePrincipal(text(a[0]),text(a[1])):PolicySimulator.evaluateOffline(IamPolicies.sanitizedTemplatePolicyJson(),PolicySimulator.parseProbes(text(a[1])));
+            return rows(out,c);
+        });
+        r.method("Policy","allow",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).allow(text(a[0]),text(a[1]),text(a[2]))));
+        r.method("Policy","allow_cond",List.of("string","string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).allowCond(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
+        r.method("Policy","deny",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).deny(text(a[0]),text(a[1]),text(a[2]))));
+        r.method("Policy","deny_cond",List.of("string","string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).denyCond(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
+        r.method("Policy","deny_not_action",List.of("string","string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).denyNotAction(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
+        r.method("Policy","arn",List.of("string","string","string"),"string",(c,s,a)->Value.ofString(policy(s).arn(text(a[0]),text(a[1]),text(a[2]))));
+        r.method("Policy","expand_actions",List.of("string"),"string",(c,s,a)->Value.ofString(policy(s).expandActions(text(a[1-1]))));
+        r.method("Policy","classify_action",List.of("string"),"string",(c,s,a)->Value.ofString(policy(s).classifyAction(text(a[0]))));
+        r.method("Policy","name_prefix",List.of("string","string","string","string","bool"),"Policy",(c,s,a)->policyVal(policy(s).namePrefix(text(a[0]),text(a[1]),text(a[2]),text(a[3]),a[4].asBool())));
+        r.method("Policy","require_tag_on_create",List.of("string","string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).requireTagOnCreate(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
+        r.method("Policy","only_tagged",List.of("string","string","string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).onlyTagged(text(a[0]),text(a[1]),text(a[2]),text(a[3]),text(a[4]))));
+        r.method("Policy","tag_on_create_actions",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).tagOnCreateActions(text(a[0]),text(a[1]),text(a[2]))));
+        r.method("Policy","deny_untagged_create",List.of("string","string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).denyUntaggedCreate(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
+        r.method("Policy","deny_delete_unless_tagged",List.of("string","string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).denyDeleteUnlessTagged(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
+        r.method("Policy","region_lock",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).regionLock(text(a[0]),text(a[1]),text(a[2]))));
+        r.method("Policy","instance_types",List.of("string","string"),"Policy",(c,s,a)->policyVal(policy(s).instanceTypes(text(a[0]),text(a[1]))));
+        r.method("Policy","max_volume_gib",List.of("string","int"),"Policy",(c,s,a)->policyVal(policy(s).maxVolumeGib(text(a[0]),a[1].asInt())));
+        r.method("Policy","route53_names",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).route53Names(text(a[0]),text(a[1]),text(a[2]))));
+        r.method("Policy","cidr_only",List.of("string","string"),"Policy",(c,s,a)->policyVal(policy(s).cidrOnly(text(a[0]),text(a[1]))));
+        r.method("Policy","mfa_required",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).mfaRequired(text(a[0]),text(a[1]),text(a[2]))));
+        r.method("Policy","time_window",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).timeWindow(text(a[0]),text(a[1]),text(a[2]))));
+        r.method("Policy","source_ip",List.of("string","string"),"Policy",(c,s,a)->policyVal(policy(s).sourceIp(text(a[0]),text(a[1]))));
+        r.method("Policy","read_only_inventory",List.of(),"Policy",(c,s,a)->policyVal(policy(s).readOnlyInventory()));
+        r.method("Policy","s3_bucket_sandbox",List.of("string"),"Policy",(c,s,a)->policyVal(policy(s).s3BucketSandbox(text(a[0]))));
+        r.method("Policy","queue_sandbox",List.of("string"),"Policy",(c,s,a)->policyVal(policy(s).queueSandbox(text(a[0]))));
+        r.method("Policy","topic_sandbox",List.of("string"),"Policy",(c,s,a)->policyVal(policy(s).topicSandbox(text(a[0]))));
+        r.method("Policy","table_sandbox",List.of("string"),"Policy",(c,s,a)->policyVal(policy(s).tableSandbox(text(a[0]))));
+        r.method("Policy","parameter_sandbox",List.of("string"),"Policy",(c,s,a)->policyVal(policy(s).parameterSandbox(text(a[0]))));
+        r.method("Policy","log_group_sandbox",List.of("string"),"Policy",(c,s,a)->policyVal(policy(s).logGroupSandbox(text(a[0]))));
+        r.method("Policy","spot_nano_sandbox",List.of("string","string","int"),"Policy",(c,s,a)->policyVal(policy(s).spotNanoSandbox(text(a[0]),text(a[1]),a[2].asInt())));
+        r.method("Policy","static_site_stack",List.of("string","string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).staticSiteStack(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
+        r.method("Policy","billing_viewer",List.of(),"Policy",(c,s,a)->policyVal(policy(s).billingViewer()));
+        r.method("Policy","lambda_deployer_by_name",List.of("string"),"Policy",(c,s,a)->policyVal(policy(s).lambdaDeployerByName(text(a[0]))));
+        r.method("Policy","ci_bucket_deployer",List.of("string","string"),"Policy",(c,s,a)->policyVal(policy(s).ciBucketDeployer(text(a[0]),text(a[1]))));
+        r.method("Policy","permission_boundary",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).permissionBoundary(text(a[0]),text(a[1]),text(a[2]))));
+        r.method("Policy","lmaws_session_policy",List.of("string","string","string","string","string","int"),"Policy",(c,s,a)->policyVal(policy(s).lmawsSessionPolicy(text(a[0]),text(a[1]),text(a[2]),text(a[3]),text(a[4]),a[5].asInt())));
+        r.method("Policy","merge_from",List.of("Policy"),"Policy",(c,s,a)->policyVal(policy(s).mergeFrom(policy(a[0]))));
+        r.method("Policy","json",List.of(),"string",(c,s,a)->Value.ofString(policy(s).json()));
+        r.method("Policy","compact_json",List.of(),"string",(c,s,a)->Value.ofString(policy(s).compactJson()));
+        r.method("Policy","lint",List.of(),"Row",(c,s,a)->rowValue(c,policy(s).lint()));
+        r.method("Policy","fit_inline",List.of(),"Row",(c,s,a)->rowValue(c,policy(s).fitInline()));
+        r.method("Policy","split_managed",List.of(),"Rows",(c,s,a)->rows(policy(s).splitManaged(),c));
+        r.method("Policy","diff",List.of("string"),"Rows",(c,s,a)->rows(policy(s).diff(text(a[0])),c));
+        r.method("Policy","explain",List.of(),"Rows",(c,s,a)->rows(policy(s).explain(),c));
+        r.method("Policy","matrix",List.of(),"Rows",(c,s,a)->rows(policy(s).matrix(),c));
+        r.method("Policy","summary",List.of(),"Row",(c,s,a)->rowValue(c,policy(s).summary()));
     }
     private static String text(Value value) {
         try{return java.nio.charset.StandardCharsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT).onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT).decode(java.nio.ByteBuffer.wrap(value.asString().bytes())).toString();}
