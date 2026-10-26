@@ -22,7 +22,7 @@ for name in examples:
     assert len(data) <= 300_000, image
     source = (root / "examples" / f"{name}.lms").read_text(encoding="utf-8")
     assert "savedsl(" in source and "assert(r.code == 0)" in source, name
-assert len(re.findall(r"lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/", readme)) >= 30
+assert len(re.findall(r"lmctl(?: autorun)? https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/", readme)) >= 30
 print(f"gallery: {len(examples)} examples and images verified")
 
 def run_examples():

@@ -1,7 +1,7 @@
 # Native AWS SDK versus lmcloud/OpenTofu
 
 Every one of the 30 native examples has `compare/<name>/main.tf` and an
-`lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/<name>/<name>.lms`
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/<name>/<name>.lms`
 equivalent. Generated scripts embed the HCL and directly call `tofu.init`,
 `validate`, `plan`, `apply`, `show_state`, and `destroy` in separately checked phases.
 The scripts pin released lmcloud v0.1.10. Python 3, curl and AWS CLI support the local safety ledger and independent checks.

@@ -12,7 +12,7 @@ lmplot/lmdraw. Offline examples need no AWS credentials. `sweeper` is a read-onl
 local ledger report, not a cloud deletion operation.
 
 ```sh
-LMAWS_LIVE=0 timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms
+LMAWS_LIVE=0 timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms
 ```
 
 Autorun installs the released native host through the script's `cli`/`install`

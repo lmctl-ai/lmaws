@@ -80,36 +80,36 @@ harness described below, not independent commands. Do not rerun writes merely to
 refresh screenshots. IAM commands are listed only as offline demos, without live mode.
 
 ```sh
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/alarms.lms
-AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/before_after.lms
-AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/bucket_objects.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/buckets.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/clusters.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/functions.lms
-LMAWS_LIVE=0 AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/identity.lms # IAM: offline only
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/instances.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_groups.lms
-AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_retention.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/parameters.lms
-AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queues.lms
-LMAWS_LIVE=0 AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/read_only_audit.lms # IAM: offline only
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/regional_posture.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/resource_graph.lms
-LMAWS_LIVE=0 AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/roles.lms # IAM: offline only
-AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sandbox_lifecycle.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/secrets.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/security_groups.lms
-LMAWS_LIVE=0 AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/service_matrix.lms # IAM: offline only
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms
-AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/table_items.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tables.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tag_compliance.lms
-AWS_PROFILE=lmaws timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topic_publish.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topics.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/vpcs.lms
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/zones.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/alarms.lms
+AWS_PROFILE=lmaws timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/before_after.lms
+AWS_PROFILE=lmaws timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/bucket_objects.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/buckets.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/clusters.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/functions.lms
+LMAWS_LIVE=0 AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/identity.lms # IAM: offline only
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/instances.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_groups.lms
+AWS_PROFILE=lmaws timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/log_retention.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/parameters.lms
+AWS_PROFILE=lmaws timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queue_pipeline.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/queues.lms
+LMAWS_LIVE=0 AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/read_only_audit.lms # IAM: offline only
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/regional_posture.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/resource_graph.lms
+LMAWS_LIVE=0 AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/roles.lms # IAM: offline only
+AWS_PROFILE=lmaws timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sandbox_lifecycle.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/secrets.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/security_groups.lms
+LMAWS_LIVE=0 AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/service_matrix.lms # IAM: offline only
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms
+AWS_PROFILE=lmaws timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/table_items.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tables.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/tag_compliance.lms
+AWS_PROFILE=lmaws timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topic_publish.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/topics.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/vpcs.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/zones.lms
 ```
 
 A repository checkout can enforce the aggregate campaign budget and skip IAM:
@@ -130,7 +130,7 @@ LMAWS_LIVE=1 AWS_PROFILE=default AWS_REGION=us-east-1 timeout 1050 compare/run.s
 All 30 direct comparison URLs are beside their native examples in README. Example:
 
 ```sh
-LMAWS_LIVE=1 AWS_PROFILE=lmaws timeout 900 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/bucket_objects/bucket_objects.lms
+LMAWS_LIVE=1 AWS_PROFILE=lmaws timeout 900 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/bucket_objects/bucket_objects.lms
 ```
 
 Comparison scripts embed their HCL and download this repo's small Python runtime
@@ -149,7 +149,7 @@ independent checks, was $0.05754170 (native $0.00004000; provider upper bound $0
 ## Sweep and evidence
 
 ```sh
-AWS_PROFILE=default timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms
+AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms
 # With the downloaded host on PATH:
 lmaws --sweep "$LMAWS_LEDGER_DIR" --older-than-hours 0
 # For a direct comparison autorun directory (downloaded helper), dry-run only:
