@@ -35,7 +35,7 @@ addresses 198.51.100.x). Live reports go to the git-ignored `.lmaws-local/comput
   and must not carry `Project=awsspot`. Waits are bounded (<= 600 s since the first launch).
 - A one-time spot instance cannot be stopped (only persistent requests stop/resume): `stop`
   returns `UnsupportedOperation` and the recipe terminates. Terminating normally closes the
-  request, but EC2 can leave it active/fulfilled for minutes: teardown waits 120 s, then calls
+  request, but EC2 leaves it active/fulfilled for a while (about 160 s measured): teardown waits up to 240 s, then calls
   CancelSpotInstanceRequests for this run's request and records a denial in `denied_action()`.
 - `teardown()` (also run by host close on every failure path and by the shutdown hook):
   terminate, wait terminated (240 s), delete the security group (retries DependencyViolation for
@@ -65,9 +65,10 @@ every region except us-east-1. It does **not** allow `ec2:CancelSpotInstanceRequ
 - spot_nano_lifecycle: the cheapest t4g.nano AZ returned InsufficientInstanceCapacity, the second
   AZ launched; running after ~5 s, both status checks ok after ~2 min, stop refused
   (UnsupportedOperation), terminated after ~50 s; volume, ENI and security group gone; estimated
-  cost about $0.0002. The one-time spot request stayed active/fulfilled after termination and
-  CancelSpotInstanceRequests is denied by the session policy, so the request is the one reported
-  leftover (no instance, no charge) until EC2 closes it or the policy allows the cancel.
+  cost about $0.0002. The one-time spot request stayed active/fulfilled for ~160 s after
+  termination, beyond the then 120 s teardown wait, and CancelSpotInstanceRequests is denied by
+  the session policy, so that run reported it as a leftover; EC2 then closed it
+  (instance-terminated-by-user) and a later lmaws leftover search found zero. The wait is now 240 s.
 - lmscript 0.2.426 does not pass `set_env` values to `system()` children (it spawns with its
   start-up environment); `recipe_run` therefore passes settings through `env(1)` on Linux/macOS.
   Before this, `--live` recipes silently ran synthetic. On Windows a live recipe stops with a

@@ -415,13 +415,13 @@ final class Ec2Compute {
 
         /**
          * One-time requests normally close by themselves when the instance terminates, but EC2 can
-         * leave them active/fulfilled for minutes. Wait (bounded), then cancel this run's requests;
+         * leave them active/fulfilled for minutes (about 160 s measured). Wait up to 240 s, then cancel this run's requests;
          * a policy denial is recorded as the exact action an administrator must allow.
          */
         private String closeSpotRequests() {
             if (demo() || instances.isEmpty()) return "closed";
             Filter mine = Filter.builder().name("tag:" + OWNER).values(runId).build();
-            Instant deadline = Instant.now().plusSeconds(120);
+            Instant deadline = Instant.now().plusSeconds(240);  // measured: EC2 closed one after ~160 s
             List<String> open;
             while (true) {
                 open = ec2().describeSpotInstanceRequests(x -> x.filters(mine)).spotInstanceRequests().stream()
