@@ -50,6 +50,14 @@ public final class SpendFakeSource implements SpendSource {
             case "savings_plans"->scenario.equals("savings_absent")?List.of():List.of(row("region","us-east-1","plan_id","sp-demo","state","active","plan_type","Compute","commitment_hourly","1.00","start","2026-01-01","end","2027-01-01"));
             case "reserved_instances"->scenario.equals("savings_absent")?List.of():List.of(row("region","us-east-1","reserved_id","ri-demo","state","active","instance_type","t3.micro","instance_count","2","fixed_price","0","recurring_hourly","0.01"));
             default->throw new Unavailable(kind,"unsupported inventory");};
+        if(scenario.equals("account_in_names")) {
+            List<Map<String,String>> changed=new ArrayList<>();
+            for(var original:rows){Map<String,String> x=new LinkedHashMap<>(original);
+                for(String field:List.of("instance_id","volume_id","function_name","table_name"))
+                    if(x.containsKey(field))x.put(field,x.get(field)+"-303030303030");
+                changed.add(x);
+            }rows=changed;
+        }
         if(scenario.equals("duplicates")&&kind.equals("eips")){List<Map<String,String>> duplicates=new ArrayList<>(rows);duplicates.add(rows.getFirst());rows=duplicates;}
         if(scenario.equals("unknown_sizes")&&(kind.equals("ebs")||kind.equals("snapshots"))){List<Map<String,String>> changed=new ArrayList<>();for(var original:rows){Map<String,String>x=new LinkedHashMap<>(original);x.put("size_gib","unknown");x.put("iops","unknown");x.put("throughput_mib_s","unknown");changed.add(x);}rows=changed;}
         return save(key,rows);

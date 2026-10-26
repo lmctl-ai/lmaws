@@ -69,6 +69,13 @@ public final class SpendChecks {
         check(refused&&twentyFive.ceRequests()==25,"26th CE call refused before dispatch");check(!twentyFive.displayCost().equals("$0.00"),"read-only billable request cost displayed");
         CostLedger batch=ledger(dir,"batch","0.25");batch.metricRequest("GetMetricData",100);eq(batch.total().toPlainString(),"0.001","100 requested metrics charged even in one HTTP call");
         CostLedger cached=ledger(dir,"cached","0.25");var source=new SpendFakeSource(cached);source.costs(end.minusDays(1),end,"DAILY","SERVICE","",false);source.costs(end.minusDays(1),end,"DAILY","SERVICE","",false);check(cached.ceRequests()==1,"cached grouped CE query not charged twice");
+        CostLedger named=ledger(dir,"account-names","0.25");
+        var names=SpendReport.collect(new SpendFakeSource("account_in_names",named),"all",end,30,10,named);
+        check(!names.json().contains("303030303030"),"unknown account embedded in resource names masked without identity lookup");
+        check(names.section("ec2_resources").size()==2,"masking regression includes real materialized instance rows");
+        for(var row:names.section("ec2_resources"))check(row.values().stream().noneMatch(v->v.contains("303030303030")),"DSL section rows mask embedded account identifiers");
+        Path maskedOutput=dir.resolve("account-names-exports");names.write(maskedOutput);
+        for(var path:Files.list(maskedOutput).toList())check(!Files.readString(path).contains("303030303030"),"all exports mask account-like identifiers "+path.getFileName());
         boolean outside=false;try{SpendOutputs.requirePrivate(dir);}catch(IllegalArgumentException expected){outside=true;}check(outside,"live output cannot use public path");
         System.out.println("PASS "+checks+" spend arithmetic, cap, cache, empty/denied/disabled, export and mask checks");
     }

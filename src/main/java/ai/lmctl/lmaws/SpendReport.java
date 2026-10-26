@@ -60,7 +60,7 @@ public final class SpendReport {
                 Map<String,String> row=new LinkedHashMap<>();original.forEach((key,value)->{
                     String v=value==null?"unknown":value;
                     if(numericField(key)&&v.matches("-?[0-9]{12}"))v=new BigDecimal(v).movePointLeft(3).stripTrailingZeros().toPlainString()+"E3";
-                    row.put(key,Jsons.mask(v));
+                    row.put(key,maskSpendValue(key,v));
                 });rows.add(Collections.unmodifiableMap(row));
             }r.sections.put(entry.getKey(),List.copyOf(rows));
         }
@@ -227,14 +227,21 @@ public final class SpendReport {
         x.put("opportunities",section("opportunities"));x.put("idle_resource_monthly_estimate_usd",money(opportunities.stream().filter(r->r.get("action").startsWith("idle allocated")||r.get("action").startsWith("unattached EBS")).map(r->number(r.get("monthly_saving_usd"))).reduce(BigDecimal.ZERO,BigDecimal::add)));x.put("estimated_cost_usd",ledger.total());x.put("ce_requests",ledger.ceRequests());x.put("metric_requests",ledger.metricRequests());x.put("metric_units",ledger.metricUnits());return x;
     }
     public BigDecimal estimatedCost(){return ledger.total();}
-    private static boolean numericField(String key){return key.endsWith("_usd")||key.startsWith("consumed_")||key.startsWith("provisioned_")||Set.of("total","datapoints","usage_quantity","size_gib","size_bytes","item_count","memory_mb","read_capacity","write_capacity","iops","throughput_mib_s","duration_ms","invocations","errors","gb_seconds").contains(key);}
+    private static final java.util.regex.Pattern ACCOUNT_IN_TEXT=java.util.regex.Pattern.compile("(?<![0-9])[0-9]{12}(?![0-9])");
+    // Spend inventories need no STS identity lookup: conservatively mask account-like
+    // identifiers in names while preserving fields explicitly known to be numeric.
+    private static String maskSpendValue(String field,String value){
+        String masked=Jsons.mask(field,value);
+        return numericField(field)?masked:ACCOUNT_IN_TEXT.matcher(masked).replaceAll("************");
+    }
+    private static boolean numericField(String key){return key.endsWith("_usd")||key.endsWith("_percent")||key.endsWith("_hourly")||key.endsWith("_hours")||key.equals("fixed_price")||key.startsWith("consumed_")||key.startsWith("provisioned_")||Set.of("total","datapoints","usage_quantity","size_gib","size_bytes","item_count","memory_mb","read_capacity","write_capacity","iops","throughput_mib_s","duration_ms","invocations","errors","gb_seconds").contains(key);}
     private static Object canonical(Object value){if(value instanceof Map<?,?> map){Map<String,Object> out=new TreeMap<>();map.forEach((key,item)->out.put(key.toString(),canonical(item)));return out;}if(value instanceof List<?> list)return list.stream().map(SpendReport::canonical).toList();return value;}
     public String json(){Map<String,Object> cost=new LinkedHashMap<>(ledger.report(0));cost.remove("run_id");return Jsons.encode(canonical(Map.of("metadata",metadata,"assumptions",assumptions,"sections",sections,"summary",summary(),"request_ledger",cost)))+"\n";}
     public void write(Path directory){
         if(ledger.live())SpendOutputs.createPrivate(directory);
         try{Files.createDirectories(directory);Files.writeString(directory.resolve("report.json"),json());
             for(var e:sections.entrySet()){Files.writeString(directory.resolve(e.getKey()+".json"),Jsons.encode(e.getValue())+"\n");StringBuilder csv=new StringBuilder();LinkedHashSet<String> fields=new LinkedHashSet<>();e.getValue().forEach(r->fields.addAll(r.keySet()));csv.append(String.join(",",fields)).append('\n');
-                for(var row:e.getValue()){List<String> cells=new ArrayList<>();for(String field:fields){String value=Jsons.mask(field,row.getOrDefault(field,""));if(!value.isEmpty()&&"=+-@\t\r".indexOf(value.charAt(0))>=0)value="'"+value;cells.add("\""+value.replace("\"","\"\"")+"\"");}csv.append(String.join(",",cells)).append('\n');}
+                for(var row:e.getValue()){List<String> cells=new ArrayList<>();for(String field:fields){String value=maskSpendValue(field,row.getOrDefault(field,""));if(!value.isEmpty()&&"=+-@\t\r".indexOf(value.charAt(0))>=0)value="'"+value;cells.add("\""+value.replace("\"","\"\"")+"\"");}csv.append(String.join(",",cells)).append('\n');}
                 Files.writeString(directory.resolve(e.getKey()+".csv"),csv);}
             SpendCharts.write(this,directory,metadata.get("topic").toString(),top);
         }catch(IOException e){throw new IllegalStateException("cannot write spend report");}
