@@ -1,0 +1,21 @@
+{
+  "version": "0.1.3",
+  "binary_sha256": "92170528c7e2df9b09081b6c17ef5b8cbb0ad8176d7d54612bbe5e5ca5d1267c",
+  "local_native_build": "GraalVM CE 25.0.2",
+  "jvm_test_sh": "passed",
+  "native_test_sh": "passed",
+  "checks": [
+    "pinned SDK",
+    "51 runtime dependency hashes",
+    "CLI/schema/signatures/memory",
+    "fake SDK 16 inventories and six tagged lifecycles",
+    "independent absence fails closed",
+    "30 comparison script compilation and safety tests",
+    "30/30 gallery programs and PNGs",
+    "dynamic glibc >=2.35; NEEDED libc.so.6"
+  ],
+  "cloud_credentials_in_ci": false,
+  "live_native_examples": 6,
+  "live_iam_examples": 0,
+  "native_live_summary": "evidence/live-cost-summary-v013.json"
+}

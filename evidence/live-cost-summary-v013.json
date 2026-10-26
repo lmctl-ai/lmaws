@@ -4,7 +4,7 @@
   "local_only": true,
   "oidc": false,
   "cloud_credentials_in_ci": false,
-  "total_estimated_usd": "0.0000127250002100239478",
+  "total_estimated_usd": "0.0000140250002100239478",
   "write_profile": "lmaws",
   "read_profile": "default",
   "iam_live_skipped": [
@@ -97,5 +97,6 @@
   ],
   "failed_examples": [],
   "leftover_count": 0,
-  "independent_verification_estimated_usd": "0.0000013"
+  "independent_verification_estimated_usd": "0.0000013",
+  "native_estimated_usd": "0.0000127250002100239478"
 }

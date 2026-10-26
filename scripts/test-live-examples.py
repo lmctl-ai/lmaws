@@ -72,6 +72,6 @@ for name in examples:
  evidence_path.write_text(json.dumps(record,indent=2)+'\n',encoding='utf-8')
  item=dict(example=name,estimated_usd=str(amount),display=record['estimated_cost_display'],evidence=str(evidence_path.relative_to(ROOT)),resource_kinds=[r['kind'] for r in record['resources']],resource_names=[r['name'] for r in record['resources']],leftover_count=0)
  results.append(item);print(json.dumps(item),flush=True)
-summary=dict(profile='per-example',region='us-east-1',local_only=True,oidc=False,cloud_credentials_in_ci=False,total_estimated_usd=str(total),write_profile='lmaws',read_profile='default',iam_live_skipped=sorted(iam),whole_run_cap_usd='0.25',example_default_cap_usd='0.05',examples=results,failed_examples=failed_cases,leftover_count=0)
+summary=dict(native_estimated_usd=str(sum((decimal.Decimal(x['estimated_usd']) for x in results),decimal.Decimal(0))),profile='per-example',region='us-east-1',local_only=True,oidc=False,cloud_credentials_in_ci=False,total_estimated_usd=str(total),write_profile='lmaws',read_profile='default',iam_live_skipped=sorted(iam),whole_run_cap_usd='0.25',example_default_cap_usd='0.05',examples=results,failed_examples=failed_cases,leftover_count=0)
 (ROOT/'evidence'/args.summary).write_text(json.dumps(summary,indent=2)+'\n',encoding='utf-8')
 print('PASS' if not failed_cases else 'INCOMPLETE',len(results),'live examples; estimated cost: $'+str(total)+'; leftovers: 0; private logs:',base)
