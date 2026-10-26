@@ -73,6 +73,11 @@ final class WebRun implements AutoCloseable {
         state.put("step_"+op,"done");state.put("seconds_"+op,String.valueOf((System.nanoTime()-start)/1e9));state.put("status","up");state.remove("intent");persist();return summary();
     }
     private String arg(Map<String,Object> a,String k,String fallback){return a.containsKey(k)?String.valueOf(a.get(k)):fallback;}
+    private long integerArg(Map<String,Object> values,String key) {
+        Object value=values.getOrDefault(key,0);
+        if(value instanceof Number number){double d=number.doubleValue();if(!Double.isFinite(d)||d!=Math.rint(d)||d<0||d>104857600)throw new IllegalArgumentException("invalid bounded integer argument");return (long)d;}
+        return Long.parseLong(String.valueOf(value));
+    }
     private void demoStep(String op,Map<String,Object>a) {
         switch(op){
             case "bucket"->state.put("bucket_created","true");
@@ -123,7 +128,7 @@ final class WebRun implements AutoCloseable {
             case "https"->{aws().attachCertificate(val("distribution"),val("site"),val("cert"),true);state.put("https","true");}
             case "invalidate"->aws().invalidate(val("distribution"));
             case "reserve_http", "record_http"->{
-                long requests=Long.parseLong(arg(a,"requests","0")),bytes=Long.parseLong(arg(a,"bytes","0"));
+                long requests=integerArg(a,"requests"),bytes=integerArg(a,"bytes");
                 if(requests<0||requests>10000||bytes<0||bytes>104857600)throw new IllegalArgumentException("HTTP cost accounting bounds exceeded");
                 var amount=java.math.BigDecimal.valueOf(requests).multiply(new java.math.BigDecimal("0.000001"))
                    .add(java.math.BigDecimal.valueOf(bytes).multiply(new java.math.BigDecimal("0.09")).divide(new java.math.BigDecimal("1073741824"),12,java.math.RoundingMode.CEILING));
@@ -196,7 +201,7 @@ final class WebRun implements AutoCloseable {
             persist();
             cleanup("app_record",()->aws().recordA(val("zone"),val("app"),val("public_ip"),true),errors);
             cleanup("site_record",()->aws().changeAlias(val("zone"),val("site"),val("cf_domain"),true),errors);
-            if(state.containsKey("security_group_id"))try{new WebCompute(backend).delete(run,state.getOrDefault("instance_id",""),val("security_group_id"));state.remove("instance_id");state.remove("security_group_id");state.put("compute_ended_at",Instant.now().toString());persist();}catch(RuntimeException e){errors.add(e);}
+            if(state.containsKey("security_group_id"))try{new WebCompute(backend).delete(run,state.getOrDefault("instance_id",""),val("security_group_id"),checkpoint->{state.putAll(checkpoint);persist();});state.remove("instance_id");state.remove("security_group_id");state.putIfAbsent("compute_ended_at",Instant.now().toString());persist();}catch(RuntimeException e){errors.add(e);}
             cleanup("distribution",()->{aws().disableDistribution(val("distribution"));aws().deleteDistribution(val("distribution"));},errors);
             cleanup("oac",()->aws().deleteOac(val("oac")),errors);
             cleanup("bucket_created",()->{aws().deleteBucket(val("bucket"));state.put("bucket_ended_at",Instant.now().toString());},errors);

@@ -74,7 +74,8 @@ final class WebCompute {
     private List<String> candidateSubnets(Ec2Client ec2,String vpc,String requested){LinkedHashSet<String> out=new LinkedHashSet<>();out.add(requested);for(var s:ec2.describeSubnets(x->x.filters(Filter.builder().name("vpc-id").values(vpc).build(),Filter.builder().name("map-public-ip-on-launch").values("true").build())).subnets())if(!requested.equals(s.subnetId()))out.add(s.subnetId());return out.stream().limit(6).toList();}
     private String publicAmi(String type){String n=type.equals("t4g.nano")?"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64":"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64";return backend.ssmClient().getParameter(x->x.name(n)).parameter().value();}
 
-    Map<String,String> delete(String runId, String instanceId, String securityGroupId) {
+    Map<String,String> delete(String runId,String instanceId,String securityGroupId){return delete(runId,instanceId,securityGroupId,null);}
+    Map<String,String> delete(String runId, String instanceId, String securityGroupId,Consumer<Map<String,String>> checkpoint) {
         WebStack.requireRun(runId); if (!instanceId.isEmpty()&&!instanceId.matches("i-[0-9a-f]{8,32}") || !securityGroupId.matches("sg-[0-9a-f]{8,32}")) throw new IllegalArgumentException("invalid web compute identifiers");
         backend.requireComputeWriteEnabled(); Ec2Client ec2 = backend.ec2Client();
         Instance instance=null;
@@ -83,6 +84,8 @@ final class WebCompute {
         if (instance != null) { String owner = instance.tags().stream().filter(t -> OWNER.equals(t.key())).map(Tag::value).findFirst().orElse(""); String name = instance.tags().stream().filter(t -> "Name".equals(t.key())).map(Tag::value).findFirst().orElse(""); if (!runId.equals(owner) || !name.equals(WebStack.resourceName(runId, "app"))) throw new SecurityException("refusing instance without exact run ownership"); spotRequest = instance.spotInstanceRequestId() == null ? "" : instance.spotInstanceRequestId(); ec2.terminateInstances(x -> x.instanceIds(instanceId)); }
         final String requestId = spotRequest;
         if (instance != null) waitGone(ec2, instanceId);
+        String terminatedAt=java.time.Instant.now().toString();
+        if(checkpoint!=null)checkpoint.accept(Map.of("compute_ended_at",terminatedAt));
         if (!requestId.isBlank()) waitSpotClosed(ec2, requestId);
         SecurityGroup sg=null;
         try{sg=ec2.describeSecurityGroups(x->x.groupIds(securityGroupId)).securityGroups().stream().findFirst().orElse(null);}catch(Ec2Exception e){if(!"InvalidGroup.NotFound".equals(e.awsErrorDetails().errorCode()))throw e;}
@@ -105,21 +108,28 @@ final class WebCompute {
         long deadline = System.nanoTime() + java.time.Duration.ofMinutes(10).toNanos();
         while (System.nanoTime() < deadline) {
             try { var rs = ec2.describeInstances(x -> x.instanceIds(id)).reservations(); if (rs.isEmpty() || rs.stream().flatMap(r -> r.instances().stream()).allMatch(i -> i.state() != null && i.state().nameAsString().equals("terminated"))) return; }
-            catch (Ec2Exception e) { if (e.awsErrorDetails().errorCode().startsWith("InvalidInstanceID")) return; throw e; }
+            catch (Ec2Exception e) { if (e.awsErrorDetails()!=null&&"InvalidInstanceID.NotFound".equals(e.awsErrorDetails().errorCode())) return; throw e; }
             try { Thread.sleep(3000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException("web cleanup interrupted",e); }
         }
         throw new IllegalStateException("timed out waiting for web instance termination");
     }
-    private static Instance waitRunning(Ec2Client ec2, String id) {
-        long deadline = System.nanoTime() + java.time.Duration.ofMinutes(10).toNanos();
-        while (System.nanoTime() < deadline) {
-            var rs = ec2.describeInstances(x -> x.instanceIds(id)).reservations();
-            var found = rs.stream().flatMap(r -> r.instances().stream()).findFirst().orElse(null);
-            if (found != null && found.state() != null && found.state().nameAsString().equals("running")) return found;
-            if (found != null && found.state() != null && Set.of("terminated", "shutting-down", "stopped").contains(found.state().nameAsString())) throw new IllegalStateException("web instance entered " + found.state().nameAsString());
-            try { Thread.sleep(3000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException("web wait interrupted", e); }
+    private static Instance waitRunning(Ec2Client ec2,String id) {
+        long deadline=System.nanoTime()+java.time.Duration.ofMinutes(5).toNanos();
+        while(System.nanoTime()<deadline) {
+            try{
+                var rows=ec2.describeInstances(x->x.instanceIds(id)).reservations();
+                var instance=rows.stream().flatMap(r->r.instances().stream()).findFirst().orElse(null);
+                if(instance!=null&&instance.state()!=null){
+                    String state=instance.state().nameAsString();
+                    if("running".equals(state))return instance;
+                    if(Set.of("terminated","shutting-down","stopped").contains(state))throw new IllegalStateException("web instance entered "+state);
+                }
+            }catch(Ec2Exception eventual){
+                if(eventual.awsErrorDetails()==null||!"InvalidInstanceID.NotFound".equals(eventual.awsErrorDetails().errorCode()))throw eventual;
+            }
+            try{Thread.sleep(3000);}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException("web wait interrupted",e);}
         }
-        throw new IllegalStateException("timed out waiting for web instance running");
+        throw new IllegalStateException("timed out waiting for web instance visibility/running");
     }
     private static void deleteGroupEventually(Ec2Client ec2, String id) {
         long deadline = System.nanoTime() + java.time.Duration.ofMinutes(5).toNanos();
