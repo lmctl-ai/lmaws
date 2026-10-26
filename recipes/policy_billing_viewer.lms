@@ -1,0 +1,936 @@
+# Access: Read-only
+# What: Build a read-only Cost Explorer, Budgets, Pricing and CloudWatch metrics viewer policy
+# When: When specifying, shrinking, splitting, diffing, explaining or simulating AWS IAM policies without hand-editing raw JSON
+# Run: lmctl recipes/policy_billing_viewer.lms
+# Preview: lmctl recipes/policy_billing_viewer.lms --preview
+# Arguments: --prefix lmaws --region us-east-1 --output data/policy_billing_viewer
+# Typical-cost: $0.00 offline policy compilation
+# Category: Permission builder and IAM analysis
+# Library: recipes/lib/policy_builder.lms
+# Function: recipe_policy_builder
+# Example: recipe_policy_billing_viewer
+# Generated standalone entry; reusable source: recipes/lib/policy_builder.lms
+let recipe_budget={reserved_units:0};
+fn recipe_env(key,fallback) { let value=getenv(key,""); if(value=="") {return fallback;} return value; }
+fn recipe_normalize(options) {
+  let defaults = {period:num(recipe_env("LMAWS_RECIPE_PERIOD","30")),top:num(recipe_env("LMAWS_RECIPE_TOP","10")),prefix:recipe_env("LMAWS_RECIPE_PREFIX","lmaws"),policy:recipe_env("LMAWS_RECIPE_POLICY","lmaws_session"),file:recipe_env("LMAWS_RECIPE_FILE",""),region:recipe_env("AWS_REGION",recipe_env("AWS_DEFAULT_REGION","us-east-1")),profile:recipe_env("AWS_PROFILE",recipe_env("AWS_DEFAULT_PROFILE","default")),live:false,apply:false,preview:false,output:"data/recipe",task:"queues",cap:num(recipe_env("LMAWS_MAX_COST_USD","0.05")),older_hours:0,filter_prefix:false,output_explicit:false,cap_explicit:recipe_env("LMAWS_MAX_COST_USD","")!="",ledger_dir:recipe_env("LMAWS_LEDGER_DIR",".lmaws-local/recipes/ledgers"),tag_key:"Project",tag_value:"",instance:"",hours:24,types:"t4g.nano,t3.nano",domain:recipe_env("LMAWS_RECIPE_DOMAIN","example.com"),max_gib:num(recipe_env("LMAWS_RECIPE_MAX_GIB","8")),cidr:recipe_env("LMAWS_RECIPE_CIDR","203.0.113.10/32"),from_iso:recipe_env("LMAWS_RECIPE_FROM","2026-01-01T00:00:00Z"),to_iso:recipe_env("LMAWS_RECIPE_TO","2026-01-01T04:00:00Z"),error_text:recipe_env("LMAWS_RECIPE_ERROR",""),ledger_path:recipe_env("LMAWS_RECIPE_LEDGER_PATH",""),probes:recipe_env("LMAWS_RECIPE_PROBES",""),timeout_ms:300000};
+  let o=merge(defaults,options);
+  if(has_key(options,"output") && !has_key(options,"output_explicit")) {o.output_explicit=true;}
+  if(has_key(options,"cap") && !has_key(options,"cap_explicit")) {o.cap_explicit=true;}
+  assert(is_number(o.period) && o.period>=1 && o.period<=365 && floor(o.period)==o.period);
+  assert(is_number(o.top) && o.top>=1 && o.top<=1000 && floor(o.top)==o.top);
+  assert(is_number(o.cap) && o.cap>=0 && o.cap<=0.25);
+  assert(is_number(o.older_hours) && o.older_hours>=0 && floor(o.older_hours)==o.older_hours);
+  o.output=replace_all(str(o.output),"\\","/");
+  o.ledger_dir=replace_all(str(o.ledger_dir),"\\","/");
+  assert(regex_test(o.ledger_dir,"^[A-Za-z0-9_./: ~-]+$"));
+  assert(o.profile=="default" || o.profile=="lmaws" || o.profile=="lmaws-ec2" || o.profile=="admin");
+  assert(regex_test(str(o.policy),"^lmaws_[a-z0-9_-]{1,64}$"));
+  assert(is_number(o.hours) && o.hours>=1 && o.hours<=720 && floor(o.hours)==o.hours);
+  assert(is_number(o.max_gib) && o.max_gib>=1 && o.max_gib<=16384 && floor(o.max_gib)==o.max_gib);
+  assert(is_number(o.timeout_ms) && o.timeout_ms>=1000 && o.timeout_ms<=900000);
+  assert(regex_test(str(o.tag_key),"^[A-Za-z0-9_.:/=+@ -]{0,128}$") && regex_test(str(o.tag_value),"^[A-Za-z0-9_.:/=+@ -]{0,256}$"));
+  assert(regex_test(str(o.types),"^[a-z0-9]+[.][a-z0-9]+(,[a-z0-9]+[.][a-z0-9]+)*$"));
+  assert(regex_test(str(o.domain),"^[A-Za-z0-9-]+([.][A-Za-z0-9-]+)+$"));
+  assert(regex_test(o.region,"^[a-z]{2}(-[a-z]+)+-[0-9]+$"));
+  assert(regex_test(o.output,"^[A-Za-z0-9_./: ~-]+$"));
+  assert(is_string(o.prefix) && len(o.prefix)<=128);
+  return o;
+}
+fn recipe_options(argv) {
+  let o={}; let i=0;
+  while(i<len(argv)) {
+    let key=argv[i];
+    if(key=="--live") {o.live=true;}
+    else if(key=="--apply" || key=="--delete") {o.apply=true;}
+    else if(key=="--preview" || key=="--dry-run") {o.preview=true;}
+    else {
+      assert(i+1<len(argv));i=i+1;let value=argv[i];
+      if(key=="--period" || key=="--days") {o.period=num(value);}
+      else if(key=="--top" || key=="--top-n") {o.top=num(value);}
+      else if(key=="--cap") {o.cap=num(value);o.cap_explicit=true;}
+      else if(key=="--older-hours") {o.older_hours=num(value);}
+      else if(key=="--prefix") {o.prefix=value;o.filter_prefix=true;}
+      else if(key=="--policy" || key=="--policy-name") {o.policy=value;}
+      else if(key=="--file" || key=="--policy-file") {o.file=value;}
+      else if(key=="--region") {o.region=value;}
+      else if(key=="--profile") {o.profile=value;}
+      else if(key=="--output") {o.output=value;o.output_explicit=true;}
+      else if(key=="--ledger-dir") {o.ledger_dir=value;}
+      else if(key=="--task") {o.task=value;}
+      else if(key=="--tag-key") {o.tag_key=value;}
+      else if(key=="--tag-value") {o.tag_value=value;}
+      else if(key=="--instance") {o.instance=value;}
+      else if(key=="--hours") {o.hours=num(value);}
+      else if(key=="--types") {o.types=value;}
+      else if(key=="--domain") {o.domain=value;}
+      else if(key=="--max-gib") {o.max_gib=num(value);}
+      else if(key=="--cidr") {o.cidr=value;}
+      else if(key=="--from") {o.from_iso=value;}
+      else if(key=="--to") {o.to_iso=value;}
+      else if(key=="--error") {o.error_text=value;}
+      else if(key=="--ledger") {o.ledger_path=value;}
+      else if(key=="--probes") {o.probes=value;}
+      else {println("Unknown recipe argument:",key);assert(false);}
+    }
+    i=i+1;
+  }
+  return recipe_normalize(o);
+}
+fn recipe_run(program, options) {
+  let o=recipe_normalize(options);
+  assert(!o.preview);
+  if(o.live) {
+    let units=ceil(o.cap*100000000);
+    if(recipe_budget.reserved_units+units>25000000) {println("Recipe whole-run cap exceeded; reduce per-recipe caps before another live call.");assert(false);}
+    recipe_budget.reserved_units=recipe_budget.reserved_units+units;
+  }
+  mkdir(dirname(o.output),true);
+  let bytecode=temp_file();savedsl(program,bytecode);
+  let command=dsl_cli(program);
+  let settings={AWS_PROFILE:o.profile,AWS_DEFAULT_PROFILE:o.profile,AWS_REGION:o.region,AWS_DEFAULT_REGION:o.region,LMAWS_LIVE:o.live ? "1":"0",LMAWS_APPLY:o.apply ? "1":"0",LMAWS_SPEND_LIVE:o.live ? "1":"0",LMAWS_MAX_COST_USD:str(o.cap),LMAWS_LEDGER_DIR:o.ledger_dir,LMAWS_EVIDENCE_DIR:".lmaws-local/recipes/evidence"};
+  let previous={};
+  for(key in keys(settings)) {previous[key]=getenv(key,"");set_env(key,settings[key]);}
+  let cli_args=o.apply ? ["--apply","--dsl",bytecode] : ["--dsl",bytecode];
+  let argv=concat(command,cli_args);
+  if(getenv("OS","")!="Windows_NT") {let pre=["env"];for(key in keys(settings)) {push(pre,key+"="+str(settings[key]));}argv=concat(pre,argv);}
+  else if(o.live) {for(key in keys(settings)) {if(getenv(key,"")!=str(settings[key])) {println("Live recipes on Windows: set "+key+"="+str(settings[key])+" in the parent environment first.");assert(false);}}}
+  let r=system(argv,{timeoutMs:o.timeout_ms});
+  for(key in keys(previous)) {set_env(key,previous[key]);}
+  remove_file(bytecode);
+  if(r.code!=0) {println("Recipe host failed; see the host's sanitized diagnostic.");println(r.stderr);}
+  let found=false;
+  for(line in lines(r.stdout)) {
+    if(starts_with(line,"Cost Explorer requests:") || starts_with(line,"CloudWatch metric requests:") || starts_with(line,"CloudWatch metric units:") || starts_with(line,"IAM policy lint:") || starts_with(line,"IAM policy diff") || starts_with(line,"  + ") || starts_with(line,"  ~ ") || starts_with(line,"  - ") || starts_with(line,"  = ")) {println(line);}
+    if(starts_with(line,"estimated cost: $")) {println(line);found=true;}
+  }
+  if(!found && r.code!=0) {println("estimated cost: $"+str(o.cap)+" (reserved upper bound; host receipt unavailable)");}
+  assert(r.code==0);
+  assert(found);
+  return r;
+}
+fn recipe_preview(options,task) {
+  let o=recipe_normalize(options);
+  println(json_stringify({task:task,region:o.region,profile:o.profile,prefix:o.prefix,period:o.period,top:o.top,live:o.live,apply:o.apply,preview:true},2));
+  println("estimated cost: $0.00");
+  return {rows:[],preview:true};
+}
+fn recipe_select(rows,options) {
+  let o=recipe_normalize(options);let selected=[];
+  for(row in rows) {
+    if(len(selected)<o.top) {push(selected,row);}
+  }
+  return selected;
+}
+fn recipe_cost_line(report) {
+  let answer="estimated cost: $0.00";
+  let result=get(report,"result",{});
+  for(line in lines(str(get(result,"stdout","")))) {
+    if(starts_with(line,"estimated cost: $")) {answer=line;}
+  }
+  return answer;
+}
+fn recipe_picture(rows,title,name) {
+  assert(regex_test(name,"^[a-z][a-z0-9_]*$"));
+  mkdir("images");mkdir("data");
+  let counts={};let max_count=1;
+  for(row in rows) {
+    let label=str(get(row,"kind",get(row,"task","matching resources")));
+    label=replace_all(label,"_"," ");
+    label=regex_replace(label,"[^A-Za-z0-9 .-]","","g");
+    counts[label]=get(counts,label,0)+1;
+    if(counts[label]>max_count) {max_count=counts[label];}
+  }
+  let data="label,count\n";
+  for(label in keys(counts)) {data=data+label+","+str(counts[label])+"\n";}
+  if(len(rows)==0) {data=data+"no matches,0\n";}
+  let chart_title="Synthetic recipe: "+replace_all(name,"_"," ");
+  write_file("data/"+name+".csv",data);
+  let chart=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${"images/"+name+".png"},900,560);
+plot.cmd(${"set datafile separator ','; set title '"+chart_title+"'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.6; set yrange [0:"+str(max_count+1)+"]; set grid ytics; set xtics rotate by -30"});
+plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});
+plot.close();
+end _dsl_
+  let code=temp_file();savedsl(chart,code);let r=system(concat(dsl_cli(chart),["--dsl",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
+  println("images/"+name+".png");
+}
+
+
+fn _pb_build_dsl(task, o, out_policy, out_compact, out_lint, out_explain, out_matrix, out_extra) {
+  let prefix = str(o.prefix);
+  let tag_key = o.tag_key == "Project" ? (prefix + "_test") : str(o.tag_key);
+  let domain = str(o.domain);
+  let region = str(o.region);
+  let types = str(o.types);
+  let max_gib = o.max_gib;
+  let cidr = str(o.cidr);
+  let from_iso = str(o.from_iso);
+  let to_iso = str(o.to_iso);
+  let policy_name = str(o.policy);
+
+  if (task == "session_policy") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_session_policy");
+let p = cloud.policy(${policy_name}).lmaws_session_policy(${prefix}, ${tag_key}, ${domain}, ${region}, ${types}, ${max_gib});
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_s3_sandbox") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_s3_sandbox");
+let p = cloud.policy("lmaws_s3_sandbox")
+  .allow("ListBuckets", "s3:ListAllMyBuckets,s3:GetBucketLocation", "*")
+  .s3_bucket_sandbox(${prefix})
+  .deny_delete_unless_tagged("ProtectUntaggedBucketDelete", "s3:DeleteBucket", ${"arn:aws:s3:::" + prefix + "-*"}, ${tag_key})
+  .region_lock("OnlyRegion", ${region}, "sts:*,s3:*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_sqs_sandbox") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_sqs_sandbox");
+let p = cloud.policy("lmaws_sqs_sandbox")
+  .allow("ListQueues", "sqs:ListQueues", "*")
+  .queue_sandbox(${prefix})
+  .region_lock("OnlyRegion", ${region}, "sts:*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_sns_sandbox") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_sns_sandbox");
+let p = cloud.policy("lmaws_sns_sandbox")
+  .allow("ListTopics", "sns:ListTopics,sns:ListSubscriptions", "*")
+  .topic_sandbox(${prefix})
+  .region_lock("OnlyRegion", ${region}, "sts:*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_dynamodb_sandbox") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_dynamodb_sandbox");
+let p = cloud.policy("lmaws_dynamodb_sandbox")
+  .allow("ListTables", "dynamodb:ListTables,dynamodb:DescribeLimits", "*")
+  .table_sandbox(${prefix})
+  .region_lock("OnlyRegion", ${region}, "sts:*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_ssm_sandbox") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_ssm_sandbox");
+let p = cloud.policy("lmaws_ssm_sandbox")
+  .allow("DescribeParameters", "ssm:DescribeParameters", "*")
+  .allow("PublicParameters", "ssm:GetParameter,ssm:GetParameters,ssm:GetParametersByPath", "arn:aws:ssm:*::parameter/aws/service/*")
+  .parameter_sandbox(${prefix})
+  .region_lock("OnlyRegion", ${region}, "sts:*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_logs_sandbox") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_logs_sandbox");
+let p = cloud.policy("lmaws_logs_sandbox")
+  .allow("DescribeLogs", "logs:DescribeLogGroups,logs:DescribeLogStreams", "*")
+  .log_group_sandbox(${prefix})
+  .region_lock("OnlyRegion", ${region}, "sts:*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_ec2_spot_sandbox") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_ec2_spot_sandbox");
+let p = cloud.policy("lmaws_ec2_spot_sandbox")
+  .allow("Ec2Describe", "ec2:Describe*,sts:GetCallerIdentity", "*")
+  .allow("PublicAmis", "ssm:GetParameter", "arn:aws:ssm:*::parameter/aws/service/*")
+  .spot_nano_sandbox(${tag_key}, ${types}, ${max_gib})
+  .region_lock("OnlyRegion", ${region}, "sts:*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_web_stack") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_web_stack");
+let p = cloud.policy("lmaws_web_stack")
+  .allow("WebReads", "sts:GetCallerIdentity,s3:ListAllMyBuckets,cloudfront:List*,cloudfront:Get*,acm:ListCertificates,acm:DescribeCertificate,acm:ListTagsForCertificate", "*")
+  .s3_bucket_sandbox(${prefix})
+  .static_site_stack(${prefix}, ${tag_key}, ${domain}, ${region})
+  .region_lock("OnlyRegion", ${region}, "sts:*,s3:*,route53:*,cloudfront:*,acm:*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_ci_bucket_deployer") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_ci_bucket_deployer");
+let p = cloud.policy("lmaws_ci_deployer")
+  .ci_bucket_deployer(${prefix + "-site-assets"}, "E000000000DEMO")
+  .region_lock("OnlyRegion", ${region}, "sts:*,s3:*,cloudfront:*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_lambda_deployer") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_lambda_deployer");
+let p = cloud.policy("lmaws_lambda_deployer")
+  .allow("LambdaReads", "sts:GetCallerIdentity,lambda:ListFunctions", "*")
+  .lambda_deployer_by_name(${prefix})
+  .region_lock("OnlyRegion", ${region}, "sts:*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_tag_operator") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_tag_operator");
+let p = cloud.policy("lmaws_tag_operator")
+  .allow("TagSearch", "tag:GetResources,tag:GetTagKeys,tag:GetTagValues,ec2:DescribeTags,s3:GetBucketTagging", "*")
+  .only_tagged("TagScopedWrite", "tag:TagResources,tag:UntagResources,ec2:CreateTags,ec2:DeleteTags",
+    "arn:aws:ec2:*:*:instance/*,arn:aws:ec2:*:*:volume/*,arn:aws:s3:::lmaws-*",
+    ${tag_key}, "aws")
+  .region_lock("OnlyRegion", ${region}, "sts:*,s3:*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_read_only_auditor") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_read_only_auditor");
+let p = cloud.policy("lmaws_read_only_auditor")
+  .read_only_inventory()
+  .allow("AuditMetadata", "tag:GetResources,tag:GetTagKeys,cloudwatch:ListMetrics,cloudwatch:DescribeAlarms,ecs:ListClusters", "*")
+  .region_lock("OnlyRegion", ${region}, "sts:*,s3:*,route53:*,cloudfront:*,acm:*,iam:*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_billing_viewer") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_billing_viewer");
+let p = cloud.policy("lmaws_billing_viewer")
+  .billing_viewer();
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_break_glass") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_break_glass");
+let p = cloud.policy("lmaws_break_glass")
+  .read_only_inventory()
+  .only_tagged("EmergencyStopTagged", "ec2:StopInstances,ec2:RebootInstances,ec2:TerminateInstances,ecs:UpdateService",
+    "arn:aws:ec2:*:*:instance/*,arn:aws:ecs:*:*:service/*", ${tag_key}, "aws")
+  .mfa_required("RequireMfa", "ec2:StopInstances,ec2:RebootInstances,ec2:TerminateInstances,ecs:UpdateService", "*")
+  .time_window("EmergencyWindow", ${from_iso}, ${to_iso})
+  .source_ip("BastionCidrOnly", ${cidr});
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_ip_restricted") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_ip_restricted");
+let p = cloud.policy("lmaws_ip_restricted")
+  .allow("ListBuckets", "s3:ListAllMyBuckets", "*")
+  .s3_bucket_sandbox(${prefix})
+  .queue_sandbox(${prefix})
+  .source_ip("RequireBastionIp", ${cidr})
+  .cidr_only("IngressSingleHostCidr", "/32");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_mfa_deletes") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_mfa_deletes");
+let p = cloud.policy("lmaws_mfa_deletes")
+  .s3_bucket_sandbox(${prefix})
+  .table_sandbox(${prefix})
+  .mfa_required("RequireMfaForDeletes", "s3:DeleteBucket,s3:DeleteObject,dynamodb:DeleteTable,ec2:TerminateInstances,ec2:DeleteVolume", "*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_region_lock") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_region_lock");
+let p = cloud.policy("lmaws_region_lock")
+  .read_only_inventory()
+  .queue_sandbox(${prefix})
+  .region_lock("OnlyUsEast1WithGlobalExemptions", ${region}, "sts:GetCallerIdentity,s3:ListAllMyBuckets,route53:*,cloudfront:*,acm:*,ce:*");
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_deny_untagged_delete") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_deny_untagged_delete");
+let p = cloud.policy("lmaws_deny_untagged_delete")
+  .allow("Ec2Describe", "ec2:Describe*", "*")
+  .require_tag_on_create("CreateTaggedNetwork", "ec2:CreateVpc,ec2:CreateSubnet,ec2:CreateSecurityGroup",
+    "arn:aws:ec2:*:*:vpc/*,arn:aws:ec2:*:*:subnet/*,arn:aws:ec2:*:*:security-group/*", ${tag_key})
+  .only_tagged("DeleteTaggedNetwork", "ec2:DeleteVpc,ec2:DeleteSubnet,ec2:DeleteSecurityGroup,ec2:TerminateInstances",
+    "arn:aws:ec2:*:*:vpc/*,arn:aws:ec2:*:*:subnet/*,arn:aws:ec2:*:*:security-group/*,arn:aws:ec2:*:*:instance/*", ${tag_key}, "ec2")
+  .deny_untagged_create("DenyUntaggedNetworkCreate", "ec2:CreateVpc,ec2:CreateSubnet,ec2:CreateSecurityGroup", "*", ${tag_key})
+  .deny_delete_unless_tagged("DenyUntaggedNetworkDelete", "ec2:DeleteVpc,ec2:DeleteSubnet,ec2:DeleteSecurityGroup,ec2:TerminateInstances", "*", ${tag_key});
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_permission_boundary") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_permission_boundary");
+let p = cloud.policy("lmaws_permission_boundary")
+  .permission_boundary(${prefix}, ${tag_key}, ${region});
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_fit_inline") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_fit_inline");
+let p = cloud.policy("lmaws_inline_candidate")
+  .allow("CallerIdentityStatement", "sts:GetCallerIdentity", "*")
+  .allow("ListAllBucketsStatement", "s3:ListAllMyBuckets", "*")
+  .allow("DescribeEc2Statement", "ec2:Describe*", "*")
+  .allow("ListQueuesStatement", "sqs:ListQueues", "*")
+  .allow("ListTopicsStatement", "sns:ListTopics", "*")
+  .allow("ListTablesStatement", "dynamodb:ListTables", "*")
+  .allow("DescribeLogsStatement", "logs:DescribeLogGroups", "*")
+  .allow("DescribeParamsStatement", "ssm:DescribeParameters", "*")
+  .s3_bucket_sandbox(${prefix})
+  .queue_sandbox(${prefix})
+  .topic_sandbox(${prefix})
+  .table_sandbox(${prefix})
+  .parameter_sandbox(${prefix})
+  .log_group_sandbox(${prefix})
+  .region_lock("OnlyRegionStatement", ${region}, "sts:*,s3:*");
+let fit = p.fit_inline();
+file_write(${out_policy}, fit.get("pretty_json"));
+file_write(${out_compact}, fit.get("compact_json"));
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+file_write(${out_extra}, fit.json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_split_managed") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_split_managed");
+let p = cloud.policy(${policy_name}).lmaws_session_policy(${prefix}, ${tag_key}, ${domain}, ${region}, ${types}, ${max_gib});
+let parts = p.split_managed();
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+file_write(${out_extra}, parts.json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_explain_denial") {
+    let err = o.error_text != "" ? str(o.error_text) :
+      "User: arn:aws:sts::000000000000:federated-user/awsspot-local-lmaws is not authorized to perform: ec2:RunInstances on resource: arn:aws:ec2:us-east-1:000000000000:instance/i-0demo with an explicit deny in an identity-based policy: SpotNanoOnly (ec2:InstanceType=t3.micro)";
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_explain_denial");
+let p = cloud.policy("lmaws_session").lmaws_session_policy(${prefix}, ${tag_key}, ${domain}, ${region}, ${types}, ${max_gib});
+let diag = cloud.explain_denial(${err});
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+file_write(${out_extra}, diag.json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_from_ledger") {
+    let ledger_file = str(o.ledger_path);
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_from_ledger");
+let synth = cloud.policy_from_ledger(${ledger_file});
+let p = cloud.policy("lmaws_from_ledger").allow("SynthesizedRead", "sts:GetCallerIdentity", "*");
+file_write(${out_policy}, synth.get("policy_json"));
+file_write(${out_compact}, synth.get("compact_json"));
+file_write(${out_lint}, cloud.iam_policy_lint(synth.get("policy_json")).json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+file_write(${out_extra}, synth.json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_diff_review") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_diff_review");
+let before = cloud.policy("lmaws_session_v1")
+  .read_only_inventory()
+  .s3_bucket_sandbox(${prefix})
+  .queue_sandbox(${prefix})
+  .region_lock("OnlyUsEast1", ${region}, "sts:*,s3:*");
+let after = cloud.policy("lmaws_session_v2")
+  .read_only_inventory()
+  .s3_bucket_sandbox(${prefix})
+  .queue_sandbox(${prefix})
+  .table_sandbox(${prefix})
+  .spot_nano_sandbox(${tag_key}, ${types}, ${max_gib})
+  .region_lock("OnlyUsEast1", ${region}, "sts:*,s3:*");
+let diff_rows = cloud.policy_diff(before.json(), after.json());
+file_write(${out_policy}, after.json());
+file_write(${out_compact}, after.compact_json());
+file_write(${out_lint}, after.lint().json());
+file_write(${out_explain}, after.explain().json());
+file_write(${out_matrix}, after.matrix().json());
+file_write(${out_extra}, diff_rows.json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_simulate_probes") {
+    let probe_spec = str(o.probes);
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_simulate_probes");
+let p = cloud.policy(${policy_name}).lmaws_session_policy(${prefix}, ${tag_key}, ${domain}, ${region}, ${types}, ${max_gib});
+let sim = cloud.policy_simulate(p.json(), ${probe_spec});
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+file_write(${out_extra}, sim.json());
+end _dsl_
+    return prog;
+  }
+  if (task == "policy_migrate_json") {
+    let raw_input = o.file != "" && file_exists(o.file) ? read_file(o.file) : "";
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_migrate_json");
+let sample = cloud.policy("lmaws_session").lmaws_session_policy(${prefix}, ${tag_key}, ${domain}, ${region}, ${types}, ${max_gib});
+let custom_doc = ${raw_input};
+let doc = sample.json();
+if (custom_doc != "") { doc = custom_doc; }
+let migrated = cloud.policy_import_json(doc);
+file_write(${out_policy}, sample.json());
+file_write(${out_compact}, sample.compact_json());
+file_write(${out_lint}, sample.lint().json());
+file_write(${out_explain}, sample.explain().json());
+file_write(${out_matrix}, sample.matrix().json());
+file_write(${out_extra}, migrated.json());
+end _dsl_
+    return prog;
+  }
+  assert(false);
+}
+
+fn recipe_policy_builder(options) {
+  let o = recipe_normalize(options);
+  let task = str(o.task);
+  if (o.preview) { return recipe_preview(o, task); }
+  if (task != "policy_simulate_probes") {
+    o.live = false;
+    o.apply = false;
+  } else if (o.live) {
+    assert(o.profile == "admin");
+  }
+  let output = str(o.output);
+  mkdir(dirname(output), true);
+  let out_policy = output + ".policy.json";
+  let out_compact = output + ".compact.json";
+  let out_lint = output + ".lint.raw.json";
+  let out_explain = output + ".explain.raw.json";
+  let out_matrix = output + ".matrix.raw.json";
+  let out_extra = output + ".extra.raw.json";
+
+  let temp_ledger = "";
+  if (task == "policy_from_ledger" && o.ledger_path == "") {
+    temp_ledger = output + ".sample_ledger.jsonl";
+    write_file(temp_ledger, join([
+      "{\"event\":\"cost_header\",\"run_id\":\"rsynth\",\"live\":false}",
+      "{\"event\":\"cost_request\",\"service\":\"sts\",\"operation\":\"GetCallerIdentity\"}",
+      "{\"event\":\"cost_request\",\"service\":\"s3\",\"operation\":\"ListBuckets\"}",
+      "{\"event\":\"cost_request\",\"service\":\"s3\",\"operation\":\"CreateBucket\"}",
+      "{\"event\":\"cost_request\",\"service\":\"s3\",\"operation\":\"PutBucketTagging\"}",
+      "{\"event\":\"cost_request\",\"service\":\"s3\",\"operation\":\"PutObject\"}",
+      "{\"event\":\"cost_request\",\"service\":\"s3\",\"operation\":\"DeleteObject\"}",
+      "{\"event\":\"cost_request\",\"service\":\"s3\",\"operation\":\"DeleteBucket\"}",
+      "{\"event\":\"cost_resource\",\"state\":\"created\",\"kind\":\"bucket\",\"id\":\"lmaws-demo\",\"name\":\"lmaws-demo\"}",
+      "{\"event\":\"cost_request\",\"service\":\"sqs\",\"operation\":\"CreateQueue\"}",
+      "{\"event\":\"cost_request\",\"service\":\"sqs\",\"operation\":\"SendMessage\"}",
+      "{\"event\":\"cost_request\",\"service\":\"sqs\",\"operation\":\"DeleteQueue\"}",
+      "{\"event\":\"cost_resource\",\"state\":\"created\",\"kind\":\"queue\",\"id\":\"lmaws_demo\",\"name\":\"lmaws_demo\"}",
+      "{\"event\":\"cost_request\",\"service\":\"dynamodb\",\"operation\":\"CreateTable\"}",
+      "{\"event\":\"cost_request\",\"service\":\"dynamodb\",\"operation\":\"PutItem\"}",
+      "{\"event\":\"cost_request\",\"service\":\"dynamodb\",\"operation\":\"DeleteTable\"}",
+      "{\"event\":\"cost_resource\",\"state\":\"created\",\"kind\":\"table\",\"id\":\"lmaws_demo\",\"name\":\"lmaws_demo\"}"
+    ], "\n") + "\n");
+    o.ledger_path = temp_ledger;
+  }
+
+  let prog = _pb_build_dsl(task, o, out_policy, out_compact, out_lint, out_explain, out_matrix, out_extra);
+  let result = recipe_run(prog, o);
+
+  if (temp_ledger != "" && file_exists(temp_ledger)) { remove_file(temp_ledger); }
+
+  let policy_json = read_file(out_policy);
+  let compact_json = read_file(out_compact);
+  let lint_obj = json_parse(read_file(out_lint));
+  let explain_rows = json_parse(read_file(out_explain));
+  let matrix_rows = json_parse(read_file(out_matrix));
+  remove_file(out_compact);
+  remove_file(out_lint);
+  remove_file(out_explain);
+  remove_file(out_matrix);
+
+  let extra_obj = {};
+  let extra_list = [];
+  if (file_exists(out_extra)) {
+    let raw_extra = read_file(out_extra);
+    remove_file(out_extra);
+    let parsed = json_parse(raw_extra);
+    if (is_array(parsed)) { extra_list = parsed; }
+    else { extra_obj = parsed; }
+  }
+
+  let snapshot_diff = {};
+  if (task == "session_policy" && o.file != "" && file_exists(o.file)) {
+    let target_json = read_file(o.file);
+    let diff_raw = output + ".diff.raw.json";
+    let dp = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_session_policy_diff");
+let d = cloud.policy_diff(${target_json}, ${policy_json});
+file_write(${diff_raw}, d.json());
+end _dsl_
+    recipe_run(dp, o);
+    let diff_rows = json_parse(read_file(diff_raw));
+    remove_file(diff_raw);
+    let added = 0; let modified = 0; let removed = 0; let unchanged = 0;
+    for (dr in diff_rows) {
+      let ch = str(get(dr, "status", get(dr, "change", "")));
+      if (ch == "added") { added = added + 1; }
+      else if (ch == "modified") { modified = modified + 1; }
+      else if (ch == "removed") { removed = removed + 1; }
+      else if (ch == "unchanged") { unchanged = unchanged + 1; }
+    }
+    snapshot_diff = {
+      added_count: added,
+      modified_count: modified,
+      removed_count: removed,
+      unchanged_count: unchanged,
+      byte_identical: trim(target_json) == trim(policy_json),
+      rows: diff_rows
+    };
+    println("snapshot compare: +" + str(added) + " ~" + str(modified) + " -" + str(removed) + " =" + str(unchanged) + " | byte_identical:", snapshot_diff.byte_identical);
+  }
+
+  let rows = matrix_rows;
+  if (task == "policy_split_managed" || task == "policy_simulate_probes" || task == "policy_diff_review") {
+    rows = extra_list;
+  } else if (task == "policy_fit_inline") {
+    rows = [
+      {metric: "original_chars", chars: num(get(extra_obj, "original_length", "0")), limit: 2048},
+      {metric: "compact_chars", chars: num(get(extra_obj, "compact_length", "0")), limit: 2048},
+      {metric: "saved_bytes", chars: num(get(extra_obj, "saved_bytes", "0")), limit: 2048},
+      {metric: "remaining_inline", chars: num(get(extra_obj, "remaining_bytes", "0")), limit: 2048}
+    ];
+  } else if (task == "policy_explain_denial") {
+    rows = [extra_obj];
+  } else if (task == "policy_from_ledger") {
+    let acts = split(str(get(extra_obj, "actions", "")), ",");
+    let by_svc = {};
+    for (act in acts) {
+      if (act != "") {
+        let parts = split(act, ":");
+        let svc = parts[0];
+        by_svc[svc] = get(by_svc, svc, 0) + 1;
+      }
+    }
+    rows = [];
+    for (svc in keys(by_svc)) {
+      push(rows, {service: svc, actions_synthesized: by_svc[svc], observed_calls: num(get(extra_obj, "observed_call_count", "0"))});
+    }
+  } else if (task == "policy_migrate_json") {
+    let intents = split(str(get(extra_obj, "recognized_intents", "")), ",");
+    rows = [];
+    for (it in intents) {
+      if (it != "") {
+        push(rows, {intent: str(it), statements: num(get(extra_obj, "statement_count", "0")), compact_length: num(get(extra_obj, "compact_length", "0"))});
+      }
+    }
+  }
+
+  assert(str(get(lint_obj, "valid", "false")) == "true");
+  println("policy:", out_policy, "| statements:", get(lint_obj, "statement_count", "0"), "| compact chars:", len(compact_json), "/ 6144");
+
+  let report = {
+    task: task,
+    policy_file: out_policy,
+    compact_length: len(compact_json),
+    max_length: 6144,
+    inline_limit: 2048,
+    fits_inline: len(compact_json) <= 2048,
+    fits_managed: len(compact_json) <= 6144,
+    statement_count: num(get(lint_obj, "statement_count", "0")),
+    lint_valid: str(get(lint_obj, "valid", "false")) == "true",
+    lint_summary: str(get(lint_obj, "summary", "")),
+    explain: explain_rows,
+    matrix: matrix_rows,
+    extra: extra_obj,
+    extra_rows: extra_list,
+    snapshot_diff: snapshot_diff,
+    synthetic: !o.live,
+    rows: recipe_select(rows, o),
+    output_file: output + ".json"
+  };
+  write_file(output + ".json", json_stringify(report, 2));
+  write_csv(output + ".csv", report.rows);
+  return merge(report, {result: result});
+}
+
+
+fn _pb_chart(name, title, ylabel, header, rows, colors) {
+  assert(regex_test(name, "^[a-z][a-z0-9_]*$"));
+  mkdir("images"); mkdir("data");
+  let data = join(header, ",") + "\n";
+  for (row in rows) { data = data + join(row, ",") + "\n"; }
+  write_file("data/" + name + ".csv", data);
+  let using = "";
+  let i = 2;
+  while (i <= len(header)) {
+    if (using != "") { using = using + ", '' every ::1"; }
+    using = using + " using " + str(i) + (i == 2 ? ":xtic(1)" : "") + " title '" + header[i - 1] + "' lc rgb '" + colors[(i - 2) % len(colors)] + "'";
+    i = i + 1;
+  }
+  let chart = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${"images/" + name + ".png"}, 920, 560);
+plot.cmd(${"set termoption noenhanced; set datafile separator ','; set title '" + title + "'; set ylabel '" + ylabel + "'; set style data histograms; set style histogram clustered gap 1; set style fill solid 0.85 border -1; set boxwidth 0.9; set grid ytics; set yrange [0:*]; set key outside top center horizontal; set xtics rotate by -28; set bmargin 7; set rmargin 8"});
+plot.cmd(${"plot 'data/" + name + ".csv' every ::1" + using});
+plot.close();
+end _dsl_
+  let code = temp_file(); savedsl(chart, code); let r = system(concat(dsl_cli(chart), ["--dsl", code]), {timeoutMs:120000}); remove_file(code); assert(r.code == 0);
+  println("images/" + name + ".png");
+}
+
+fn _pb_table(name, title, lines_of_text) {
+  assert(regex_test(name, "^[a-z][a-z0-9_]*$"));
+  mkdir("images");
+  let cmds = "set termoption noenhanced; set title '" + title + "' font ',15'; unset border; unset tics; unset key; set xrange [0:1]; set yrange [0:" + str(len(lines_of_text) + 1) + "]";
+  let i = 0;
+  for (text in lines_of_text) {
+    let safe = replace_all(str(text), "'", "");
+    cmds = cmds + "; set label " + str(i + 1) + " '" + safe + "' at 0.03," + str(len(lines_of_text) - i) + " font 'DejaVu Sans Mono,11'";
+    i = i + 1;
+  }
+  let chart = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${"images/" + name + ".png"}, 940, 420);
+plot.cmd(${cmds});
+plot.cmd("plot -10 notitle");
+plot.close();
+end _dsl_
+  let code = temp_file(); savedsl(chart, code); let r = system(concat(dsl_cli(chart), ["--dsl", code]), {timeoutMs:120000}); remove_file(code); assert(r.code == 0);
+  println("images/" + name + ".png");
+}
+
+fn recipe_policy_picture(report, task, name) {
+  assert(get(report, "synthetic", false));
+  let palette = ["#4c9ed9", "#7fc97f", "#f2a541", "#d95f5f"];
+
+  if (task == "policy_fit_inline") {
+    let rows = [];
+    for (r in report.rows) { push(rows, [r.metric, r.chars, r.limit]); }
+    _pb_chart(name, "Inline STS session policy compaction (chars vs 2048 limit)", "characters", ["metric", "chars", "inline_limit"], rows, palette);
+    return "images/" + name + ".png";
+  }
+  if (task == "policy_split_managed") {
+    let rows = [];
+    for (r in report.rows) {
+      push(rows, ["part" + str(r.part) + " (" + str(r.statement_count) + " stmts)", num(r.compact_length), num(r.remaining_bytes)]);
+    }
+    _pb_chart(name, "Split managed policy parts (compact chars vs remaining of 6144)", "characters", ["part", "compact_chars", "remaining_bytes"], rows, palette);
+    return "images/" + name + ".png";
+  }
+  if (task == "policy_explain_denial") {
+    let d = report.rows[0];
+    let lines = [
+      "Caller        : " + str(get(d, "principal", "")),
+      "Action denied : " + str(get(d, "action", "")) + " (" + str(get(d, "action_class", "")) + ")",
+      "Resource ARN  : " + str(get(d, "resource", "")),
+      "Denial kind   : " + str(get(d, "denial_type", "")),
+      "Failed check  : " + substr(str(get(d, "failed_condition", "")), 0, 74),
+      "Plain English : " + substr(str(get(d, "plain_english", "")), 0, 74),
+      "Builder fix   : " + str(get(d, "builder_snippet", ""))
+    ];
+    _pb_table(name, "IAM AccessDenied diagnostic and synthesized builder fix", lines);
+    return "images/" + name + ".png";
+  }
+  if (task == "policy_from_ledger") {
+    let rows = [];
+    for (r in report.rows) { push(rows, [r.service, r.actions_synthesized, r.observed_calls]); }
+    _pb_chart(name, "Least-privilege IAM actions synthesized from run ledger", "count", ["service", "actions_synthesized", "total_sdk_calls"], rows, palette);
+    return "images/" + name + ".png";
+  }
+  if (task == "policy_diff_review") {
+    let unchanged = 0; let added = 0; let modified = 0; let removed = 0;
+    for (dr in report.extra_rows) {
+      let ch = str(get(dr, "status", get(dr, "change", "")));
+      if (ch == "unchanged") { unchanged = unchanged + 1; }
+      else if (ch == "added") { added = added + 1; }
+      else if (ch == "modified") { modified = modified + 1; }
+      else if (ch == "removed") { removed = removed + 1; }
+    }
+    let rows = [
+      ["unchanged", unchanged],
+      ["added", added],
+      ["modified", modified],
+      ["removed", removed]
+    ];
+    _pb_chart(name, "IAM policy statement diff review (v1 -> v2)", "statements", ["change", "statements"], rows, ["#4c9ed9"]);
+    return "images/" + name + ".png";
+  }
+  if (task == "policy_simulate_probes") {
+    let rows = [];
+    for (r in report.rows) {
+      let allow_score = r.decision == "allowed" ? 1 : 0;
+      let deny_score = r.decision == "explicitDeny" ? 1 : 0;
+      let pass_score = r.passed == "true" ? 1 : 0;
+      push(rows, [replace_all(str(r.action), ":", "_"), allow_score, deny_score, pass_score]);
+    }
+    _pb_chart(name, "IAM policy simulator probe matrix (allow / explicitDeny / pass)", "flag (1=yes, 0=no)", ["probe", "allowed", "explicit_deny", "passed"], rows, palette);
+    return "images/" + name + ".png";
+  }
+  if (task == "policy_migrate_json") {
+    let ex = report.extra;
+    let lines = [
+      "Input statements : " + str(get(ex, "statement_count", "")) + " (" + str(get(ex, "compact_length", "")) + " compact chars)",
+      "Detected intents : " + str(get(ex, "recognized_intents", ""))
+    ];
+    for (line in lines(str(get(ex, "builder_program", "")))) {
+      if (len(lines) < 12) { push(lines, line); }
+    }
+    _pb_table(name, "Migrated hand-written IAM JSON -> fluent policy builder", lines);
+    return "images/" + name + ".png";
+  }
+
+  let by_svc = {};
+  for (m in report.matrix) {
+    let svc = str(get(m, "service", "global"));
+    if (!has_key(by_svc, svc)) {
+      by_svc[svc] = {scoped_allow: 0, wildcard_allow: 0, deny_guard: 0};
+    }
+    let cell = by_svc[svc];
+    let cnt = num(get(m, "statement_count", "1"));
+    let eff = str(get(m, "effect", "Allow"));
+    let scope = str(get(m, "scope", "resource-scoped"));
+    if (eff == "Deny") {
+      cell.deny_guard = cell.deny_guard + cnt;
+    } else if (scope == "wildcard") {
+      cell.wildcard_allow = cell.wildcard_allow + cnt;
+    } else {
+      cell.scoped_allow = cell.scoped_allow + cnt;
+    }
+    by_svc[svc] = cell;
+  }
+  let chart_rows = [];
+  for (svc in keys(by_svc)) {
+    let c = by_svc[svc];
+    push(chart_rows, [svc, c.scoped_allow, c.wildcard_allow, c.deny_guard]);
+  }
+  let chart_title = "Permission matrix (" + str(report.statement_count) + " stmts, " + str(report.compact_length) + "/6144 chars): " + replace_all(task, "_", " ");
+  _pb_chart(name, chart_title, "statement x class cells", ["service", "scoped_allow", "read_wildcard", "deny_guard"], chart_rows, ["#7fc97f", "#4c9ed9", "#d95f5f"]);
+  return "images/" + name + ".png";
+}
+
+
+let options=recipe_options(ARGV);
+options.task="policy_billing_viewer";
+if (!contains(ARGV,"--output")) {options.output="data/policy_billing_viewer";}
+let report=recipe_policy_builder(options);
+if (!options.preview) {println("report:",get(report,"output_file",options.output+".json"));println(recipe_cost_line(report));}

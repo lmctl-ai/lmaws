@@ -34,6 +34,37 @@ for name,what,access,cost,args,run in [
  ('spot_nano_lifecycle','Launch one tagged no-public-IP spot nano, check it, terminate it and prove zero leftovers','Write with the lmaws-ec2 profile','Synthetic $0.00; live about $0.0005 (spot nano minutes + 8 GiB gp3); cap $0.05',COMPUTE_ARGS.replace('--profile default','--profile lmaws-ec2').replace('data/NAME','.lmaws-local/compute/spot_nano_lifecycle').replace('[--live]','[--live --apply]'),'--live --apply --profile lmaws-ec2')]:
  ITEMS.append(dict(name=name,category='Compute and fleet',task=name,library='compute',function='recipe_'+name,what=what,access=access,cost=cost,args=args.replace('NAME',name),run=run))
 
+PB_ARGS='--prefix lmaws --region us-east-1 --output data/NAME'
+for name,what,access,cost,args,run in [
+ ('session_policy','Generate the 22-statement lmaws_session IAM managed policy with the fluent builder and diff against an optional snapshot','Read-only','$0.00 offline policy compilation and diff','--policy lmaws_session --prefix lmaws --domain example.com --region us-east-1 --types t4g.nano,t3.nano --max-gib 8 [--file SNAPSHOT.json] --output data/NAME','--domain example.com'),
+ ('policy_s3_sandbox','Build a prefix-scoped S3 bucket and object sandbox policy with account-boundary and tagged-delete guardrails','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
+ ('policy_sqs_sandbox','Build a prefix-scoped SQS queue sandbox policy with account-boundary and region-lock guardrails','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
+ ('policy_sns_sandbox','Build a prefix-scoped SNS topic sandbox policy with account-boundary and region-lock guardrails','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
+ ('policy_dynamodb_sandbox','Build a prefix-scoped DynamoDB table sandbox policy with account-boundary and region-lock guardrails','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
+ ('policy_ssm_sandbox','Build a prefix-scoped SSM Parameter Store sandbox policy with public parameter read access','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
+ ('policy_logs_sandbox','Build a prefix-scoped CloudWatch Logs sandbox policy with account-boundary and region-lock guardrails','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
+ ('policy_ec2_spot_sandbox','Build a tag-gated EC2 spot nano sandbox policy with instance-type and 8 GiB volume caps','Read-only','$0.00 offline policy compilation','--prefix lmaws --types t4g.nano,t3.nano --max-gib 8 --region us-east-1 --output data/NAME','--types t4g.nano,t3.nano --max-gib 8'),
+ ('policy_web_stack','Build a static site stack policy (S3 bucket + CloudFront OAC + ACM + Route53 record pattern lock)','Read-only','$0.00 offline policy compilation','--prefix lmaws --domain example.com --region us-east-1 --output data/NAME','--domain example.com'),
+ ('policy_ci_bucket_deployer','Build a least-privilege CI static asset uploader and CloudFront invalidation policy','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
+ ('policy_lambda_deployer','Build a prefix- and tag-scoped Lambda function and EventBridge rule deployer policy','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
+ ('policy_tag_operator','Build a tag discovery and tag-gated resource tagging operator policy','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
+ ('policy_read_only_auditor','Build a zero-secret read-only inventory and posture auditor policy with region lock','Read-only','$0.00 offline policy compilation',PB_ARGS,'--region us-east-1'),
+ ('policy_billing_viewer','Build a read-only Cost Explorer, Budgets, Pricing and CloudWatch metrics viewer policy','Read-only','$0.00 offline policy compilation',PB_ARGS,''),
+ ('policy_break_glass','Build an MFA-gated, time-windowed and bastion-IP-locked emergency break-glass policy','Read-only','$0.00 offline policy compilation','--cidr 203.0.113.10/32 --from 2026-01-01T00:00:00Z --to 2026-01-01T04:00:00Z --output data/NAME','--cidr 203.0.113.10/32'),
+ ('policy_ip_restricted','Build a corporate/bastion CIDR-locked policy with single-host /32 security-group ingress enforcement','Read-only','$0.00 offline policy compilation','--prefix lmaws --cidr 203.0.113.10/32 --output data/NAME','--cidr 203.0.113.10/32'),
+ ('policy_mfa_deletes','Build a sandbox policy that requires hardware/virtual MFA for every destructive delete or terminate action','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
+ ('policy_region_lock','Build a regional policy with an explicit NotAction exemption list for global AWS control planes','Read-only','$0.00 offline policy compilation',PB_ARGS,'--region us-east-1'),
+ ('policy_deny_untagged_delete','Build a defense-in-depth policy pairing request-tag creation gates with explicit Denies on untagged deletes','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
+ ('policy_permission_boundary','Build a maximum IAM permission boundary capping delegated roles to prefix, tag, nano and region guardrails','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
+ ('policy_fit_inline','Compact a multi-statement policy into the 2048-character STS inline session limit and report byte savings','Read-only','$0.00 offline policy compaction',PB_ARGS,'--prefix lmaws'),
+ ('policy_split_managed','Split a large policy into balanced <= 6144-char managed policy parts while preserving Deny guardrails','Read-only','$0.00 offline policy splitting','--policy lmaws_session --domain example.com --output data/NAME','--domain example.com'),
+ ('policy_explain_denial','Parse an AWS AccessDenied message, identify the failing statement/condition and emit a minimal builder fix','Read-only','$0.00 offline denial analysis','[--error TEXT] --output data/NAME',''),
+ ('policy_from_ledger','Synthesize a least-privilege IAM policy and fluent builder program from observed SDK calls in run ledgers','Read-only','$0.00 offline ledger synthesis','[--ledger FILE] --output data/NAME',''),
+ ('policy_diff_review','Compare two policy versions statement-by-statement and report added, modified, removed and unchanged rules','Read-only','$0.00 offline statement diff',PB_ARGS,''),
+ ('policy_simulate_probes','Evaluate allow and deny security probes against a policy offline or via IAM SimulateCustomPolicy','Read-only','$0.00 offline; live IAM simulator requires AWS_PROFILE=admin','--policy lmaws_session [--probes SPEC] [--live --profile admin] --output data/NAME',''),
+ ('policy_migrate_json','Migrate hand-written IAM policy JSON into a typed fluent lmaws permission builder program','Read-only','$0.00 offline JSON migration','[--file POLICY.json] --output data/NAME','')]:
+ ITEMS.append(dict(name=name,category='Permission builder and IAM analysis',task=name,library='policy_builder',function='recipe_policy_builder',what=what,access=access,cost=cost,args=args.replace('NAME',name),run=run))
+
 def flatten(path,seen=None):
  seen=set() if seen is None else seen
  path=path.resolve()
@@ -70,7 +101,7 @@ def generate(check=False):
   if name=='grant_session_policy':args='--policy lmaws_session --file POLICY.json --profile admin --top 20 --output data/grant_session_policy [--live] [--apply]'
   if name=='session_doctor':args='--profile lmaws --region us-east-1 --top 20 --output data/session_doctor [--live]'
   if 'args' in item:args=item['args']
-  when={'Identity and access posture':'Before a posture review; IAM-dependent recipes remain synthetic for federated profiles','Inventory':'Before a change or when reviewing current service coverage','Cost and spend':'When investigating a billing period or prioritizing savings opportunities','Idle and waste detection':'When triaging stopped resources; confirm age and usage before action','Tag and naming compliance':'Before enforcing tag or naming policies; review unknown metadata','Leftover search and cleanup by prefix':'After a test run or shutdown to review names and local ledger records','Safe lifecycle sandboxes':'Before a service integration, validate a disposable create/cleanup path','Compute and fleet':'When reviewing a small EC2 fleet without SSH or the aws CLI, or proving a disposable spot lifecycle'}[item['category']]
+  when={'Identity and access posture':'Before a posture review; IAM-dependent recipes remain synthetic for federated profiles','Permission builder and IAM analysis':'When specifying, shrinking, splitting, diffing, explaining or simulating AWS IAM policies without hand-editing raw JSON','Inventory':'Before a change or when reviewing current service coverage','Cost and spend':'When investigating a billing period or prioritizing savings opportunities','Idle and waste detection':'When triaging stopped resources; confirm age and usage before action','Tag and naming compliance':'Before enforcing tag or naming policies; review unknown metadata','Leftover search and cleanup by prefix':'After a test run or shutdown to review names and local ledger records','Safe lifecycle sandboxes':'Before a service integration, validate a disposable create/cleanup path','Compute and fleet':'When reviewing a small EC2 fleet without SSH or the aws CLI, or proving a disposable spot lifecycle'}[item['category']]
   header='\n'.join('# '+k+': '+v for k,v in [('Access',item['access']),('What',item['what']),('When',when),('Run',('lmctl recipes/'+name+'.lms '+item['run']).strip() if 'run' in item else 'lmctl recipes/'+name+'.lms '+('--task queue ' if name=='lifecycle' else '')+'--top 10'),('Preview','lmctl recipes/'+name+'.lms --preview'),('Arguments',args),('Typical-cost',item['cost']),('Category',item['category']),('Library',lib),('Function',item['function']),('Example',example)])
   body='\nimport "./lib/'+item['library']+'.lms";\nlet options=recipe_options(ARGV);\n'
   if name not in ['inventory','lifecycle']:
@@ -89,6 +120,7 @@ def generate(check=False):
   exbody='import "../recipes/lib/'+item['library']+'.lms";\nlet options=recipe_options(ARGV);\noptions.live=false;options.apply=false;options.preview=false;options.profile="default";\noptions.task="'+item['task']+'";options.output="data/'+example+'";\nlet report='+item['function']+'(options);\nassert(is_array(report.rows));\n'
   if item['library']=='lifecycle':exbody+='assert(len(report.rows)==1 && report.rows[0].remaining==0);\nreport.rows[0].name="owned synthetic '+item['task']+'";\n'
   if item['library']=='compute':exbody+='recipe_compute_picture(report,"'+item['task']+'","'+example+'");\n'
+  elif item['library']=='policy_builder':exbody+='recipe_policy_picture(report,"'+item['task']+'","'+example+'");\n'
   else:exbody+='recipe_picture(report.rows,"'+item['what']+'","'+example+'");\n'
   if item['library']=='spend':
    exbody=exbody.replace('let report=recipe_spend(options);','options.cap=0.25;\nlet report=recipe_spend(options);')

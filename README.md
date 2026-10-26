@@ -138,6 +138,38 @@ println("matched rows:",len(report.rows));
 | [`policy_lint.lms`](recipes/policy_lint.lms) | Validate and lint an IAM managed policy JSON document offline against lmaws guardrails | Read-only | --file POLICY.json --top 20 --output data/policy_lint | $0.00 offline lint |
 | [`session_doctor.lms`](recipes/session_doctor.lms) | Inspect profile session types, 0600 credential cache expiry and dry-run/read-only permission probes | Read-only | --profile lmaws --region us-east-1 --top 20 --output data/session_doctor [--live] | $0.00 synthetic; live read and EC2 DryRun probes create no resources; cap $0.05 |
 
+### Permission builder and IAM analysis
+
+| File | What it does | Access | Arguments | Typical cost |
+|---|---|---|---|---|
+| [`policy_billing_viewer.lms`](recipes/policy_billing_viewer.lms) | Build a read-only Cost Explorer, Budgets, Pricing and CloudWatch metrics viewer policy | Read-only | --prefix lmaws --region us-east-1 --output data/policy_billing_viewer | $0.00 offline policy compilation |
+| [`policy_break_glass.lms`](recipes/policy_break_glass.lms) | Build an MFA-gated, time-windowed and bastion-IP-locked emergency break-glass policy | Read-only | --cidr 203.0.113.10/32 --from 2026-01-01T00:00:00Z --to 2026-01-01T04:00:00Z --output data/policy_break_glass | $0.00 offline policy compilation |
+| [`policy_ci_bucket_deployer.lms`](recipes/policy_ci_bucket_deployer.lms) | Build a least-privilege CI static asset uploader and CloudFront invalidation policy | Read-only | --prefix lmaws --region us-east-1 --output data/policy_ci_bucket_deployer | $0.00 offline policy compilation |
+| [`policy_deny_untagged_delete.lms`](recipes/policy_deny_untagged_delete.lms) | Build a defense-in-depth policy pairing request-tag creation gates with explicit Denies on untagged deletes | Read-only | --prefix lmaws --region us-east-1 --output data/policy_deny_untagged_delete | $0.00 offline policy compilation |
+| [`policy_diff_review.lms`](recipes/policy_diff_review.lms) | Compare two policy versions statement-by-statement and report added, modified, removed and unchanged rules | Read-only | --prefix lmaws --region us-east-1 --output data/policy_diff_review | $0.00 offline statement diff |
+| [`policy_dynamodb_sandbox.lms`](recipes/policy_dynamodb_sandbox.lms) | Build a prefix-scoped DynamoDB table sandbox policy with account-boundary and region-lock guardrails | Read-only | --prefix lmaws --region us-east-1 --output data/policy_dynamodb_sandbox | $0.00 offline policy compilation |
+| [`policy_ec2_spot_sandbox.lms`](recipes/policy_ec2_spot_sandbox.lms) | Build a tag-gated EC2 spot nano sandbox policy with instance-type and 8 GiB volume caps | Read-only | --prefix lmaws --types t4g.nano,t3.nano --max-gib 8 --region us-east-1 --output data/policy_ec2_spot_sandbox | $0.00 offline policy compilation |
+| [`policy_explain_denial.lms`](recipes/policy_explain_denial.lms) | Parse an AWS AccessDenied message, identify the failing statement/condition and emit a minimal builder fix | Read-only | [--error TEXT] --output data/policy_explain_denial | $0.00 offline denial analysis |
+| [`policy_fit_inline.lms`](recipes/policy_fit_inline.lms) | Compact a multi-statement policy into the 2048-character STS inline session limit and report byte savings | Read-only | --prefix lmaws --region us-east-1 --output data/policy_fit_inline | $0.00 offline policy compaction |
+| [`policy_from_ledger.lms`](recipes/policy_from_ledger.lms) | Synthesize a least-privilege IAM policy and fluent builder program from observed SDK calls in run ledgers | Read-only | [--ledger FILE] --output data/policy_from_ledger | $0.00 offline ledger synthesis |
+| [`policy_ip_restricted.lms`](recipes/policy_ip_restricted.lms) | Build a corporate/bastion CIDR-locked policy with single-host /32 security-group ingress enforcement | Read-only | --prefix lmaws --cidr 203.0.113.10/32 --output data/policy_ip_restricted | $0.00 offline policy compilation |
+| [`policy_lambda_deployer.lms`](recipes/policy_lambda_deployer.lms) | Build a prefix- and tag-scoped Lambda function and EventBridge rule deployer policy | Read-only | --prefix lmaws --region us-east-1 --output data/policy_lambda_deployer | $0.00 offline policy compilation |
+| [`policy_logs_sandbox.lms`](recipes/policy_logs_sandbox.lms) | Build a prefix-scoped CloudWatch Logs sandbox policy with account-boundary and region-lock guardrails | Read-only | --prefix lmaws --region us-east-1 --output data/policy_logs_sandbox | $0.00 offline policy compilation |
+| [`policy_mfa_deletes.lms`](recipes/policy_mfa_deletes.lms) | Build a sandbox policy that requires hardware/virtual MFA for every destructive delete or terminate action | Read-only | --prefix lmaws --region us-east-1 --output data/policy_mfa_deletes | $0.00 offline policy compilation |
+| [`policy_migrate_json.lms`](recipes/policy_migrate_json.lms) | Migrate hand-written IAM policy JSON into a typed fluent lmaws permission builder program | Read-only | [--file POLICY.json] --output data/policy_migrate_json | $0.00 offline JSON migration |
+| [`policy_permission_boundary.lms`](recipes/policy_permission_boundary.lms) | Build a maximum IAM permission boundary capping delegated roles to prefix, tag, nano and region guardrails | Read-only | --prefix lmaws --region us-east-1 --output data/policy_permission_boundary | $0.00 offline policy compilation |
+| [`policy_read_only_auditor.lms`](recipes/policy_read_only_auditor.lms) | Build a zero-secret read-only inventory and posture auditor policy with region lock | Read-only | --prefix lmaws --region us-east-1 --output data/policy_read_only_auditor | $0.00 offline policy compilation |
+| [`policy_region_lock.lms`](recipes/policy_region_lock.lms) | Build a regional policy with an explicit NotAction exemption list for global AWS control planes | Read-only | --prefix lmaws --region us-east-1 --output data/policy_region_lock | $0.00 offline policy compilation |
+| [`policy_s3_sandbox.lms`](recipes/policy_s3_sandbox.lms) | Build a prefix-scoped S3 bucket and object sandbox policy with account-boundary and tagged-delete guardrails | Read-only | --prefix lmaws --region us-east-1 --output data/policy_s3_sandbox | $0.00 offline policy compilation |
+| [`policy_simulate_probes.lms`](recipes/policy_simulate_probes.lms) | Evaluate allow and deny security probes against a policy offline or via IAM SimulateCustomPolicy | Read-only | --policy lmaws_session [--probes SPEC] [--live --profile admin] --output data/policy_simulate_probes | $0.00 offline; live IAM simulator requires AWS_PROFILE=admin |
+| [`policy_sns_sandbox.lms`](recipes/policy_sns_sandbox.lms) | Build a prefix-scoped SNS topic sandbox policy with account-boundary and region-lock guardrails | Read-only | --prefix lmaws --region us-east-1 --output data/policy_sns_sandbox | $0.00 offline policy compilation |
+| [`policy_split_managed.lms`](recipes/policy_split_managed.lms) | Split a large policy into balanced <= 6144-char managed policy parts while preserving Deny guardrails | Read-only | --policy lmaws_session --domain example.com --output data/policy_split_managed | $0.00 offline policy splitting |
+| [`policy_sqs_sandbox.lms`](recipes/policy_sqs_sandbox.lms) | Build a prefix-scoped SQS queue sandbox policy with account-boundary and region-lock guardrails | Read-only | --prefix lmaws --region us-east-1 --output data/policy_sqs_sandbox | $0.00 offline policy compilation |
+| [`policy_ssm_sandbox.lms`](recipes/policy_ssm_sandbox.lms) | Build a prefix-scoped SSM Parameter Store sandbox policy with public parameter read access | Read-only | --prefix lmaws --region us-east-1 --output data/policy_ssm_sandbox | $0.00 offline policy compilation |
+| [`policy_tag_operator.lms`](recipes/policy_tag_operator.lms) | Build a tag discovery and tag-gated resource tagging operator policy | Read-only | --prefix lmaws --region us-east-1 --output data/policy_tag_operator | $0.00 offline policy compilation |
+| [`policy_web_stack.lms`](recipes/policy_web_stack.lms) | Build a static site stack policy (S3 bucket + CloudFront OAC + ACM + Route53 record pattern lock) | Read-only | --prefix lmaws --domain example.com --region us-east-1 --output data/policy_web_stack | $0.00 offline policy compilation |
+| [`session_policy.lms`](recipes/session_policy.lms) | Generate the 22-statement lmaws_session IAM managed policy with the fluent builder and diff against an optional snapshot | Read-only | --policy lmaws_session --prefix lmaws --domain example.com --region us-east-1 --types t4g.nano,t3.nano --max-gib 8 [--file SNAPSHOT.json] --output data/session_policy | $0.00 offline policy compilation and diff |
+
 ### Inventory
 
 | File | What it does | Access | Arguments | Typical cost |
@@ -272,6 +304,249 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 Example: [`examples/recipe_session_doctor.lms`](examples/recipe_session_doctor.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/iam_policy.lms`; function `recipe_session_doctor`.
+
+#### policy_billing_viewer
+
+![Build a read-only Cost Explorer, Budgets, Pricing and CloudWatch metrics viewer policy](docs/images/recipe_policy_billing_viewer.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_billing_viewer.lms`
+
+Example: [`examples/recipe_policy_billing_viewer.lms`](examples/recipe_policy_billing_viewer.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_break_glass
+
+![Build an MFA-gated, time-windowed and bastion-IP-locked emergency break-glass policy](docs/images/recipe_policy_break_glass.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_break_glass.lms`
+
+Example: [`examples/recipe_policy_break_glass.lms`](examples/recipe_policy_break_glass.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_ci_bucket_deployer
+
+![Build a least-privilege CI static asset uploader and CloudFront invalidation policy](docs/images/recipe_policy_ci_bucket_deployer.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_ci_bucket_deployer.lms`
+
+Example: [`examples/recipe_policy_ci_bucket_deployer.lms`](examples/recipe_policy_ci_bucket_deployer.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_deny_untagged_delete
+
+![Build a defense-in-depth policy pairing request-tag creation gates with explicit Denies on untagged deletes](docs/images/recipe_policy_deny_untagged_delete.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_deny_untagged_delete.lms`
+
+Example: [`examples/recipe_policy_deny_untagged_delete.lms`](examples/recipe_policy_deny_untagged_delete.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_diff_review
+
+![Compare two policy versions statement-by-statement and report added, modified, removed and unchanged rules](docs/images/recipe_policy_diff_review.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_diff_review.lms`
+
+Example: [`examples/recipe_policy_diff_review.lms`](examples/recipe_policy_diff_review.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_dynamodb_sandbox
+
+![Build a prefix-scoped DynamoDB table sandbox policy with account-boundary and region-lock guardrails](docs/images/recipe_policy_dynamodb_sandbox.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_dynamodb_sandbox.lms`
+
+Example: [`examples/recipe_policy_dynamodb_sandbox.lms`](examples/recipe_policy_dynamodb_sandbox.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_ec2_spot_sandbox
+
+![Build a tag-gated EC2 spot nano sandbox policy with instance-type and 8 GiB volume caps](docs/images/recipe_policy_ec2_spot_sandbox.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_ec2_spot_sandbox.lms`
+
+Example: [`examples/recipe_policy_ec2_spot_sandbox.lms`](examples/recipe_policy_ec2_spot_sandbox.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_explain_denial
+
+![Parse an AWS AccessDenied message, identify the failing statement/condition and emit a minimal builder fix](docs/images/recipe_policy_explain_denial.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_explain_denial.lms`
+
+Example: [`examples/recipe_policy_explain_denial.lms`](examples/recipe_policy_explain_denial.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_fit_inline
+
+![Compact a multi-statement policy into the 2048-character STS inline session limit and report byte savings](docs/images/recipe_policy_fit_inline.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_fit_inline.lms`
+
+Example: [`examples/recipe_policy_fit_inline.lms`](examples/recipe_policy_fit_inline.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_from_ledger
+
+![Synthesize a least-privilege IAM policy and fluent builder program from observed SDK calls in run ledgers](docs/images/recipe_policy_from_ledger.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_from_ledger.lms`
+
+Example: [`examples/recipe_policy_from_ledger.lms`](examples/recipe_policy_from_ledger.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_ip_restricted
+
+![Build a corporate/bastion CIDR-locked policy with single-host /32 security-group ingress enforcement](docs/images/recipe_policy_ip_restricted.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_ip_restricted.lms`
+
+Example: [`examples/recipe_policy_ip_restricted.lms`](examples/recipe_policy_ip_restricted.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_lambda_deployer
+
+![Build a prefix- and tag-scoped Lambda function and EventBridge rule deployer policy](docs/images/recipe_policy_lambda_deployer.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_lambda_deployer.lms`
+
+Example: [`examples/recipe_policy_lambda_deployer.lms`](examples/recipe_policy_lambda_deployer.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_logs_sandbox
+
+![Build a prefix-scoped CloudWatch Logs sandbox policy with account-boundary and region-lock guardrails](docs/images/recipe_policy_logs_sandbox.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_logs_sandbox.lms`
+
+Example: [`examples/recipe_policy_logs_sandbox.lms`](examples/recipe_policy_logs_sandbox.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_mfa_deletes
+
+![Build a sandbox policy that requires hardware/virtual MFA for every destructive delete or terminate action](docs/images/recipe_policy_mfa_deletes.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_mfa_deletes.lms`
+
+Example: [`examples/recipe_policy_mfa_deletes.lms`](examples/recipe_policy_mfa_deletes.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_migrate_json
+
+![Migrate hand-written IAM policy JSON into a typed fluent lmaws permission builder program](docs/images/recipe_policy_migrate_json.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_migrate_json.lms`
+
+Example: [`examples/recipe_policy_migrate_json.lms`](examples/recipe_policy_migrate_json.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_permission_boundary
+
+![Build a maximum IAM permission boundary capping delegated roles to prefix, tag, nano and region guardrails](docs/images/recipe_policy_permission_boundary.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_permission_boundary.lms`
+
+Example: [`examples/recipe_policy_permission_boundary.lms`](examples/recipe_policy_permission_boundary.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_read_only_auditor
+
+![Build a zero-secret read-only inventory and posture auditor policy with region lock](docs/images/recipe_policy_read_only_auditor.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_read_only_auditor.lms`
+
+Example: [`examples/recipe_policy_read_only_auditor.lms`](examples/recipe_policy_read_only_auditor.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_region_lock
+
+![Build a regional policy with an explicit NotAction exemption list for global AWS control planes](docs/images/recipe_policy_region_lock.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_region_lock.lms`
+
+Example: [`examples/recipe_policy_region_lock.lms`](examples/recipe_policy_region_lock.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_s3_sandbox
+
+![Build a prefix-scoped S3 bucket and object sandbox policy with account-boundary and tagged-delete guardrails](docs/images/recipe_policy_s3_sandbox.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_s3_sandbox.lms`
+
+Example: [`examples/recipe_policy_s3_sandbox.lms`](examples/recipe_policy_s3_sandbox.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_simulate_probes
+
+![Evaluate allow and deny security probes against a policy offline or via IAM SimulateCustomPolicy](docs/images/recipe_policy_simulate_probes.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_simulate_probes.lms`
+
+Example: [`examples/recipe_policy_simulate_probes.lms`](examples/recipe_policy_simulate_probes.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_sns_sandbox
+
+![Build a prefix-scoped SNS topic sandbox policy with account-boundary and region-lock guardrails](docs/images/recipe_policy_sns_sandbox.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_sns_sandbox.lms`
+
+Example: [`examples/recipe_policy_sns_sandbox.lms`](examples/recipe_policy_sns_sandbox.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_split_managed
+
+![Split a large policy into balanced <= 6144-char managed policy parts while preserving Deny guardrails](docs/images/recipe_policy_split_managed.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_split_managed.lms`
+
+Example: [`examples/recipe_policy_split_managed.lms`](examples/recipe_policy_split_managed.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_sqs_sandbox
+
+![Build a prefix-scoped SQS queue sandbox policy with account-boundary and region-lock guardrails](docs/images/recipe_policy_sqs_sandbox.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_sqs_sandbox.lms`
+
+Example: [`examples/recipe_policy_sqs_sandbox.lms`](examples/recipe_policy_sqs_sandbox.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_ssm_sandbox
+
+![Build a prefix-scoped SSM Parameter Store sandbox policy with public parameter read access](docs/images/recipe_policy_ssm_sandbox.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_ssm_sandbox.lms`
+
+Example: [`examples/recipe_policy_ssm_sandbox.lms`](examples/recipe_policy_ssm_sandbox.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_tag_operator
+
+![Build a tag discovery and tag-gated resource tagging operator policy](docs/images/recipe_policy_tag_operator.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_tag_operator.lms`
+
+Example: [`examples/recipe_policy_tag_operator.lms`](examples/recipe_policy_tag_operator.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### policy_web_stack
+
+![Build a static site stack policy (S3 bucket + CloudFront OAC + ACM + Route53 record pattern lock)](docs/images/recipe_policy_web_stack.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_web_stack.lms`
+
+Example: [`examples/recipe_policy_web_stack.lms`](examples/recipe_policy_web_stack.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+#### session_policy
+
+![Generate the 22-statement lmaws_session IAM managed policy with the fluent builder and diff against an optional snapshot](docs/images/recipe_session_policy.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_session_policy.lms`
+
+Example: [`examples/recipe_session_policy.lms`](examples/recipe_session_policy.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
 
 #### inventory
 
@@ -708,7 +983,7 @@ Every example prints a final `estimated cost: $...` line. The original metadata/
 Each ledger refuses the next creation above the example cap of $0.05 or the whole-run hard ceiling of $0.25. Evidence is stored as `evidence/live-cost-<example>-<run-id>.json`; successful entries include the price table, requests, resources and leftover count. Nineteen read-only examples retain measured $0.00 evidence. The seven write/lifecycle examples are run once with `AWS_PROFILE=lmaws`; each successful lifecycle has a measured price-table estimate and is independently verified absent with the read-only `default` profile. The four IAM-dependent examples are intentionally skipped and labelled **estimated, not measured live**.
 
 Profiles: `default` is READ-ONLY; **only `AWS_PROFILE=lmaws` (service sandboxes) or `lmaws-ec2` (the spot nano sandbox) may mutate resources**, in `us-east-1`. There are exactly two documented exceptions where the `admin` profile is permitted (`admin` is refused for every other mutating call):
-1. **Customer-managed `lmaws_` IAM policy updates** (`recipes/grant_session_policy.lms` via `iam_policy_put` / `iam_policy_delete`), which require `AWS_PROFILE=admin` **and** `LMAWS_ADMIN_GRANT=1` **and** `--apply` (`LMAWS_APPLY=1`) **and** `LMAWS_LIVE=1`. Inline STS session policies are capped at 2,048 characters, whereas customer-managed IAM policies support up to 6,144 compact characters (`lmaws_session` is 4,839 compact characters). Every `iam_policy_put` lints the JSON document before writing (`<= 6144` compact chars, `"Version": "2012-10-17"`, every `Allow` statement either read/inventory or scoped by `lmaws-*`/`lmaws_*` resource name, `lmaws_test` tag, or condition; refuses `iam:*`, `sts:AssumeRole*`, `organizations:*`, `account:*`, `kms:*`, `secretsmanager:*`, bare `'*'`, or `'Resource': '*'` with a write action).
+1. **Customer-managed `lmaws_` IAM policy updates & Permission Builder** (`recipes/session_policy.lms` + `recipes/grant_session_policy.lms` via `iam_policy_put` / `iam_policy_delete`), which require `AWS_PROFILE=admin` **and** `LMAWS_ADMIN_GRANT=1` **and** `--apply` (`LMAWS_APPLY=1`) **and** `LMAWS_LIVE=1`. Inline STS session policies are capped at 2,048 characters, whereas customer-managed IAM policies support up to 6,144 compact characters (`lmaws_session` is 5,109 compact characters across 22 statements, generated byte-for-byte by `recipes/session_policy.lms`). The typed fluent Permission Builder (`cloud.policy(name)` -> `Policy`) validates actions against a 23-service catalog, classifies `list`/`read`/`write`/`tagging`/`permissions_management`, provides account-less ARN templates and intent helpers (`name_prefix`, `require_tag_on_create`, `only_tagged`, `region_lock`, `instance_types`, `max_volume_gib`, `route53_names`, `cidr_only`, `mfa_required`, `time_window`, `source_ip`, `deny_delete_unless_tagged`), composes sandbox building blocks, compacts inline policies (`fit_inline()`), splits managed policies (`split_managed()`), explains denials (`explain_denial()`), synthesizes policies from ledgers (`policy_from_ledger()`), migrates raw JSON (`policy_import_json()`), and runs offline or live IAM simulations (`policy_simulate` / `policy_simulate_principal`, requiring `AWS_PROFILE=admin` when live). Every `iam_policy_put` lints the JSON document before writing (`<= 6144` compact chars, `"Version": "2012-10-17"`, every `Allow` statement either read/inventory or scoped by `lmaws-*`/`lmaws_*` resource name, `lmaws_test` tag, or condition; refuses `iam:*`, `sts:AssumeRole*`, `organizations:*`, `account:*`, `kms:*`, `secretsmanager:*`, bare `'*'`, or `'Resource': '*'` with a write action).
 2. **Federated session token issuance (`lmaws --credential-process <mode>`)**: replaces external `aws sts get-federation-token` scripts so no `aws` CLI dependency is needed. It reads ONLY the static `admin` source profile from `~/.aws/credentials` and `~/.aws/config` (ignoring all ambient environment variables, web identity, container, and EC2 metadata credentials) to call STS `GetCallerIdentity` and `GetFederationToken` (`awsspot-local-<mode>`, 3,600s default duration): `default` attaches `arn:aws:iam::aws:policy/ReadOnlyAccess` plus the inline `DenySecretValueRetrieval` policy, while `lmaws`, `lmaws-ec2` and `lmaws-web` attach `arn:aws:iam::<account>:policy/lmaws_session` with no inline policy. Credentials are cached in memory and in a `0600` file under the user cache directory until 5 minutes before expiry. Point `~/.aws/config` profiles at the installed native binary (`~/.local/bin/lmaws` on Linux/macOS or `%USERPROFILE%\.local\bin\lmaws.exe` on Windows): `credential_process = lmaws --credential-process lmaws` (or `default`, `lmaws-ec2`, `lmaws-web`), and run `lmctl recipes/session_doctor.lms --live --profile lmaws` to verify session type, cache TTL, and dry-run permission probes without creating any resources. Do not put account IDs or real policy files in this public repository.
 
 The v0.1.3 native campaign added six successful lifecycle runs and independent

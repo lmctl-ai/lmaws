@@ -47,5 +47,8 @@ v0.1.6, customer-managed `lmaws_` IAM policy management (`IamPolicies`) adds fiv
 own signatures (`iam_policy_lint`, `iam_policy_get`, `iam_policy_versions`,
 `iam_policy_put`, `iam_policy_delete`); `CredentialProcess` adds
 `lmaws --credential-process <mode>` on the CLI and `session_doctor` on `Cloud`.
-The current merged API, including account recovery, web-stack and session-doctor methods, has
-94 own / 166 total signatures.
+From v0.1.12, the fluent IAM Permission Builder (`PolicyBuilder`, `PolicyCatalog`,
+`PolicyAnalyzer`, `PolicySimulator`) adds the `Policy` type (46 methods) and 12
+policy analysis/simulation methods on `Cloud` (58 new own signatures).
+The current merged API, including account recovery, web-stack, session-doctor and
+permission-builder methods, has 152 own / 224 total signatures.

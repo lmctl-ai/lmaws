@@ -5,7 +5,7 @@ Current maintenance notes:
 - [01-architecture.md](01-architecture.md): SDK, schema, curated API and memory budget.
 - [02-build-test.md](02-build-test.md): local verification gate and five-platform tooling.
 - [03-live.md](03-live.md): canonical live procedure, current results and zero leftovers.
-- [04-examples.md](04-examples.md): 88 examples, autoruns, images and cost labels.
+- [04-examples.md](04-examples.md): 115 examples, autoruns, images and cost labels.
 - [05-release.md](05-release.md): published versions, distribution and genuinely open items.
 - [06-comparisons.md](06-comparisons.md): lmcloud equivalents, findings and safety checks.
 - [09-spend-reports.md](09-spend-reports.md): capped read-only billing analysis and private output.
@@ -14,6 +14,7 @@ Current maintenance notes:
 - [10-compute.md](10-compute.md): EC2 compute recipes, the spot nano lifecycle tag contract and the lmaws-ec2 profile.
 
 - [11-web-stack.md](11-web-stack.md): persistent guarded web-stack integration and local safety gates.
+- [12-policy-builder.md](12-policy-builder.md): fluent IAM permission builder, action catalog, compaction, denial/ledger synthesizer and simulator.
 
 Current release/comparison evidence:
 

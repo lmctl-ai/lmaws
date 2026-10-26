@@ -63,7 +63,7 @@ class RecipeExecutionTests(unittest.TestCase):
             entry = self.work / "imports.lms"
             entry.write_text(
                 f'import "{base}/common.lms"; import "{base}/inventory.lms"; '
-                f'import "{base}/lifecycle.lms"; import "{base}/prefix.lms"; import "{base}/audits.lms"; import "{base}/spend.lms"; import "{base}/iam_policy.lms";\n',
+                f'import "{base}/lifecycle.lms"; import "{base}/prefix.lms"; import "{base}/audits.lms"; import "{base}/spend.lms"; import "{base}/iam_policy.lms"; import "{base}/policy_builder.lms";\n',
                 encoding="utf-8",
             )
             result = self.run_script(entry)
@@ -210,6 +210,49 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertEqual(doctor_report["allowed_count"], 6)
         self.assertEqual(doctor_report["guardrail_deny_count"], 2)
         self.assertIn("estimated cost: $0.00", doctor_res.stdout)
+
+    def test_permission_builder_recipes_and_simulator_guards(self) -> None:
+        sp_out = self.work / "session_policy"
+        sp_res = self.run_script(ROOT / "recipes" / "session_policy.lms", "--domain", "example.com", "--output", str(sp_out))
+        self.assertEqual(sp_res.returncode, 0, sp_res.stdout + sp_res.stderr)
+        sp_report = json.loads(sp_out.with_suffix(".json").read_text(encoding="utf-8"))
+        self.assertTrue(sp_report["lint_valid"])
+        self.assertEqual(sp_report["statement_count"], 22)
+        self.assertTrue(sp_report["fits_managed"])
+
+        # Compare generated policy against itself via --file -> 22 unchanged, byte_identical=True
+        sp_diff_out = self.work / "session_policy_diff"
+        sp_diff_res = self.run_script(
+            ROOT / "recipes" / "session_policy.lms",
+            "--domain", "example.com",
+            "--file", str(sp_out) + ".policy.json",
+            "--output", str(sp_diff_out),
+        )
+        self.assertEqual(sp_diff_res.returncode, 0, sp_diff_res.stdout + sp_diff_res.stderr)
+        sp_diff_report = json.loads(sp_diff_out.with_suffix(".json").read_text(encoding="utf-8"))
+        self.assertEqual(sp_diff_report["snapshot_diff"]["unchanged_count"], 22)
+        self.assertTrue(sp_diff_report["snapshot_diff"]["byte_identical"])
+
+        fit_out = self.work / "fit_inline"
+        fit_res = self.run_script(ROOT / "recipes" / "policy_fit_inline.lms", "--output", str(fit_out))
+        self.assertEqual(fit_res.returncode, 0, fit_res.stdout + fit_res.stderr)
+        fit_report = json.loads(fit_out.with_suffix(".json").read_text(encoding="utf-8"))
+        self.assertTrue(fit_report["fits_inline"])
+
+        sim_out = self.work / "simulate_probes"
+        sim_res = self.run_script(ROOT / "recipes" / "policy_simulate_probes.lms", "--output", str(sim_out))
+        self.assertEqual(sim_res.returncode, 0, sim_res.stdout + sim_res.stderr)
+        sim_report = json.loads(sim_out.with_suffix(".json").read_text(encoding="utf-8"))
+        self.assertEqual(len(sim_report["rows"]), 8)
+        self.assertTrue(all(r["passed"] == "true" for r in sim_report["rows"]))
+
+        # Live simulation refuses non-admin profile before host invocation
+        refused_sim = self.run_script(
+            ROOT / "recipes" / "policy_simulate_probes.lms",
+            "--live", "--profile", "lmaws", "--output", str(self.work / "refused_sim")
+        )
+        self.assertNotEqual(refused_sim.returncode, 0)
+        self.assertFalse((self.work / "refused_sim.json").exists())
 
 
 

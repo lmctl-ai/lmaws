@@ -18,6 +18,7 @@ EXAMPLES = ROOT / "examples"
 IMAGES = ROOT / "docs" / "images"
 CATEGORIES = [
     "Identity and access posture",
+    "Permission builder and IAM analysis",
     "Inventory",
     "Cost and spend",
     "Idle and waste detection",
