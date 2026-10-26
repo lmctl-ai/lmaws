@@ -14,6 +14,16 @@ final class LedgerCleanupChecks {
             Path dir=Files.createTempDirectory("lmaws-recovery-proof-").toRealPath();String run="rproof",name="lmaws_rproof_queue";Instant now=Instant.now(),old=now.minus(Duration.ofHours(72));Path file=ledger(dir,run,name,old);
             Map<String,String> row=new LinkedHashMap<>(Map.of("kind","queue","name",name,"id",name,"created_at",old.toString(),"lmaws_test","true","run_id",run));
             var candidate=LedgerCleanup.plan(List.of(row),dir,"lmaws",24,now);check(candidate.size()==1&&candidate.get(0).row().get("eligible_for_delete").equals("true"),"valid proof was not eligible");
+            // A link at the ledger directory or file is refused; trusted ancestors (macOS /var) are not checked.
+            if(!System.getProperty("os.name","").toLowerCase(java.util.Locale.ROOT).contains("win")) {
+                Path linkedDir=dir.resolveSibling(dir.getFileName()+"-link");Files.createSymbolicLink(linkedDir,dir);
+                boolean dirRefused=false;try{LedgerCleanup.directoryProofs(linkedDir);}catch(IllegalStateException e){dirRefused=e.getMessage().contains("symlink");}
+                check(dirRefused,"symlinked ledger directory was accepted");
+                Path linkedFile=dir.resolve("lmaws-rlinked.jsonl");Files.createSymbolicLink(linkedFile,file);
+                boolean fileRefused=false;try{LedgerCleanup.proofs(linkedFile);}catch(IllegalStateException e){fileRefused=e.getMessage().contains("symlink");}
+                check(fileRefused,"symlinked ledger file was accepted");
+                Files.delete(linkedFile);Files.delete(linkedDir);
+            }
             for(var change:List.of(Map.of("lmaws_test","false"),Map.of("run_id","other"),Map.of("name","lmaws_rproof_other"))) {var bad=new LinkedHashMap<>(row);bad.putAll(change);check(!LedgerCleanup.plan(List.of(bad),dir,"lmaws",24,now).get(0).row().get("eligible_for_delete").equals("true"),"unowned candidate became eligible");}
             var young=new LinkedHashMap<>(row);young.put("created_at",now.toString());check(LedgerCleanup.plan(List.of(young),dir,"lmaws",24,now).isEmpty(),"young resource was swept");
             check(LedgerCleanup.plan(List.of(row),dir,"different",0,now).isEmpty(),"foreign prefix was adopted");

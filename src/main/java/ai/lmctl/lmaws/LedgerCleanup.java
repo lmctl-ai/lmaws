@@ -137,7 +137,9 @@ final class LedgerCleanup {
     private static String text(Map<String,Object> row,String name){Object value=row.get(name);return value instanceof String s?s:"";}
     private static Instant parseTime(String value){try{return value==null||value.isBlank()?null:Instant.parse(value);}catch(RuntimeException e){return null;}}
     private static String key(String kind,String id){return kind+"\u0000"+id;}
-    private static void rejectLinks(Path path){Path absolute=path.toAbsolutePath().normalize(),p=absolute.getRoot();for(Path part:absolute){p=p.resolve(part);if(Files.isSymbolicLink(p))throw new IllegalStateException("symlink ledger paths are not accepted");}}
+    /** The ledger (file or directory) and its containing directory must not be links. System
+     *  ancestors are trusted: macOS temp and home paths live under /var -> /private/var. */
+    private static void rejectLinks(Path path){Path absolute=path.toAbsolutePath().normalize();for(Path p:new Path[]{absolute,absolute.getParent()})if(p!=null&&Files.isSymbolicLink(p))throw new IllegalStateException("symlink ledger paths are not accepted");}
 
     private static void append(FileChannel channel,Owned proof,String event,String state)throws java.io.IOException {
         var row=new LinkedHashMap<String,String>();row.put("time",Instant.now().toString());row.put("event",event);row.put("kind",proof.kind);row.put("id",proof.id);row.put("name",proof.name);row.put("run_id",proof.run);row.put("state",state);row.put("action","delete");
