@@ -1,53 +1,32 @@
-# Build and test
+# Local build and test gate
 
-Java 21+, Maven, Python 3 and the pinned lmctl/lmscript compiler are needed.
-`bash test.sh` fetches/verifies the SDK, runs Maven, checks all resolved runtime
-artifact digests, CLI/schema/notices/error paths, regression groups, memory limits
-and actual SDK HTTP calls to an in-process loopback fake.
+Use Java 21+, Maven, Python 3, timeout/coreutils and lmscript >=0.2.420
+(the workflow pins lmctl 0.2.420). From the repository root:
 
-`bash scripts/build-native.sh` uses GraalVM CE 25 and emits target/lmaws (or .exe).
-`LMAWS_NATIVE=1 bash test.sh` repeats verification against that exact executable,
-including offline examples and their visual hosts. The fake endpoint override is
-restricted to literal loopback HTTP and uses dummy credentials instead of the real
-credential chain. Production endpoints use TLS and the standard AWS chain.
+```sh
+LMAWS_LIVE=0 AWS_EC2_METADATA_DISABLED=true timeout 1800 bash test.sh
+# With GraalVM native-image on PATH, after the Maven build:
+timeout 2500 bash scripts/build-native.sh
+LMAWS_LIVE=0 LMAWS_NATIVE=1 timeout 1800 bash test.sh
+```
 
-Linux builds use ubuntu-22.04 / ubuntu-22.04-arm and dynamic glibc only, with static
-GCC/C++ runtime. The dependency allowlist and glibc symbol ceiling are checked.
-macOS uses system libraries. Windows uses GraalVM/MSVC and the documented VC++
-runtime prerequisite. No Java installation or adjacent data files are needed.
+`test.sh` ensures the pinned SDK, runs `mvn verify`, verifies resolved JAR hashes,
+tests independent absence checking and comparison safety, then builds a JVM
+wrapper for CLI/schema/notices, SDK regressions, cost/profile/memory enforcement
+and actual SDK HTTP transport against loopback fakes. Sixteen inventories and
+six tagged lifecycles exercise paging, redaction and failure teardown. Native
+mode additionally tests `target/lmaws`, Linux linkage and all 30 gallery scripts.
+JVM-only mode checks committed gallery assets and explicitly skips rendering.
 
-LMAWS_MAX_MEMORY_MB defaults to 4096 positive whole MiB. The VM tracks cumulative
-allocations, retained inventory rows are charged, inputs and inventory cardinality
-are bounded, and a child-process restart sets a heap cap at 75% of the budget so
-SDK allocations are also bounded. Runtime budgets below 16 MiB fail with a run
-error rather than trying to start an unusable JVM. Runaway-allocation tests use
-64 MiB everywhere and the default budget inside a 6 GiB address-space ceiling for
-Linux native binaries. The host does not set OS rlimits itself.
+Native build scripts copy the shaded JAR to an immutable input and use GraalVM
+`-O1`, two threads, no fallback and bounded build/runtime heaps. Linux uses dynamic
+glibc with static GCC/C++ runtime; linkage and symbol checks enforce glibc >=2.35.
+macOS uses system libraries; Windows builds with MSVC and needs the VC++ runtime.
+Current Windows release binaries are real native hosts, not stubs.
 
-Native builds use optimization level 1 and two compiler threads to keep the broad
-SDK service surface practical on hosted runners; HTTP service latency dominates
-this host rather than numeric kernel throughput. The input shaded JAR is copied
-to an immutable build snapshot before invoking native-image.
-
-Release CI pins GraalVM CE 25.0.2. Local verification also uses CE 25.4.4.1.1;
-the release proof records which binaries were verified. Public corresponding-source
-links are included in the embedded notices.
-
-Local JVM and native verification pass all 16 service inventories and six tagged
-write/update/delete lifecycles over real SDK HTTP transports. The fake verifies
-creation tags from actual requests, pagination, finally cleanup, and a provider
-error containing a secret sentinel that never reaches output. All fake resources
-are deleted. All 25 examples pass and regenerate companion PNGs. Native Linux
-x64 prototype size is 55,511,304 bytes, with only libc.so.6 dynamically needed.
-
-macOS Intel pins GraalVM CE 25.0.1, the final upstream Intel build; 25.0.2
-has no macOS x64 asset. Other release lanes pin 25.0.2. Windows Python tests
-explicitly decode UTF-8 so embedded upstream license typography is byte-correct.
-
-The host explicitly uses UTF-8 stdout/stderr. Windows JDK console defaults may
-otherwise encode help typography in a legacy code page even though notices are
-raw UTF-8 bytes; both protocol and diagnostics must use a single encoding.
-
-The Linux address-space test identifies the executable by its ELF header. It must
-not run against the JVM shell wrapper in the native stage: GraalVM HotSpot may
-reserve a separate libjvmci isolate before the host can enforce its own budget.
+Local build/tests are the publication gate by user decision; do not wait for CI
+or live permissions before publishing. `.github/workflows/ci.yml` remains the
+five-platform fake-only release automation. No cloud credentials or GitHub OIDC
+are allowed in CI; `LMAWS_LIVE=0` is set there and real-backend CI guards are tested.
+GitHub download tokens are not AWS credentials. Live tests are separate opt-in
+work, described in [03-live.md](03-live.md).

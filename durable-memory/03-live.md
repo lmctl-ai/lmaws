@@ -1,31 +1,35 @@
-# Approved live testing
+# Live procedure and measured results
 
-The Lead relayed explicit user approval for this machine under CLOUD_BRIEF safety
-rules. The opt-in runner is `LMAWS_LIVE=1 python3 scripts/test-live.py target/lmaws`.
-It uses only the configured default AWS profile and its one configured region;
-environment credential overrides and fake endpoints are removed for this test.
+[docs/USER_TEST.md](../docs/USER_TEST.md) is the canonical READY FOR USER TEST
+handoff: environment, exact autoruns, scoped service permissions, cap harness,
+profile selection and sweepers. Do not change IAM, credentials or profiles, and
+never use agentcore-poc, admin or another identity. `default` is read-only;
+only `AWS_PROFILE=lmaws` may mutate, in us-east-1, with `LMAWS_LIVE=1`.
+Independent deletion checks use default metadata calls. IAM examples are skipped
+with the configured federated profiles; do not try to repair their access here.
 
-The native host reads identity and selected inventories through safe metadata
-projections. It then creates one uniquely named SQS queue and one standard SSM
-String parameter, tags both with lmaws_test=run-id, sends a nonsecret fixture message
-and updates the nonsecret parameter. It deliberately fails a DSL assertion after
-both exist to prove finally-based teardown. It never fetches parameter/secret values
-or modifies IAM users/keys.
+Current evidence is [the campaign record](../evidence/live-cost-campaign-v012.json)
+and [per-example comparison results](../compare/RESULTS.md):
 
-Every creation intent is durably logged before the API request. On failure the
-outer verifier may recover only resources matching that run's ledger, exact prefix
-and ownership tag. It checks deletion independently using AWS CLI GetQueueUrl and
-DescribeParameters (metadata only). Private raw logs/ledgers stay in ignored
-live-ledger/. A sanitized result is saved in live-v010.json. Never print credential
-files, raw SDK error details or live AWS data into the gallery.
+- Nineteen read-only examples passed live and display estimated cost `$0.00`.
+- `bucket_objects` passed: one bucket and tiny object, estimated `$0.00001781`,
+  both deleted and independently verified absent.
+- Six lifecycle examples were attempted once and denied: `before_after` and
+  `queue_pipeline` (SQS CreateQueue), `sandbox_lifecycle` (SSM PutParameter),
+  `table_items` (DynamoDB CreateTable), `topic_publish` (SNS CreateTopic) and
+  `log_retention` (Logs CreateLogGroup). Full lifecycle costs remain estimated;
+  attempted-request costs are retained.
+- Four IAM-dependent examples (`identity`, `read_only_audit`, `roles`,
+  `service_matrix`) were skipped and remain estimated only.
 
-Verified native live run r170f2785352f4d76 in us-east-1 created queue
-lmaws_r170f2785352f4d76_queue and standard String parameter
-lmaws_r170f2785352f4d76_parameter. Both were deleted by the host after the deliberate
-assertion failure, without outer recovery, and independently verified absent.
-See live-v010.json. No real resource remains from this run.
+Campaign price-table estimate: `$0.00004640`, including independent verification
+passes. All recorded leftovers are zero. This is estimated cost from measured
+activity, not an AWS invoice; do not sum older/overlapping campaign snapshots.
 
-A read-only GetServiceSetting check confirmed the test account default parameter
-tier was Standard. The shipped backend also explicitly requests Tier=Standard on
-creation and overwrite, so a different account default cannot silently select
-Advanced parameters. The fake transport asserts this request field.
+For future authorized runs, use `scripts/test-live-examples.py` or the canonical
+autoruns with the exact profile for each category. Save sanitized
+`evidence/live-cost-<example>-<run-id>.json`, preserve private ledgers, check provider
+absence independently, and fold both sweepers. Authorization errors never prove
+absence. Reuse completed native evidence for comparisons to avoid repeating
+writes. The legacy `scripts/test-live.py` hardcodes default-profile writes and is
+incompatible with the current guard; do not use it. Updating/removing it is open.

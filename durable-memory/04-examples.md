@@ -1,12 +1,28 @@
-# Examples and pictures
+# Examples and cost labels
 
-The 25 offline stories use aws.demo(), assert expected fixtures, export host-derived
-CSV and draw with lmplot or lmdraw. They do not resolve AWS credentials. Each script
-executes its own bytecode and writes images/name.png under the current directory.
-README captions use complete raw-URL lmctl autorun commands. Run-owned write
-examples simulate ledger/teardown through the same Sandbox API.
+There are 30 self-contained `.lms` examples: 19 read-only stories, seven
+write/lifecycle stories and four IAM-dependent stories. See [README](../README.md)
+for the complete image gallery and cost captions; [USER_TEST](../docs/USER_TEST.md)
+assigns the live profile and permissions to every example.
 
-The examples renderer executes the actual example scripts, then copies their images
-into docs/images. No substitute images or undocumented input files are used.
-Gallery tests check PNG signatures/size, source paths, README URLs and execution.
-Fresh-cache raw-URL autoruns are verified after the release is published.
+Each script uses `aws.example(name)`: demo fixtures by default, live only with
+`LMAWS_LIVE=1`. It asserts fixture values only in demo mode, accepts sparse real
+inventories, executes saved bytecode, exports CSV and draws its own PNG with
+lmplot/lmdraw. Offline examples need no AWS credentials. `sweeper` is a read-only
+local ledger report, not a cloud deletion operation.
+
+```sh
+LMAWS_LIVE=0 timeout 300 lmctl autorun https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/inventory.lms
+```
+
+Autorun installs the released native host through the script's `cli`/`install`
+binding and writes `images/<name>.png` relative to the invocation directory.
+No Java or repository-relative input is required for native autoruns. Rendering
+tests run the actual scripts; `examples/render-all.lms` refreshes gallery assets.
+
+All README examples label “running this example costs about $X”. Nineteen live
+read-only results display `$0.00`; S3 bucket/object has measured estimated cost.
+Six denied write examples are table estimates for the full lifecycle, and four
+IAM examples are estimated only. The tiny-write planning allowance is not an
+invoice or observed full-run result. Denied requests can still have nonzero
+unrounded estimates. See [safety/cost](07-example-costs.md) for price-table limits.
