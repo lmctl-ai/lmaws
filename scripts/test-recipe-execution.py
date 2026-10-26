@@ -85,7 +85,7 @@ class RecipeExecutionTests(unittest.TestCase):
     def test_two_partial_inventory_calls_restore_environment(self) -> None:
         entry = self.work / "compose.lms"
         entry.write_text(
-            'import "' + str(ROOT / "recipes" / "lib" / "inventory.lms") + '";\n'
+            'import ' + json.dumps((ROOT / "recipes" / "lib" / "inventory.lms").as_posix()) + ';\n'
             'a=recipe_inventory({task:"queues",top:2,output:"data/queues"});\n'
             'b=recipe_inventory({task:"tables",top:2,output:"data/tables"});\n'
             'assert(a.rows.len()==2); assert(b.rows.len()==2);\n',
@@ -96,6 +96,16 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertEqual(result.stdout.count("estimated cost: $"), 2)
         self.assertEqual(len(json.loads((self.work / "data/queues.json").read_text())), 2)
         self.assertEqual(len(json.loads((self.work / "data/tables.json").read_text())), 2)
+
+    def test_literal_tilde_output_path_is_accepted_without_shell_expansion(self) -> None:
+        entry = self.work / "tilde.lms"
+        entry.write_text(
+            'import ' + json.dumps((ROOT / "recipes" / "lib" / "inventory.lms").as_posix()) + ';\n'
+            'r=recipe_inventory({task:"queues",top:1,output:"~/recipe-output"});\n'
+            'assert(r.rows.len()==1);\n', encoding="utf-8")
+        result = self.run_script(entry)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.work / "~" / "recipe-output.json").exists())
 
     def test_inherited_live_flag_stays_synthetic_for_picture_example(self) -> None:
         env = dict(self.env, LMAWS_LIVE="1", AWS_PROFILE="default")
@@ -132,12 +142,12 @@ class RecipeExecutionTests(unittest.TestCase):
         first=self.work/"first-marker"
         second=self.work/"second-marker"
         entry=self.work/"budget.lms"
-        code='import '+json.dumps(str(ROOT/'recipes/lib/common.lms'))+';\n'
+        code='import '+json.dumps((ROOT/'recipes/lib/common.lms').as_posix())+';\n'
         for symbol,path in [('one',first),('two',second)]:
             code+=symbol+' = _dsl_ cli="lmaws --dry-run" install="github:lmctl-ai/lmaws@latest";\n'
             code+='let cloud=aws.example("recipe_budget_fixture");\nfile_write('+json.dumps(str(path))+',"executed");\nend _dsl_\n'
-        code+='recipe_run(one,{live:true,cap:0.20,profile:"default",output:'+json.dumps(str(self.work/'one'))+'});\n'
-        code+='recipe_run(two,{live:true,cap:0.06,profile:"default",output:'+json.dumps(str(self.work/'two'))+'});\n'
+        code+='recipe_run(one,{live:true,cap:0.20,profile:"default",output:'+json.dumps((self.work/'one').as_posix())+'});\n'
+        code+='recipe_run(two,{live:true,cap:0.06,profile:"default",output:'+json.dumps((self.work/'two').as_posix())+'});\n'
         entry.write_text(code)
         result=self.run_script(entry)
         self.assertNotEqual(result.returncode,0)

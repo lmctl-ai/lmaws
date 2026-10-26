@@ -17,14 +17,14 @@ fn recipe_normalize(options) {
   assert(is_number(o.older_hours) && o.older_hours>=0 && floor(o.older_hours)==o.older_hours);
   o.output=replace_all(str(o.output),"\\","/");
   o.ledger_dir=replace_all(str(o.ledger_dir),"\\","/");
-  assert(regex_test(o.ledger_dir,"^[A-Za-z0-9_./: -]+$"));
+  assert(regex_test(o.ledger_dir,"^[A-Za-z0-9_./: ~-]+$"));
   assert(o.profile=="default" || o.profile=="lmaws" || o.profile=="lmaws-ec2");
   assert(is_number(o.hours) && o.hours>=1 && o.hours<=720 && floor(o.hours)==o.hours);
   assert(is_number(o.timeout_ms) && o.timeout_ms>=1000 && o.timeout_ms<=900000);
   assert(regex_test(str(o.tag_key),"^[A-Za-z0-9_.:/=+@ -]{0,128}$") && regex_test(str(o.tag_value),"^[A-Za-z0-9_.:/=+@ -]{0,256}$"));
   assert(regex_test(str(o.types),"^[a-z0-9]+[.][a-z0-9]+(,[a-z0-9]+[.][a-z0-9]+)*$"));
   assert(regex_test(o.region,"^[a-z]{2}(-[a-z]+)+-[0-9]+$"));
-  assert(regex_test(o.output,"^[A-Za-z0-9_./: -]+$"));
+  assert(regex_test(o.output,"^[A-Za-z0-9_./: ~-]+$"));
   assert(is_string(o.prefix) && len(o.prefix)<=128);
   return o;
 }

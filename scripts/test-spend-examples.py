@@ -7,11 +7,13 @@ p=argparse.ArgumentParser();p.add_argument('--render',action='store_true');args=
 names=['spend_detail','ec2_spend','savings_plans','eip_audit','ebs_audit','bandwidth','lambda_spend','dynamodb_spend']
 env=dict(os.environ,LMAWS_LIVE='0',LMAWS_SPEND_LIVE='0',AWS_PROFILE='default',AWS_EC2_METADATA_DISABLED='true')
 env.pop('LMAWS_ENDPOINT',None)
+compiler=shutil.which("lmscript.cmd" if os.name=="nt" else "lmscript") or "lmscript"
+compiler_argv=["cmd.exe","/c",compiler] if os.name=="nt" and compiler.lower().endswith(".cmd") else [compiler]
 proof=[];outputs={}
 for name in names:
  with tempfile.TemporaryDirectory(prefix='lmaws-spend-gallery-') as directory:
   work=Path(directory)
-  result=subprocess.run(['lmscript',str(root/'examples'/f'{name}.lms')],cwd=work,env=env,capture_output=True,text=True,timeout=240)
+  result=subprocess.run(compiler_argv+[str(root/'examples'/f'{name}.lms')],cwd=work,env=env,capture_output=True,text=True,timeout=240)
   if result.returncode:raise SystemExit(name+': '+(result.stdout+result.stderr)[-6000:])
   report_path=work/'data'/name/'report.json';report=json.loads(report_path.read_text())
   assert report['metadata']['mode']=='synthetic' and report['metadata']['source']['synthetic'] is True,name

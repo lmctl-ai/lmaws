@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Offline acceptance tests for the read-only Spend API; never contacts AWS."""
 from __future__ import annotations
-import json, os, subprocess, sys, tempfile
+import json, os, subprocess, sys, tempfile, shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HOST = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "target/jvm-bin/lmaws"
-LMSCRIPT = os.environ.get("LMSCRIPT_BIN", "lmscript")
+LMSCRIPT = os.environ.get("LMSCRIPT_BIN") or shutil.which("lmscript.cmd" if os.name == "nt" else "lmscript") or "lmscript"
+
+def launcher_argv(binary, *args):
+    prefix = ["cmd.exe", "/c", str(binary)] if os.name == "nt" and str(binary).lower().endswith((".cmd", ".bat")) else [str(binary)]
+    return prefix + list(args)
 SCHEMA = ROOT / "schema/lmaws.dsl.json"
 BASE_ENV = dict(os.environ)
 BASE_ENV.update({"AWS_PROFILE": "default", "LMAWS_LIVE": "0", "LMAWS_SPEND_LIVE": "0", "CI": "true", "AWS_EC2_METADATA_DISABLED": "true"})
@@ -18,7 +22,7 @@ def compile_source(source: str, directory: Path) -> Path:
     src.write_text(
         'p = _dsl_ schema=' + json.dumps(str(SCHEMA)) + ';\n' + source +
         '\nend _dsl_\nsavedsl(p,' + json.dumps(str(out)) + ');\n', encoding="utf-8")
-    result = subprocess.run([LMSCRIPT, str(src)], cwd=directory, env=BASE_ENV,
+    result = subprocess.run(launcher_argv(LMSCRIPT, str(src)), cwd=directory, env=BASE_ENV,
                             text=True, capture_output=True, timeout=120)
     assert result.returncode == 0, result.stderr[-2000:]
     return out
@@ -28,7 +32,7 @@ def execute(source: str, *, code: int = 0, env: dict[str, str] | None = None,
     with tempfile.TemporaryDirectory(prefix="lmaws-spend-api-") as raw:
         directory = Path(raw)
         bytecode = compile_source(source, directory)
-        command = [str(HOST)]
+        command = launcher_argv(HOST)
         if dry:
             command.append("--dry-run")
         command += ["--dsl", str(bytecode)]
