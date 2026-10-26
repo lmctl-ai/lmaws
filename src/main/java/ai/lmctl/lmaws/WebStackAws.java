@@ -42,6 +42,23 @@ public final class WebStackAws implements AutoCloseable {
     public String recordCname(String zone,String fqdn,String value,boolean delete){return recordCname(zone,fqdn,value,delete,null);}
     public String recordCname(String zone,String fqdn,String value,boolean delete,Runnable accepted){recordName(zone,fqdn,true);if(value==null||value.length()>255)throw new IllegalArgumentException("invalid CNAME value");return record(zone,fqdn,RRType.CNAME,value,delete,accepted);}
     private String record(String zone,String fqdn,RRType type,String value,boolean delete,Runnable accepted){ResourceRecordSet rr=ResourceRecordSet.builder().name(fqdn.endsWith(".")?fqdn:fqdn+".").type(type).ttl(60L).resourceRecords(software.amazon.awssdk.services.route53.model.ResourceRecord.builder().value(value).build()).build();ChangeInfo ci=route53.changeResourceRecordSets(x->x.hostedZoneId(zone).changeBatch(ChangeBatch.builder().changes(Change.builder().action(delete?ChangeAction.DELETE:ChangeAction.CREATE).resourceRecordSet(rr).build()).build()).build()).changeInfo();if(accepted!=null)accepted.run();waitChange(ci.id(),Duration.ofMinutes(5));return ci.id();}
+    /** Set the two owned weighted A records used by scenario 11. UPSERT is scoped to the exact run name and identifiers. */
+    public String weightedSet(String zone,String fqdn,String staticTarget,String dynamicIp,long staticWeight,long dynamicWeight,boolean delete,Runnable accepted){
+        weightedName(zone,fqdn); if(staticWeight<0||staticWeight>255||dynamicWeight<0||dynamicWeight>255)throw new IllegalArgumentException("weighted DNS weights must be 0..255");
+        if(staticTarget==null||!staticTarget.matches("[a-z0-9-]+\\.cloudfront\\.net\\.?"))throw new SecurityException("invalid CloudFront weighted target");
+        WebStack.requireHttpCidr(dynamicIp+"/32");
+        String name=fqdn.endsWith(".")?fqdn:fqdn+".";
+        ResourceRecordSet alias=ResourceRecordSet.builder().name(name).type(RRType.A).setIdentifier("static-"+runId).weight(staticWeight).aliasTarget(AliasTarget.builder().dnsName(staticTarget).hostedZoneId("Z2FDTNDATAQYW2").evaluateTargetHealth(false).build()).build();
+        ResourceRecordSet ip=ResourceRecordSet.builder().name(name).type(RRType.A).setIdentifier("dynamic-"+runId).weight(dynamicWeight).ttl(30L).resourceRecords(software.amazon.awssdk.services.route53.model.ResourceRecord.builder().value(dynamicIp).build()).build();
+        ChangeAction action=delete?ChangeAction.DELETE:ChangeAction.UPSERT;
+        ChangeBatch batch=ChangeBatch.builder().changes(Change.builder().action(action).resourceRecordSet(alias).build(),Change.builder().action(action).resourceRecordSet(ip).build()).build();
+        ChangeInfo ci=route53.changeResourceRecordSets(x->x.hostedZoneId(zone).changeBatch(batch).build()).changeInfo(); if(accepted!=null)accepted.run(); waitChange(ci.id(),Duration.ofMinutes(5)); return ci.id();
+    }
+    private void weightedName(String zone,String fqdn){
+        String n=stripDot(fqdn), expected="lmaws-weighted-"+runId+"."+domain;
+        if(!n.equals(expected))throw new SecurityException("weighted DNS name outside this run/domain");
+        String zoneName=stripDot(route53.getHostedZone(x->x.id(zone)).hostedZone().name()); if(!domain.equals(zoneName))throw new SecurityException("hosted zone domain mismatch");
+    }
     public void waitChange(String id,Duration timeout){long end=System.nanoTime()+timeout.toNanos();for(;;){if(route53.getChange(x->x.id(id)).changeInfo().status()==ChangeStatus.INSYNC)return;if(System.nanoTime()>end)throw new IllegalStateException("Route 53 change timeout");sleep(2000);}}
     private String oacDescription(){return "lmweblab "+runId+(ownerProof==null?"":" owner:"+ownerProof);}
     public String createOac(){return cloudfront.createOriginAccessControl(x->x.originAccessControlConfig(OriginAccessControlConfig.builder().name("lmaws-oac-"+runId).description(oacDescription()).originAccessControlOriginType("s3").signingBehavior("always").signingProtocol("sigv4").build())).originAccessControl().id();}

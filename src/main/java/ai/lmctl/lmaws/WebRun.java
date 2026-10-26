@@ -59,7 +59,7 @@ final class WebRun implements AutoCloseable {
     private void persist(){try{Path temp=Files.createTempFile(path.getParent(),".web-state-",".tmp");try{try{Files.setPosixFilePermissions(temp,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));}catch(UnsupportedOperationException ignored){}Files.writeString(temp,Jsons.encodeRaw(state));try(FileChannel f=FileChannel.open(temp,StandardOpenOption.WRITE)){f.force(true);}Files.move(temp,path,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}finally{Files.deleteIfExists(temp);}}catch(java.io.IOException e){throw new IllegalStateException("cannot save private web state",e);}}
     private String val(String k){String v=state.get(k);if(v==null||v.isEmpty())throw new IllegalStateException("web step prerequisite missing: "+k);return v;}
     @SuppressWarnings("unchecked") synchronized Map<String,String> step(String op,String json) {
-        guard();if(!Set.of("bucket","distribution","certificate","dns_site","compute","dns_app","https","invalidate","record_http","reserve_http").contains(op))throw new IllegalArgumentException("unknown web step");
+        guard();if(!Set.of("bucket","distribution","certificate","dns_site","compute","dns_app","dns_weighted","https","invalidate","record_http","reserve_http").contains(op))throw new IllegalArgumentException("unknown web step");
         Object parsed=Json.parse(json);if(!(parsed instanceof Map<?,?> raw))throw new IllegalArgumentException("web step arguments must be an object");
         Map<String,Object> args=(Map<String,Object>)raw;
         if("down".equals(state.get("status")))throw new IllegalStateException("run is torn down; choose a new run id");
@@ -85,7 +85,8 @@ final class WebRun implements AutoCloseable {
             case "certificate"->{state.put("cert","fixture-cert");state.put("certificate_status","ISSUED");}
             case "dns_site"->{val("cert");state.put("site_record","true");state.put("zone","fixture-zone");}
             case "compute"->{WebStack.requireHttpCidr(arg(a,"cidr","203.0.113.10/32"));state.put("instance_id","i-fixture");state.put("security_group_id","sg-fixture");state.put("public_ip","203.0.113.20");}
-            case "dns_app"->{val("instance_id");state.put("app_record","true");}
+            case "dns_app"->{val("instance_id");state.putIfAbsent("zone","fixture-zone");state.put("app_record","true");}
+            case "dns_weighted"->{val("distribution");val("instance_id");state.put("weighted_name","lmaws-weighted-"+run+"."+domain);state.put("weighted_static_target","dfixture.cloudfront.net");state.put("weighted_dynamic_ip","203.0.113.20");state.put("weighted_static_weight",arg(a,"static_weight","90"));state.put("weighted_dynamic_weight",arg(a,"dynamic_weight","10"));state.put("weighted_record","true");}
             case "https"->{val("cert");state.put("https","true");}
             case "invalidate"->val("distribution");
             case "record_http", "reserve_http" -> { }
@@ -124,7 +125,14 @@ final class WebRun implements AutoCloseable {
                 var result=new WebCompute(backend).create(run,arg(a,"vpc_id",""),arg(a,"subnet_id",""),arg(a,"ami",""),arg(a,"cidr",""),arg(a,"instance_type","t4g.nano"),8,script,Double.parseDouble(arg(a,"max_price","0.0042")),checkpoint->{state.putAll(checkpoint);persist();});
                 state.putAll(result);persist();
             }
-            case "dns_app"->{aws().recordA(val("zone"),val("app"),val("public_ip"),false,()->{state.put("app_record","true");persist();});}
+            case "dns_app"->{if(!state.containsKey("zone")){state.put("zone",aws().zoneId(domain));persist();}aws().recordA(val("zone"),val("app"),val("public_ip"),false,()->{state.put("app_record","true");persist();});}
+            case "dns_weighted"->{
+                String fqdn=arg(a,"name",state.getOrDefault("weighted_name","lmaws-weighted-"+run+"."+domain));
+                String target=arg(a,"static_target",val("cf_domain")); String ip=arg(a,"dynamic_ip",val("public_ip"));
+                long sw=integerArg(a,"static_weight"), dw=integerArg(a,"dynamic_weight");
+                if(sw+dw!=100)throw new IllegalArgumentException("weighted DNS weights must sum to 100");
+                if(!state.containsKey("zone")){state.put("zone",aws().zoneId(domain));persist();} String zone=arg(a,"zone",val("zone")); aws().weightedSet(zone,fqdn,target,ip,sw,dw,false,()->{state.put("weighted_name",fqdn);state.put("weighted_static_target",target);state.put("weighted_dynamic_ip",ip);state.put("weighted_static_weight",String.valueOf(sw));state.put("weighted_dynamic_weight",String.valueOf(dw));state.put("weighted_record","true");persist();});
+            }
             case "https"->{aws().attachCertificate(val("distribution"),val("site"),val("cert"),true);state.put("https","true");}
             case "invalidate"->aws().invalidate(val("distribution"));
             case "reserve_http", "record_http"->{
@@ -200,6 +208,7 @@ final class WebRun implements AutoCloseable {
             }catch(RuntimeException recovery){errors.add(recovery);}
             persist();
             cleanup("app_record",()->aws().recordA(val("zone"),val("app"),val("public_ip"),true),errors);
+            cleanup("weighted_record",()->aws().weightedSet(val("zone"),val("weighted_name"),val("weighted_static_target"),val("weighted_dynamic_ip"),Long.parseLong(val("weighted_static_weight")),Long.parseLong(val("weighted_dynamic_weight")),true,null),errors);
             cleanup("site_record",()->aws().changeAlias(val("zone"),val("site"),val("cf_domain"),true),errors);
             if(state.containsKey("security_group_id"))try{new WebCompute(backend).delete(run,state.getOrDefault("instance_id",""),val("security_group_id"),checkpoint->{state.putAll(checkpoint);persist();});state.remove("instance_id");state.remove("security_group_id");state.putIfAbsent("compute_ended_at",Instant.now().toString());persist();}catch(RuntimeException e){errors.add(e);}
             cleanup("distribution",()->{aws().disableDistribution(val("distribution"));aws().deleteDistribution(val("distribution"));},errors);
