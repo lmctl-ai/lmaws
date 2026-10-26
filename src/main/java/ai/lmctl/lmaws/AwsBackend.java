@@ -582,6 +582,7 @@ public final class AwsBackend implements AutoCloseable {
     private CloudFormationClient cloudformation() { return cloudformation == null ? cloudformation = register(base(CloudFormationClient.builder()).build()) : cloudformation; }
     private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { b.region(region).overrideConfiguration(config); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))); else b.credentialsProvider(ProfileCredentialsProvider.builder().profileName(profileName).build()); return b; }
 
+    <B extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> B webBuilder(B builder) { return base(builder); }
     private static final class CostInterceptor implements ExecutionInterceptor {
         private final CostLedger ledger;
         CostInterceptor(CostLedger ledger) { this.ledger = ledger; }

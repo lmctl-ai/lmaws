@@ -13,6 +13,8 @@ Current maintenance notes:
 - [08-recipes.md](08-recipes.md): reusable recipe modules, synthetic examples and catalogue gates.
 - [10-compute.md](10-compute.md): EC2 compute recipes, the spot nano lifecycle tag contract and the lmaws-ec2 profile.
 
+- [11-web-stack.md](11-web-stack.md): persistent guarded web-stack integration and local safety gates.
+
 Current release/comparison evidence:
 
 - [release-v013.json](release-v013.json): five current assets and verified SHA256SUMS.

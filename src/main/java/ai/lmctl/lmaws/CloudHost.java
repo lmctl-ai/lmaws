@@ -12,6 +12,7 @@ public final class CloudHost implements AutoCloseable {
     private final Map<SpendReport,CostLedger> spendLedgers=new IdentityHashMap<>();
     private final Map<Session,Ec2Compute> compute=new IdentityHashMap<>();
     private final List<Ec2Compute.SpotRun> spots=new ArrayList<>();
+    private final List<WebRun> webRuns=new ArrayList<>();
     private boolean closed;
     private CostLedger billing;
     private Session measured;
@@ -109,6 +110,10 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","iam_policy_put",List.of("string","string","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamPolicyPut(text(a[0]),text(a[1]),a[2].asBool())));
         r.method("Cloud","iam_policy_delete",List.of("string","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamPolicyDelete(text(a[0]),a[1].asBool())));
         r.method("Cloud","run",List.of("string","string"),"Run",(c,s,a)->{Sandbox run=new Sandbox(session(s).backend,text(a[0]),Path.of(text(a[1])),session(s).cost);runs.add(run);return Value.object("Run",run);});
+        r.method("Cloud","web_stack",List.of("string","string","string"),"Web",(c,s,a)->{var v=session(s);WebRun run=new WebRun(v.backend,v.cost,text(a[0]),text(a[1]),text(a[2]));webRuns.add(run);return Value.object("Web",run);});
+        r.method("Web","step",List.of("string","string"),"Row",(c,s,a)->rowValue(c,((WebRun)s.asObject()).step(text(a[0]),text(a[1]))));
+        r.method("Web","status",List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(((WebRun)s.asObject()).status(),c)));
+        r.method("Web","down",List.of(),"Row",(c,s,a)->rowValue(c,((WebRun)s.asObject()).down()));
         registerCompute(r);
         r.method("Rows","len",List.of(),"int",(c,s,a)->Value.ofInt(((Rows)s.asObject()).rows.size()));
         r.method("Rows","at",List.of("int"),"Row",(c,s,a)->{Rows rows=(Rows)s.asObject();long i=a[0].asInt();if(i<0||i>=rows.rows.size())throw VmException.host("row index outside inventory");return Value.object("Row",rows.rows.get((int)i));});
@@ -150,6 +155,8 @@ public final class CloudHost implements AutoCloseable {
         r.method("Spot","run_id",List.of(),"string",(c,s,a)->Value.ofString(spot(s).runId));
         r.method("Spot","security_group",List.of("string"),"Row",(c,s,a)->one(spot(s).securityGroup(text(a[0])),c));
         r.method("Spot","launch",List.of("string","string","string","string","float"),"Row",(c,s,a)->one(spot(s).launch(text(a[0]),text(a[1]),text(a[2]),text(a[3]),a[4].asFloat()),c));
+        r.method("Spot","http_ingress",List.of("string","string"),"Row",(c,s,a)->one(spot(s).httpIngress(text(a[0]),text(a[1])),c));
+        r.method("Spot","launch_web",List.of("string","string","string","string","float","string"),"Row",(c,s,a)->one(spot(s).launchWeb(text(a[0]),text(a[1]),text(a[2]),text(a[3]),a[4].asFloat(),text(a[5])),c));
         r.method("Spot","wait_state",List.of("string","string","int"),"Row",(c,s,a)->one(spot(s).waitState(text(a[0]),text(a[1]),a[2].asInt()),c));
         r.method("Spot","wait_status_ok",List.of("string","int"),"Row",(c,s,a)->one(spot(s).waitStatusOk(text(a[0]),a[1].asInt()),c));
         r.method("Spot","stop",List.of("string"),"Row",(c,s,a)->one(spot(s).stop(text(a[0])),c));
@@ -178,6 +185,7 @@ public final class CloudHost implements AutoCloseable {
     @Override public synchronized void close() {
         if(closed)return;
         RuntimeException failure=null;
+        for(var run:webRuns.reversed())try{run.close();}catch(RuntimeException e){failure=e;}
         for(var run:spots.reversed())try{run.close();}catch(RuntimeException e){failure=e;System.err.println("lmaws spot teardown failed: "+Main.safeError(e));}
         for(var run:runs.reversed())try{run.close();}catch(RuntimeException e){failure=e;}
         if(measured!=null)try{finishEvidence(measured);}catch(RuntimeException e){if(failure==null)failure=e;}

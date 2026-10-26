@@ -270,6 +270,27 @@ final class Ec2Compute {
         }
 
         Map<String, String> launch(String type, String ami, String subnet, String group, double maxPrice) {
+            return launchConfigured(type,ami,subnet,group,maxPrice,"#!/bin/sh\necho lmaws_test spot sandbox > /var/tmp/lmaws_test\n",false);
+        }
+
+        Map<String,String> launchWeb(String type,String ami,String subnet,String group,double maxPrice,String userData) {
+            if(userData==null || !userData.startsWith("#!") || userData.getBytes(StandardCharsets.UTF_8).length>16384)
+                throw new IllegalArgumentException("launch_web: user data must be a shebang script at most 16 KiB");
+            return launchConfigured(type,ami,subnet,group,maxPrice,userData,true);
+        }
+
+        Map<String,String> httpIngress(String group,String cidr) {
+            backend.requireComputeWriteEnabled(); WebStack.requireHttpCidr(cidr);
+            if(!groups.contains(group))throw new IllegalArgumentException("http_ingress: group must be created by this run");
+            if(!demo()) {
+                var found=ec2().describeSecurityGroups(x->x.groupIds(group)).securityGroups();
+                if(found.size()!=1 || !runId.equals(tag(found.get(0).tags(),OWNER)))throw new IllegalArgumentException("http_ingress: run tag mismatch");
+                ec2().authorizeSecurityGroupIngress(x->x.groupId(group).ipPermissions(IpPermission.builder().ipProtocol("tcp").fromPort(80).toPort(80).ipRanges(IpRange.builder().cidrIp(cidr).description("lmaws_test web HTTP").build()).build()));
+            }
+            log("security_group",group,"http_ingress");return row("status","allowed","port","80","cidr",cidr);
+        }
+
+        private Map<String, String> launchConfigured(String type, String ami, String subnet, String group, double maxPrice,String script,boolean publicIp) {
             if (!NANO.contains(type)) throw new IllegalArgumentException("launch: only t4g.nano or t3.nano (got " + type + ")");
             if (!ami.matches("ami-[0-9a-f]{8,32}")) throw new IllegalArgumentException("launch: ami id required");
             if (!subnet.matches("subnet-[0-9a-z]{1,32}")) throw new IllegalArgumentException("launch: subnet id required");
@@ -291,13 +312,13 @@ final class Ec2Compute {
                 return row("kind", "instance", "status", "launched", "id", id, "type", type, "az", "us-east-1b", "subnet", subnet, "spot_request", "sir-fixture0001", "max_price", price.toPlainString(), "public_ip", "");
             }
             String rootDevice = ec2().describeImages(x -> x.imageIds(ami)).images().stream().findFirst().map(Image::rootDeviceName).orElse("/dev/sda1");
-            String userData = Base64.getEncoder().encodeToString("#!/bin/sh\necho lmaws_test spot sandbox > /var/tmp/lmaws_test\n".getBytes(StandardCharsets.UTF_8));
+            String userData = Base64.getEncoder().encodeToString(script.getBytes(StandardCharsets.UTF_8));
             try {
                 var response = ec2().runInstances(x -> x.imageId(ami).instanceType(type).minCount(1).maxCount(1).userData(userData)
                         .clientToken(runId + "-" + type.replace('.', '-'))
                         .instanceMarketOptions(m -> m.marketType(MarketType.SPOT).spotOptions(s -> s.maxPrice(price.toPlainString())
                                 .spotInstanceType(SpotInstanceType.ONE_TIME).instanceInterruptionBehavior(InstanceInterruptionBehavior.TERMINATE)))
-                        .networkInterfaces(n -> n.deviceIndex(0).subnetId(subnet).groups(group).associatePublicIpAddress(false).deleteOnTermination(true))
+                        .networkInterfaces(n -> n.deviceIndex(0).subnetId(subnet).groups(group).associatePublicIpAddress(publicIp).deleteOnTermination(true))
                         .blockDeviceMappings(b -> b.deviceName(rootDevice).ebs(e -> e.volumeSize(ROOT_GIB).volumeType(VolumeType.GP3).deleteOnTermination(true)))
                         .metadataOptions(o -> o.httpTokens(HttpTokensState.REQUIRED))
                         .tagSpecifications(tags(ResourceType.INSTANCE), tags(ResourceType.VOLUME), tags(ResourceType.NETWORK_INTERFACE), tags(ResourceType.SPOT_INSTANCES_REQUEST)));

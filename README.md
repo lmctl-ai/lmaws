@@ -765,3 +765,7 @@ The original inventory/lifecycle gallery contains 27 lmplot charts and 3 lmdraw 
 - **sweeper** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-sweeper-rb06fb78dx83ba4d51.json)). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/sweeper/sweeper.lms`
 
 Compiler minimum: lmscript 0.2.420. Host schema bytes omit built-in std; `--dsl-signatures` includes it and `--without-std` selects host declarations.
+
+### Persistent web-stack recipes
+
+`Cloud.web_stack(run_id, domain, private_state_path)` exposes a `Web` with explicit `step`, `status` and `down` methods for the [lmweblab integration](https://github.com/lmctl-ai/lmweblab). It covers run-tagged S3 origins, CloudFront OAC/distributions, scoped Route 53 records, ACM DNS validation and disposable HTTP spot nanos. Mutations require the single `lmaws` profile in us-east-1; state and live output stay private. Each deletion rechecks ownership, and teardown performs fresh provider inventory. See [the web-stack note](durable-memory/11-web-stack.md) for the local safety gates and the CloudFront certificate requirement.
