@@ -14,11 +14,10 @@ Current release/comparison evidence:
 
 - [release-v012.json](release-v012.json): v0.1.2 asset digests and platform proof.
 - [autorun-v012.json](autorun-v012.json): 30 fresh-directory released-native autoruns.
-- [compare-autorun-v012.json](compare-autorun-v012.json): fresh-cache comparison bootstrap finding.
-- [compare-init-results-v012.json](compare-init-results-v012.json): 26 provider-init failures, no applies.
 
 Canonical external records: [USER_TEST](../docs/USER_TEST.md),
 [live campaign](../evidence/live-cost-campaign-v012.json),
 [comparison results](../compare/RESULTS.md),
+[current comparison campaign](../evidence/comparison-campaign-v0110.json),
 [provider findings](../compare/PROVIDER_TEST.md).
 Superseded release/candidate notes and evidence are available in Git history.

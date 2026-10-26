@@ -1,51 +1,39 @@
-# lmcloud AWS provider probe
+# Current AWS provider verification
 
-The lmcloud equivalent path was tested with the published `lmcloud 0.1.9`
-binary, OpenTofu, a disposable `us-east-1` configuration, and no AWS
-credentials or account mutations. The configuration pinned the official AWS
-provider source `hashicorp/aws` at `5.100.0`:
+Released lmcloud **v0.1.10** resolves and installs real external providers. The
+comparison campaign downloaded the official release executable, verified it
+against release SHA256SUMS, and used AWS provider `hashicorp/aws` **5.100.0**.
+Its single-number version output also works with the installer. The former
+provider-source/version-format blockers are fixed; no additional lmcloud core
+bug was found and no lmcloud source change or patch release was needed.
 
-<https://registry.terraform.io/providers/hashicorp/aws/5.100.0>
+The shared scratch `TF_PLUGIN_CACHE_DIR` reused the approximately 676 MiB
+installed provider across independent working directories. Scripts pin v0.1.10
+for reproducibility. The provider stays external; it is not bundled in lmaws.
 
-The probe captured the return value from `tofu.init` and the host's error output
-before attempting any plan or apply. Initialization returned `false` and the
-captured error was:
+[Campaign evidence](../evidence/comparison-campaign-v0110.json) and
+[RESULTS](RESULTS.md) record 20 completed live pairs (19 read-only plus one
+bucket/object lifecycle), seven matching comparisons and 13 explicit output/
+local-state differences. Six prior denied writes were not repeated after one
+metadata-only absence recheck each; those reads do not establish create rights.
+Four IAM pairs were skipped. All observed leftovers are zero.
 
-```text
-Failed to resolve provider packages; Could not resolve hashicorp/aws: no available releases match constraints 5.100.0
-```
+Real runs exposed defects in the lmaws equivalents, now fixed: ECS
+`cluster_arns`, the service-matrix Secrets Manager/Route53 references, explicit
+all-state EC2 selection, and security-group rule data sources instead of a
+nonexistent group `ingress` attribute. Provider schema sources are pinned to
+[v5.100.0](https://github.com/hashicorp/terraform-provider-aws/tree/v5.100.0).
 
-This is recorded in the private probe evidence at
-`compare/private/probe-v019/phase-init.ok` and
-`compare/private/probe-v019/phase-init.error`. No `.terraform` provider install,
-plan, apply, or destroy was attempted after the failed initialization, and no
-AWS resource was created. This is an lmcloud/provider-resolution finding; the
-lmaws repository does not modify the lmcloud repository.
+Intermittent credential-process refresh failures occurred with the configured
+profiles and succeeded on retry. They are categorized as credential failures,
+not provider-download failures. No IAM, credential/profile edits or alternate
+identity were used. Raw logs/state remain private under ignored `compare/runs/`.
 
-Source inspection explains the path: lmcloud delegates `tofu.init` to
-OpenTofu's `command.InitCommand` (`internal/lmhost/host.go:183-199`). OpenTofu's
-implicit provider source (`cmd/tofu/provider_source.go:101-218`) first searches
-local plugin mirrors and then queries the upstream registry; lmcloud does not
-embed an AWS provider. The failure therefore occurs during provider package
-resolution, before AWS credentials or API calls are relevant. A direct registry
-version listing contains 5.100.0, so the exact registry-resolution mismatch
-remains an lmcloud/OpenTofu provider-installation finding rather than an AWS
-permission failure.
+Scope: comparisons check observed resource types/names and required ownership
+tags, example numeric outputs, end-to-end time, price-table estimates and cleanup.
+They do not establish complete AWS API parity. Missing provider list/message
+operations and native category splits remain explicit in `manifest.json`.
 
-## Fresh-cache latest-install finding
-
-An empty-directory autorun with an empty LMSCRIPT_TOOL_CACHE and lmctl/lmscript
-0.2.420 downloaded the published v0.1.9 asset, then rejected its version line:
-
-```text
-lmcloud --version printed "lmcloud 0.1.9 (opentofu 1.13.2)", which has no single version number
-```
-
-The installer requires one MAJOR.MINOR.PATCH version for @latest. This is distinct
-from the provider-resolution failure and occurs before any script effect or AWS
-call. Comparison scripts therefore pin `github:lmctl-ai/lmcloud@v0.1.9`, whose
-release checksum is still verified. They do not alter or wrap lmcloud's version
-output. To reproduce the @latest failure, autorun the comparison at commit
-9bacb7dbf8a75894db0004d88d8f02a42a6f7c6f with a fresh cache; that snapshot used
-@latest. Private bootstrap log: `/tmp/lmaws-compare-autorun-v012-07ej9fu1/private-run.log`.
-No lmcloud source was edited for either finding.
+A [fresh-directory autorun](../evidence/comparison-bootstrap-v0110.json)
+installed the exact checksum-verified release, downloaded both helpers and
+initialized/validated the real provider with live mode disabled and no AWS calls.

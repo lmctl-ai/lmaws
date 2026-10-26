@@ -1,0 +1,146 @@
+{
+  "recorded_at": 1792987840.9069226,
+  "example": "functions",
+  "run_id": "re4e13019x5fcf1014",
+  "profile": "default",
+  "region": "us-east-1",
+  "native": {
+    "schema": "lmaws-cost-v2",
+    "run_id": "rd19daef7x14dd4e58",
+    "example": "functions",
+    "region": "us-east-1",
+    "live": true,
+    "cap_usd": 0.05,
+    "hard_ceiling_usd": 0.25,
+    "total_estimated_usd": 0,
+    "reserved_future_usd": 0,
+    "price_table": {
+      "sqs.request_64kib": 4e-07,
+      "dynamodb.write_1kib": 6.25e-07,
+      "s3.write_or_list_request": 5e-06,
+      "sns.request_64kib": 5e-07,
+      "dynamodb.storage_gb_month": 0.25,
+      "s3.get_or_head_request": 4e-07,
+      "secretsmanager.api_request": 5e-06,
+      "conservative_unknown_api_request": 5e-06,
+      "s3.storage_gb_month": 0.023
+    },
+    "price_metadata": {
+      "sources": [
+        "https://aws.amazon.com/s3/pricing/",
+        "https://aws.amazon.com/sqs/pricing/",
+        "https://aws.amazon.com/sns/pricing/",
+        "https://aws.amazon.com/dynamodb/pricing/",
+        "https://aws.amazon.com/systems-manager/pricing/",
+        "https://aws.amazon.com/secrets-manager/pricing/"
+      ],
+      "price_region": "us-east-1",
+      "free_tier_credits_applied": false,
+      "month_minutes": 43200,
+      "currency": "USD",
+      "unknown_calls": "conservative $5 per million attempts",
+      "estimate_only": true,
+      "as_of": "2026-10-25"
+    },
+    "resources": [],
+    "rejected_creations": [],
+    "service_requests": {
+      "free_metadata.ListFunctions": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      },
+      "logs.DescribeLogGroups": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      }
+    },
+    "cap_refusals": 0,
+    "leftover_count": 0,
+    "provider_verification": [],
+    "sweeper_leftover_count": 0,
+    "profile": "default",
+    "estimated_cost_display": "$0.00",
+    "finished_at": "2026-10-26T04:10:14.272630785Z",
+    "status": "passed",
+    "wall_seconds": 3.736764,
+    "outputs_csv": "service,count\nfunctions,39\nlog_groups,40\n",
+    "independent_readonly_verification": [],
+    "observed_resources": []
+  },
+  "lmcloud": {
+    "engine_version": "lmcloud 0.1.10",
+    "engine_sha256": "5f284718f1c3a3c05cc076712f806e02e6e3ccb821dd6ba0196eefc77ae4549b",
+    "config_sha256": "0b3bc3e6b172c269a16f479ed5bac2b827662f0d3c403c7c03ee0b95bcfe8d9d",
+    "schema": "lmaws-tofu-ledger-v2",
+    "example": "functions",
+    "run_id": "re4e13019x5fcf1014",
+    "profile": "default",
+    "region": "us-east-1",
+    "live": true,
+    "resources": [],
+    "price_table": {
+      "s3.request_upper_bound": "0.000005",
+      "sqs.request": "4E-7",
+      "sns.request": "5E-7",
+      "dynamodb.write_1kib": "6.25E-7",
+      "ssm.standard": "0",
+      "logs.empty_group": "0"
+    },
+    "price_method": "Conservative upper bound of 500 provider/verification requests at the maximum table price, reserved before plan; not observed SDK request counts or an invoice measurement; tiny storage included",
+    "cap_usd": "0.05",
+    "request_allowance": 500,
+    "request_unit_price_usd": "0.000005",
+    "total_estimated_usd": "0.0025",
+    "leftover_count": 0,
+    "observed_resources": [],
+    "independent_readonly_verification": [],
+    "status": "passed",
+    "run_error": "",
+    "cleanup_error": "",
+    "wall_seconds": 25.390148,
+    "outputs": {
+      "comparison": {
+        "sensitive": false,
+        "value": {
+          "functions": 39,
+          "log_groups": 40
+        },
+        "type": [
+          "object",
+          {
+            "functions": "number",
+            "log_groups": "number"
+          }
+        ]
+      },
+      "estimated_cost": {
+        "sensitive": false,
+        "value": "$0.00",
+        "type": "string"
+      },
+      "example_id": {
+        "sensitive": false,
+        "value": "functions",
+        "type": "string"
+      },
+      "resource_count": {
+        "sensitive": false,
+        "value": 79,
+        "type": "number"
+      }
+    }
+  },
+  "leftover_count": 0,
+  "comparison": {
+    "resources": "same observed parent/child types, names and ownership tags after run-ID normalization",
+    "outputs": "same: functions, log_groups",
+    "why": "Matches native functions() and log_groups(). Both engines completed. ",
+    "estimated_cost_delta_usd": "0.0025",
+    "wall_delta_seconds": 21.653384
+  },
+  "analysis_version": "v0110 observed-state/output comparison"
+}

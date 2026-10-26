@@ -1,0 +1,393 @@
+{
+  "recorded_at": 1792988142.527661,
+  "example": "bucket_objects",
+  "run_id": "r6de07585xb13a2a60",
+  "profile": "lmaws",
+  "region": "us-east-1",
+  "native": {
+    "schema": "lmaws-cost-v2",
+    "run_id": "rf6ea062dx3c404db8",
+    "example": "bucket_objects",
+    "region": "us-east-1",
+    "live": true,
+    "cap_usd": 0.05,
+    "hard_ceiling_usd": 0.25,
+    "total_estimated_usd": 1.7800000000879958e-05,
+    "reserved_future_usd": 0,
+    "price_table": {
+      "sqs.request_64kib": 4e-07,
+      "dynamodb.write_1kib": 6.25e-07,
+      "s3.write_or_list_request": 5e-06,
+      "sns.request_64kib": 5e-07,
+      "dynamodb.storage_gb_month": 0.25,
+      "s3.get_or_head_request": 4e-07,
+      "secretsmanager.api_request": 5e-06,
+      "conservative_unknown_api_request": 5e-06,
+      "s3.storage_gb_month": 0.023
+    },
+    "price_metadata": {
+      "sources": [
+        "https://aws.amazon.com/s3/pricing/",
+        "https://aws.amazon.com/sqs/pricing/",
+        "https://aws.amazon.com/sns/pricing/",
+        "https://aws.amazon.com/dynamodb/pricing/",
+        "https://aws.amazon.com/systems-manager/pricing/",
+        "https://aws.amazon.com/secrets-manager/pricing/"
+      ],
+      "price_region": "us-east-1",
+      "free_tier_credits_applied": false,
+      "month_minutes": 43200,
+      "currency": "USD",
+      "unknown_calls": "conservative $5 per million attempts",
+      "estimate_only": true,
+      "as_of": "2026-10-25"
+    },
+    "resources": [
+      {
+        "kind": "bucket",
+        "id": "lmaws-rf6ea062dx3c404db8-sample",
+        "name": "lmaws-rf6ea062dx3c404db8-sample",
+        "minutes_alive": 0.0709868997,
+        "stored_bytes_upper_bound": 25,
+        "requests": {
+          "s3.HeadBucket": {
+            "billing_units": 2,
+            "requests": 2,
+            "unit_price_usd": 4e-07,
+            "estimated_usd": 8e-07
+          },
+          "s3.CreateBucket": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          },
+          "s3.PutBucketTagging": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-06,
+            "estimated_usd": 5e-06
+          },
+          "s3.GetBucketTagging": {
+            "billing_units": 4,
+            "requests": 4,
+            "unit_price_usd": 4e-07,
+            "estimated_usd": 1.6e-06
+          },
+          "s3.HeadObject": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 4e-07,
+            "estimated_usd": 4e-07
+          },
+          "s3.PutObject": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-06,
+            "estimated_usd": 5e-06
+          },
+          "s3.DeleteObject": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          },
+          "s3.ListObjectsV2": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-06,
+            "estimated_usd": 5e-06
+          },
+          "s3.DeleteBucket": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          }
+        },
+        "storage_unit_price_usd_gb_month": 0.023,
+        "request_cost_usd": 1.78e-05,
+        "storage_cost_usd": 8.79958999e-16,
+        "cost_subtotal_usd": 1.7800000000879958e-05,
+        "tags": {
+          "lmaws_test": "rf6ea062dx3c404db8"
+        }
+      }
+    ],
+    "rejected_creations": [],
+    "service_requests": {
+      "s3.HeadBucket": {
+        "billing_units": 2,
+        "requests": 2,
+        "unit_price_usd": 4e-07,
+        "estimated_usd": 8e-07
+      },
+      "s3.CreateBucket": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      },
+      "s3.PutBucketTagging": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 5e-06,
+        "estimated_usd": 5e-06
+      },
+      "s3.GetBucketTagging": {
+        "billing_units": 4,
+        "requests": 4,
+        "unit_price_usd": 4e-07,
+        "estimated_usd": 1.6e-06
+      },
+      "s3.HeadObject": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 4e-07,
+        "estimated_usd": 4e-07
+      },
+      "s3.PutObject": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 5e-06,
+        "estimated_usd": 5e-06
+      },
+      "s3.DeleteObject": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      },
+      "s3.ListObjectsV2": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 5e-06,
+        "estimated_usd": 5e-06
+      },
+      "s3.DeleteBucket": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      }
+    },
+    "cap_refusals": 0,
+    "leftover_count": 0,
+    "provider_verification": [
+      {
+        "kind": "bucket",
+        "name": "lmaws-rf6ea062dx3c404db8-sample",
+        "absent": true
+      }
+    ],
+    "sweeper_leftover_count": 0,
+    "profile": "lmaws",
+    "estimated_cost_display": "$0.00001781",
+    "finished_at": "2026-10-26T04:15:00.045235410Z",
+    "example_exit_code": 0,
+    "status": "passed",
+    "wall_seconds": 4.716031,
+    "outputs_csv": "phase,count\ncreated,1\nobjects,1\ncleaned,0\n",
+    "independent_readonly_verification": [
+      {
+        "kind": "bucket",
+        "name": "lmaws-rf6ea062dx3c404db8-sample",
+        "absent": true,
+        "profile": "default",
+        "region": "us-east-1",
+        "requests": 1,
+        "unit_price_usd": "4E-7",
+        "estimated_usd": "4E-7"
+      }
+    ],
+    "observed_resources": [
+      {
+        "kind": "bucket",
+        "id": "lmaws-rf6ea062dx3c404db8-sample",
+        "name": "lmaws-rf6ea062dx3c404db8-sample",
+        "minutes_alive": 0.0709868997,
+        "stored_bytes_upper_bound": 25,
+        "requests": {
+          "s3.HeadBucket": {
+            "billing_units": 2,
+            "requests": 2,
+            "unit_price_usd": 4e-07,
+            "estimated_usd": 8e-07
+          },
+          "s3.CreateBucket": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          },
+          "s3.PutBucketTagging": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-06,
+            "estimated_usd": 5e-06
+          },
+          "s3.GetBucketTagging": {
+            "billing_units": 4,
+            "requests": 4,
+            "unit_price_usd": 4e-07,
+            "estimated_usd": 1.6e-06
+          },
+          "s3.HeadObject": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 4e-07,
+            "estimated_usd": 4e-07
+          },
+          "s3.PutObject": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-06,
+            "estimated_usd": 5e-06
+          },
+          "s3.DeleteObject": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          },
+          "s3.ListObjectsV2": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 5e-06,
+            "estimated_usd": 5e-06
+          },
+          "s3.DeleteBucket": {
+            "billing_units": 1,
+            "requests": 1,
+            "unit_price_usd": 0,
+            "estimated_usd": 0
+          }
+        },
+        "storage_unit_price_usd_gb_month": 0.023,
+        "request_cost_usd": 1.78e-05,
+        "storage_cost_usd": 8.79958999e-16,
+        "cost_subtotal_usd": 1.7800000000879958e-05,
+        "tags": {
+          "lmaws_test": "rf6ea062dx3c404db8"
+        }
+      },
+      {
+        "kind": "aws_s3_object",
+        "name": "tiny.txt",
+        "parent": "lmaws-rf6ea062dx3c404db8-sample",
+        "tags": {}
+      }
+    ]
+  },
+  "lmcloud": {
+    "engine_version": "lmcloud 0.1.10",
+    "engine_sha256": "5f284718f1c3a3c05cc076712f806e02e6e3ccb821dd6ba0196eefc77ae4549b",
+    "config_sha256": "af45b665b74d67767d4eeac9d25883062723c13e82b243e8e6a9129245ccaf05",
+    "schema": "lmaws-tofu-ledger-v2",
+    "example": "bucket_objects",
+    "run_id": "r6de07585xb13a2a60",
+    "profile": "lmaws",
+    "region": "us-east-1",
+    "live": true,
+    "resources": [
+      {
+        "kind": "bucket",
+        "name": "lmaws-r6de07585xb13a2a60-sample",
+        "tags": {
+          "lmaws_test": "r6de07585xb13a2a60"
+        },
+        "request_unit_price_usd_upper_bound": "0.000005",
+        "request_allowance": 500,
+        "minutes_alive_upper_bound": "0.6282371519667019"
+      }
+    ],
+    "price_table": {
+      "s3.request_upper_bound": "0.000005",
+      "sqs.request": "4E-7",
+      "sns.request": "5E-7",
+      "dynamodb.write_1kib": "6.25E-7",
+      "ssm.standard": "0",
+      "logs.empty_group": "0"
+    },
+    "price_method": "Conservative upper bound of 500 provider/verification requests at the maximum table price, reserved before plan; not observed SDK request counts or an invoice measurement; tiny storage included",
+    "cap_usd": "0.049981799999999120042",
+    "request_allowance": 500,
+    "request_unit_price_usd": "0.000005",
+    "total_estimated_usd": "0.0025",
+    "leftover_count": 0,
+    "preflight_absence": [
+      {
+        "kind": "bucket",
+        "name": "lmaws-r6de07585xb13a2a60-sample",
+        "absent": true,
+        "profile": "default",
+        "region": "us-east-1",
+        "requests": 1,
+        "unit_price_usd": "4E-7",
+        "estimated_usd": "4E-7"
+      }
+    ],
+    "observed_resources": [
+      {
+        "kind": "bucket",
+        "provider_type": "aws_s3_bucket",
+        "name": "lmaws-r6de07585xb13a2a60-sample",
+        "parent": "",
+        "tags": {
+          "lmaws_test": "r6de07585xb13a2a60"
+        },
+        "address": "aws_s3_bucket.bucket"
+      },
+      {
+        "kind": "aws_s3_object",
+        "provider_type": "aws_s3_object",
+        "name": "tiny.txt",
+        "parent": "lmaws-r6de07585xb13a2a60-sample",
+        "tags": {},
+        "address": "aws_s3_object.object"
+      }
+    ],
+    "independent_readonly_verification": [
+      {
+        "kind": "bucket",
+        "name": "lmaws-r6de07585xb13a2a60-sample",
+        "absent": true,
+        "profile": "default",
+        "region": "us-east-1",
+        "requests": 1,
+        "unit_price_usd": "4E-7",
+        "estimated_usd": "4E-7"
+      }
+    ],
+    "status": "passed",
+    "run_error": "",
+    "cleanup_error": "",
+    "wall_seconds": 37.69424,
+    "outputs": {
+      "estimated_cost": {
+        "sensitive": false,
+        "value": "$0.0001",
+        "type": "string"
+      },
+      "example_id": {
+        "sensitive": false,
+        "value": "bucket_objects",
+        "type": "string"
+      },
+      "resource_count": {
+        "sensitive": false,
+        "value": "2",
+        "type": "string"
+      }
+    }
+  },
+  "leftover_count": 0,
+  "comparison": {
+    "resources": "same observed parent/child types, names and ownership tags after run-ID normalization",
+    "outputs": "same: cleaned, created, objects",
+    "why": "Tiny object content matches native. Both engines completed. ",
+    "estimated_cost_delta_usd": "0.002482199999999120042",
+    "wall_delta_seconds": 32.978209
+  },
+  "analysis_version": "v0110 observed-state/output comparison"
+}

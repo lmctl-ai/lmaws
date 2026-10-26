@@ -1,12 +1,13 @@
 # Local AWS-agent test procedure (v0.1.2)
 
-READY FOR USER TEST, with known authorization and lmcloud provider-resolution findings.
-Twenty examples have passed live (19 read-only plus S3 bucket/object); six native
-write/lifecycle creations were denied. The four IAM-dependent examples are
-**estimated, not measured live**, and must be skipped with these federated profiles.
-The 26 attempted lmcloud comparisons could not initialize AWS provider 5.100.0
-with lmcloud 0.1.9; no OpenTofu apply ran. See [per-example results](../compare/RESULTS.md)
-and [the provider finding](../compare/PROVIDER_TEST.md). No lmcloud source was edited.
+READY FOR USER TEST. All 19 read-only and the bucket/object native/lmcloud pairs
+completed live using lmcloud v0.1.10 and AWS provider 5.100.0: seven comparisons
+match, 13 retain explicit output or local-state differences. Six previously denied
+write/lifecycle examples remain not comparable; one metadata read per prior failure
+confirmed absence without proving create permission. Four IAM examples remain
+estimated only and must be skipped. No lmcloud core patch was needed.
+See [RESULTS](../compare/RESULTS.md), [campaign costs](../evidence/comparison-campaign-v0110.json)
+and [independent cleanup proof](../evidence/comparison-cleanup-v0110.json).
 
 Use lmctl/lmscript >=0.2.420. Native autoruns need no Java. Comparison autoruns also
 need Python 3, curl and AWS CLI for ledgers and independent metadata-only checks.
@@ -39,6 +40,10 @@ to the existing lmaws role; no IAM write permissions are needed by these example
 | DynamoDB | `dynamodb:CreateTable`, `dynamodb:TagResource`, `dynamodb:DescribeTable`, `dynamodb:ListTagsOfResource`, `dynamodb:PutItem`, `dynamodb:DeleteTable` | `arn:aws:dynamodb:us-east-1:<account>:table/lmaws_*` |
 | SNS | `sns:CreateTopic`, `sns:TagResource`, `sns:ListTagsForResource`, `sns:GetTopicAttributes`, `sns:Publish`, `sns:DeleteTopic` | `arn:aws:sns:us-east-1:<account>:lmaws_*` |
 | CloudWatch Logs | `logs:CreateLogGroup`, `logs:TagResource`, `logs:TagLogGroup`, `logs:ListTagsLogGroup`, `logs:PutRetentionPolicy`, `logs:DeleteLogGroup` | `arn:aws:logs:us-east-1:<account>:log-group:lmaws_*` and its `:*` form where required by the action |
+
+The action table describes native SDK requests. The external AWS provider performs
+its own metadata reads; the existing lmaws profile completed the recorded
+bucket/object comparison.
 
 Use your account in `<account>`. Where supported, require the creation request tag
 `aws:RequestTag/lmaws_test` and restrict tag keys to `lmaws_test`; authorize later
@@ -111,11 +116,15 @@ A repository checkout can enforce the aggregate campaign budget and skip IAM:
 
 ```sh
 # Install/download the v0.1.2 platform executable into target/lmaws, verify SHA256SUMS.
-LMAWS_LIVE=1 python3 scripts/test-live-examples.py --host target/lmaws --write-only
-# Run exactly one native/lmcloud comparison; reuse native evidence to avoid a second creation:
-LMAWS_LIVE=1 AWS_PROFILE=lmaws AWS_REGION=us-east-1 timeout 900 compare/run.sh bucket_objects \
+LMAWS_LIVE=1 AWS_PROFILE=lmaws python3 scripts/test-live-examples.py --host target/lmaws --example bucket_objects
+# Reuse the successful native proof to avoid repeating its creation.
+# Other six write examples remain skipped until the owner establishes create permission.
+export TF_PLUGIN_CACHE_DIR="${TMPDIR:-/tmp}/lmaws-provider-cache"
+mkdir -p "$TF_PLUGIN_CACHE_DIR"
+# Run exactly one native/lmcloud comparison:
+LMAWS_LIVE=1 AWS_PROFILE=lmaws AWS_REGION=us-east-1 timeout 1050 compare/run.sh bucket_objects \
   --native-evidence evidence/live-cost-bucket_objects-<run-id>.json
-LMAWS_LIVE=1 AWS_PROFILE=default AWS_REGION=us-east-1 timeout 900 compare/run.sh inventory
+LMAWS_LIVE=1 AWS_PROFILE=default AWS_REGION=us-east-1 timeout 1050 compare/run.sh inventory
 ```
 
 All 30 direct comparison URLs are beside their native examples in README. Example:
@@ -132,7 +141,10 @@ private state, always attempt destroy after apply (including failure), and verif
 absence using default. OpenTofu's request counts are not exposed by lmcloud; its
 cost ledger therefore reserves a conservative 500-request upper allowance ($0.0025),
 including tiny storage. This is explicitly an allowance, not measured SDK traffic.
-The current resolver failure occurs before apply, so its estimate and creations are zero.
+Reserve this upper allowance before plan for both metadata reads and writes.
+The successful campaign created one SDK bucket/object and one provider bucket/object;
+all were deleted. Total conservative campaign accounting, including retries and
+independent checks, was $0.05754170 (native $0.00004000; provider upper bound $0.0575).
 
 ## Sweep and evidence
 
@@ -149,11 +161,13 @@ python3 compare/sweep.py --older-than-hours 0
 Require `leftover_count=0`, `sweeper_leftover_count=0`, and `absent:true` in independent
 default-profile checks. A denied/unknown/network response is never absence. Preserve
 failed comparison state under ignored `compare/runs/`; do not delete it before resolving
-cleanup. No automated sweeper deletes resources. The completed v0.1.2 campaign
-created one bucket and a tiny object, deleted both, and found zero leftovers.
-Estimated campaign total: $0.00004640 (native SDK calls/storage plus independent
-checks). Prices vary by region and time; no Cost Explorer request was made.
+cleanup. No automated sweeper deletes resources. The current comparison campaign
+created one SDK bucket/object and one provider bucket/object; all were independently
+verified absent. Its conservative total was $0.05754170, including retries and
+metadata checks. Prices vary by region and time; no Cost Explorer request was made.
 
-Comparison scripts pin lmcloud v0.1.9 to work around its ambiguous two-version `--version` line, which the @latest installer rejects. Checksums remain verified. The separate provider-resolution finding still blocks plan/apply; see compare/PROVIDER_TEST.md (or PROVIDER_TEST.md within compare).
-
-The compiler uses an existing PATH binary before its tool cache. Remove an older `lmaws` from PATH or replace it with v0.1.2 before testing; a fresh cache alone does not override PATH. The checkout comparison harness accepts `--lmcloud /absolute/path/to/a/fixed/lmcloud` when the other project publishes a fix, while preserving the same profiles, ledgers, caps and teardown.
+Comparison scripts pin lmcloud v0.1.10 for reproducibility. Its provider installer
+and single-number version output work; the former v0.1.9 blockers are resolved.
+Set a scratch `TF_PLUGIN_CACHE_DIR` before comparisons to reuse the ~676 MiB
+provider. Results describe observed resources and selected numeric outputs,
+not complete API parity. No cloud credentials or OIDC belong in public CI.

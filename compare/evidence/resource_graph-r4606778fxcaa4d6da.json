@@ -1,0 +1,159 @@
+{
+  "recorded_at": 1792987505.6892478,
+  "example": "resource_graph",
+  "run_id": "r4606778fxcaa4d6da",
+  "profile": "default",
+  "region": "us-east-1",
+  "native": {
+    "schema": "lmaws-cost-v2",
+    "run_id": "r917f8ae7x84e84792",
+    "example": "resource_graph",
+    "region": "us-east-1",
+    "live": true,
+    "cap_usd": 0.05,
+    "hard_ceiling_usd": 0.25,
+    "total_estimated_usd": 4e-07,
+    "reserved_future_usd": 0,
+    "price_table": {
+      "sqs.request_64kib": 4e-07,
+      "dynamodb.write_1kib": 6.25e-07,
+      "s3.write_or_list_request": 5e-06,
+      "sns.request_64kib": 5e-07,
+      "dynamodb.storage_gb_month": 0.25,
+      "s3.get_or_head_request": 4e-07,
+      "secretsmanager.api_request": 5e-06,
+      "conservative_unknown_api_request": 5e-06,
+      "s3.storage_gb_month": 0.023
+    },
+    "price_metadata": {
+      "sources": [
+        "https://aws.amazon.com/s3/pricing/",
+        "https://aws.amazon.com/sqs/pricing/",
+        "https://aws.amazon.com/sns/pricing/",
+        "https://aws.amazon.com/dynamodb/pricing/",
+        "https://aws.amazon.com/systems-manager/pricing/",
+        "https://aws.amazon.com/secrets-manager/pricing/"
+      ],
+      "price_region": "us-east-1",
+      "free_tier_credits_applied": false,
+      "month_minutes": 43200,
+      "currency": "USD",
+      "unknown_calls": "conservative $5 per million attempts",
+      "estimate_only": true,
+      "as_of": "2026-10-25"
+    },
+    "resources": [],
+    "rejected_creations": [],
+    "service_requests": {
+      "s3.ListBuckets": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      },
+      "sqs.ListQueues": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 4e-07,
+        "estimated_usd": 4e-07
+      },
+      "free_metadata.ListFunctions": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      }
+    },
+    "cap_refusals": 0,
+    "leftover_count": 0,
+    "provider_verification": [],
+    "sweeper_leftover_count": 0,
+    "profile": "default",
+    "estimated_cost_display": "$0.00",
+    "finished_at": "2026-10-26T04:04:36.819716117Z",
+    "status": "passed",
+    "wall_seconds": 5.120974,
+    "outputs_count": "stores=89, queues=6, functions=39",
+    "independent_readonly_verification": [],
+    "observed_resources": []
+  },
+  "lmcloud": {
+    "engine_version": "lmcloud 0.1.10",
+    "engine_sha256": "5f284718f1c3a3c05cc076712f806e02e6e3ccb821dd6ba0196eefc77ae4549b",
+    "config_sha256": "3307f86b49304e6cdb82528e8c2be455e2f9ee7a2a12bdd37bd69efd066fcdbf",
+    "schema": "lmaws-tofu-ledger-v2",
+    "example": "resource_graph",
+    "run_id": "r4606778fxcaa4d6da",
+    "profile": "default",
+    "region": "us-east-1",
+    "live": true,
+    "resources": [],
+    "price_table": {
+      "s3.request_upper_bound": "0.000005",
+      "sqs.request": "4E-7",
+      "sns.request": "5E-7",
+      "dynamodb.write_1kib": "6.25E-7",
+      "ssm.standard": "0",
+      "logs.empty_group": "0"
+    },
+    "price_method": "Conservative upper bound of 500 provider/verification requests at the maximum table price, reserved before plan; not observed SDK request counts or an invoice measurement; tiny storage included",
+    "cap_usd": "0.0499996",
+    "request_allowance": 500,
+    "request_unit_price_usd": "0.000005",
+    "total_estimated_usd": "0.0025",
+    "leftover_count": 0,
+    "observed_resources": [],
+    "independent_readonly_verification": [],
+    "status": "passed",
+    "run_error": "",
+    "cleanup_error": "",
+    "wall_seconds": 27.641472,
+    "outputs": {
+      "comparison": {
+        "sensitive": false,
+        "value": {
+          "buckets": null,
+          "functions": 39,
+          "queues": 6
+        },
+        "type": [
+          "object",
+          {
+            "buckets": "dynamic",
+            "functions": "number",
+            "queues": "number"
+          }
+        ]
+      },
+      "comparison_note": {
+        "sensitive": false,
+        "value": "AWS provider 5.100.0 lacks an S3 bucket inventory data source; Lambda/SQS graph inputs are represented.",
+        "type": "string"
+      },
+      "estimated_cost": {
+        "sensitive": false,
+        "value": "$0.00",
+        "type": "string"
+      },
+      "example_id": {
+        "sensitive": false,
+        "value": "resource_graph",
+        "type": "string"
+      },
+      "resource_count": {
+        "sensitive": false,
+        "value": 45,
+        "type": "number"
+      }
+    }
+  },
+  "leftover_count": 0,
+  "comparison": {
+    "resources": "same observed parent/child types, names and ownership tags after run-ID normalization",
+    "outputs": "same supported fields; unsupported native fields: buckets",
+    "why": "aws_lambda_functions+aws_sqs_queues; S3 inventory unsupported Unsupported list APIs in AWS provider 5.100.0: buckets. Both engines completed. ",
+    "estimated_cost_delta_usd": "0.0024996",
+    "wall_delta_seconds": 22.520498
+  },
+  "analysis_version": "v0110 observed-state/output comparison"
+}

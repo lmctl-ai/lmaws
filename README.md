@@ -67,9 +67,24 @@ Each ledger refuses the next creation above the example cap of $0.05 or the whol
 
 Profiles: `default` is READ-ONLY; **only `AWS_PROFILE=lmaws` may mutate**, in `us-east-1`. The host rejects real create/update/delete calls under any other active profile. No OIDC, IAM edits, credential/profile edits or alternate identity are used. Denied requests can still have a request-price estimate; their evidence retains the actual failure and unrounded estimate.
 
-The current campaign estimated total, including both independent deletion-check passes, is **$0.00004640**, with one S3 bucket and its tiny object created and deleted and **zero leftovers**. This is price-table accounting from observed native SDK requests and lifetimes, not an AWS invoice measurement. See [live campaign evidence](evidence/live-cost-campaign-v012.json).
+The native v0.1.2 baseline campaign estimated total, including both independent deletion-check passes, was **$0.00004640**, with one S3 bucket and its tiny object created and deleted and **zero leftovers**. This is price-table accounting from observed native SDK requests and lifetimes, not an AWS invoice measurement. See [live campaign evidence](evidence/live-cost-campaign-v012.json).
 
-All 30 examples also have [lmcloud/OpenTofu comparisons](compare/RESULTS.md), with small AWS-provider `.tf` files and autorunnable `.lms` scripts. All 26 non-IAM comparisons attempted provider initialization with published lmcloud v0.1.9; every attempt was blocked by its AWS-provider resolution failure, so no OpenTofu apply ran and no OpenTofu AWS resources were created. The [finding and reproduction](compare/PROVIDER_TEST.md) check `tofu.init`'s boolean and `tofu.last_error`, rather than treating process exit zero as success. The four IAM comparisons are skipped. Unsupported declarative inventory/message operations are explicit differences in the manifest, not substitute data.
+All 30 examples have [lmcloud/OpenTofu equivalents and results](compare/RESULTS.md).
+With released **lmcloud v0.1.10** and AWS provider 5.100.0, all **19 read-only pairs
+and the bucket/object pair completed live**: **7 matching comparisons and 13
+explicit differences** in supported outputs or local-state semantics. Six prior
+denied write cases remain not comparable; four IAM cases are skipped. The SDK
+and OpenTofu each created one run-owned bucket and tiny object; all were deleted
+and independently verified absent with `default`. There are **zero leftovers**.
+
+The [new comparison campaign](evidence/comparison-campaign-v0110.json) records
+native estimates of about **$0.00004000** across all attempts and a provider
+request **upper bound of $0.0575**, including retries. Total conservative campaign
+accounting is **$0.05754170**, below the $0.25 cap. Provider SDK request counts are
+opaque, so its 500-request/$0.0025 per-attempt allowance is reserved before plan;
+it is **not a measured AWS charge**. Timings in RESULTS include native rendering
+and multiple provider phases with a shared warm plugin cache. See the
+[current provider notes](compare/PROVIDER_TEST.md) and [cleanup proof](evidence/comparison-cleanup-v0110.json).
 
 The unmeasured write estimates are planning allowances: $0.0001 for tiny DynamoDB, SQS and SNS flows; Standard SSM and empty log-group/retention flows use $0.00 table pricing. Per-run ledgers include preflight/tag/verification requests, retries and storage. Prices vary by region and time. [Local test steps and permissions](docs/USER_TEST.md).
 

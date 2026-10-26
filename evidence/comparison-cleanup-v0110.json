@@ -1,0 +1,14 @@
+{
+  "profile": "default",
+  "names_checked": [
+    "lmaws-rf6ea062dx3c404db8-sample",
+    "lmaws-r6de07585xb13a2a60-sample"
+  ],
+  "matching_buckets": 0,
+  "sdk_and_provider_head_checks": true,
+  "sdk_ledger_directories_swept": 25,
+  "sdk_sweeper_leftovers": 0,
+  "provider_state_sweeper_leftovers": 0,
+  "leftover_count": 0,
+  "no_deletion_from_sweeper": true
+}

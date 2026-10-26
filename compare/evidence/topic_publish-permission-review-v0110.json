@@ -1,0 +1,37 @@
+{
+  "recorded_at": 1792988096.5778122,
+  "example": "topic_publish",
+  "run_id": "permission-review-v0110",
+  "profile": "lmaws",
+  "native": {
+    "status": "prior_denied",
+    "total_estimated_usd": "0",
+    "leftover_count": 0,
+    "prior_denied_action": "SNS:CreateTopic",
+    "prior_evidence": "evidence/live-cost-topic_publish-r029fc100xaf7547ef.json"
+  },
+  "lmcloud": {
+    "status": "not_attempted",
+    "total_estimated_usd": "0",
+    "leftover_count": 0,
+    "engine_version": "lmcloud 0.1.10 (not invoked for this write)"
+  },
+  "leftover_count": 0,
+  "read_only_recheck": [
+    {
+      "kind": "topic",
+      "name": "lmaws_r029fc100xaf7547ef_sample",
+      "absent": true,
+      "profile": "default",
+      "region": "us-east-1",
+      "requests": 1,
+      "unit_price_usd": "5E-7",
+      "estimated_usd": "5E-7"
+    }
+  ],
+  "comparison": {
+    "resources": "not comparable: no new creation attempted",
+    "outputs": "not comparable: full lifecycle estimated only",
+    "why": "Prior lmaws-profile creation denied; one metadata read reconfirmed absence. A read does not establish create permission; no write was repeated."
+  }
+}

@@ -1,0 +1,158 @@
+{
+  "recorded_at": 1792987215.6779501,
+  "example": "buckets",
+  "run_id": "ra3fdb031xadea1b4f",
+  "profile": "default",
+  "region": "us-east-1",
+  "native": {
+    "schema": "lmaws-cost-v2",
+    "run_id": "r2bed6d13x137f4a8b",
+    "example": "buckets",
+    "region": "us-east-1",
+    "live": true,
+    "cap_usd": 0.05,
+    "hard_ceiling_usd": 0.25,
+    "total_estimated_usd": 0,
+    "reserved_future_usd": 0,
+    "price_table": {
+      "sqs.request_64kib": 4e-07,
+      "dynamodb.write_1kib": 6.25e-07,
+      "s3.write_or_list_request": 5e-06,
+      "sns.request_64kib": 5e-07,
+      "dynamodb.storage_gb_month": 0.25,
+      "s3.get_or_head_request": 4e-07,
+      "secretsmanager.api_request": 5e-06,
+      "conservative_unknown_api_request": 5e-06,
+      "s3.storage_gb_month": 0.023
+    },
+    "price_metadata": {
+      "sources": [
+        "https://aws.amazon.com/s3/pricing/",
+        "https://aws.amazon.com/sqs/pricing/",
+        "https://aws.amazon.com/sns/pricing/",
+        "https://aws.amazon.com/dynamodb/pricing/",
+        "https://aws.amazon.com/systems-manager/pricing/",
+        "https://aws.amazon.com/secrets-manager/pricing/"
+      ],
+      "price_region": "us-east-1",
+      "free_tier_credits_applied": false,
+      "month_minutes": 43200,
+      "currency": "USD",
+      "unknown_calls": "conservative $5 per million attempts",
+      "estimate_only": true,
+      "as_of": "2026-10-25"
+    },
+    "resources": [],
+    "rejected_creations": [],
+    "service_requests": {
+      "s3.ListBuckets": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      },
+      "dynamodb.ListTables": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      },
+      "ssm.DescribeParameters": {
+        "billing_units": 1,
+        "requests": 1,
+        "unit_price_usd": 0,
+        "estimated_usd": 0
+      }
+    },
+    "cap_refusals": 0,
+    "leftover_count": 0,
+    "provider_verification": [],
+    "sweeper_leftover_count": 0,
+    "profile": "default",
+    "estimated_cost_display": "$0.00",
+    "finished_at": "2026-10-26T03:59:47.482708774Z",
+    "status": "passed",
+    "wall_seconds": 6.204635,
+    "outputs_csv": "service,count\nbuckets,89\ntables,42\nparameters,2\n",
+    "independent_readonly_verification": []
+  },
+  "lmcloud": {
+    "engine_version": "lmcloud 0.1.10",
+    "engine_sha256": "5f284718f1c3a3c05cc076712f806e02e6e3ccb821dd6ba0196eefc77ae4549b",
+    "config_sha256": "97ee488754f3036313686b6519bfa1802e2c298a9f2bf9052210439abfe7edd8",
+    "schema": "lmaws-tofu-ledger-v2",
+    "example": "buckets",
+    "run_id": "ra3fdb031xadea1b4f",
+    "profile": "default",
+    "region": "us-east-1",
+    "live": true,
+    "resources": [],
+    "price_table": {
+      "s3.request_upper_bound": "0.000005",
+      "sqs.request": "4E-7",
+      "sns.request": "5E-7",
+      "dynamodb.write_1kib": "6.25E-7",
+      "ssm.standard": "0",
+      "logs.empty_group": "0"
+    },
+    "price_method": "Conservative upper bound of 500 provider/verification requests at the maximum table price, reserved before plan; not observed SDK request counts or an invoice measurement; tiny storage included",
+    "cap_usd": "0.05",
+    "request_allowance": 500,
+    "request_unit_price_usd": "0.000005",
+    "total_estimated_usd": "0.0025",
+    "leftover_count": 0,
+    "observed_resources": [],
+    "independent_readonly_verification": [],
+    "status": "passed",
+    "run_error": "",
+    "cleanup_error": "",
+    "wall_seconds": 26.963533,
+    "outputs": {
+      "comparison": {
+        "sensitive": false,
+        "value": {
+          "buckets": null,
+          "parameters": null,
+          "tables": 42
+        },
+        "type": [
+          "object",
+          {
+            "buckets": "dynamic",
+            "parameters": "dynamic",
+            "tables": "number"
+          }
+        ]
+      },
+      "comparison_note": {
+        "sensitive": false,
+        "value": "AWS provider 5.100.0 has no aws_s3_buckets or SSM parameter-list data source; only DynamoDB portion is represented.",
+        "type": "string"
+      },
+      "estimated_cost": {
+        "sensitive": false,
+        "value": "$0.00",
+        "type": "string"
+      },
+      "example_id": {
+        "sensitive": false,
+        "value": "buckets",
+        "type": "string"
+      },
+      "resource_count": {
+        "sensitive": false,
+        "value": 42,
+        "type": "number"
+      }
+    }
+  },
+  "leftover_count": 0,
+  "comparison": {
+    "resources": "same observed parent/child types, names and ownership tags after run-ID normalization",
+    "outputs": "same supported fields; unsupported native fields: buckets, parameters",
+    "why": "aws_dynamodb_tables only; provider 5.100.0 has no aws_s3_buckets or SSM list data source Unsupported list APIs in AWS provider 5.100.0: buckets, parameters. Both engines completed. ",
+    "estimated_cost_delta_usd": "0.0025",
+    "wall_delta_seconds": 20.758898
+  },
+  "analysis_version": "v0110 observed-state/output comparison"
+}

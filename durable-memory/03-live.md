@@ -8,7 +8,7 @@ only `AWS_PROFILE=lmaws` may mutate, in us-east-1, with `LMAWS_LIVE=1`.
 Independent deletion checks use default metadata calls. IAM examples are skipped
 with the configured federated profiles; do not try to repair their access here.
 
-Current evidence is [the campaign record](../evidence/live-cost-campaign-v012.json)
+The native v0.1.2 baseline is [the campaign record](../evidence/live-cost-campaign-v012.json)
 and [per-example comparison results](../compare/RESULTS.md):
 
 - Nineteen read-only examples passed live and display estimated cost `$0.00`.
@@ -22,7 +22,7 @@ and [per-example comparison results](../compare/RESULTS.md):
 - Four IAM-dependent examples (`identity`, `read_only_audit`, `roles`,
   `service_matrix`) were skipped and remain estimated only.
 
-Campaign price-table estimate: `$0.00004640`, including independent verification
+Native baseline price-table estimate: `$0.00004640`, including independent verification
 passes. All recorded leftovers are zero. This is estimated cost from measured
 activity, not an AWS invoice; do not sum older/overlapping campaign snapshots.
 
@@ -33,3 +33,9 @@ absence independently, and fold both sweepers. Authorization errors never prove
 absence. Reuse completed native evidence for comparisons to avoid repeating
 writes. The legacy `scripts/test-live.py` hardcodes default-profile writes and is
 incompatible with the current guard; do not use it. Updating/removing it is open.
+
+The current comparison campaign reran all 19 read-only cases and bucket/object
+successfully on both engines with zero leftovers. Its seven matching/13 partial
+or semantic differences, provider bounds and retries are recorded in
+[06-comparisons.md](06-comparisons.md); do not combine its totals with the older
+native baseline. The six denied write cases remain unmeasured for full lifecycles.

@@ -1,0 +1,19 @@
+{
+  "recorded_at": 1792988096.6267111,
+  "example": "identity",
+  "run_id": "r4dc24195xc20f695c",
+  "native": {
+    "status": "estimated_only",
+    "total_estimated_usd": "0.00"
+  },
+  "lmcloud": {
+    "status": "estimated_only",
+    "total_estimated_usd": "0.00"
+  },
+  "leftover_count": 0,
+  "comparison": {
+    "why": "IAM live calls intentionally skipped under federated profiles",
+    "resources": "no creations",
+    "outputs": "estimated, not measured live"
+  }
+}

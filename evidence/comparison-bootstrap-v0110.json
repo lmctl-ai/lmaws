@@ -1,0 +1,13 @@
+{
+  "source_url": "https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/instances/instances.lms",
+  "empty_working_directory": true,
+  "initially_empty_tool_cache": true,
+  "lmcloud_version": "lmcloud 0.1.10",
+  "release_binary_sha256": "5f284718f1c3a3c05cc076712f806e02e6e3ccb821dd6ba0196eefc77ae4549b",
+  "downloaded_helpers": true,
+  "real_external_provider_init": true,
+  "status": "validated_offline",
+  "live": false,
+  "aws_api_calls": 0,
+  "leftover_count": 0
+}

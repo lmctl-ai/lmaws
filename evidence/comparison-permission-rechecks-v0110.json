@@ -1,0 +1,130 @@
+{
+  "recorded_at": 1792986840.6510246,
+  "profile": "default",
+  "mutation_profile": "lmaws",
+  "checks": [
+    {
+      "example": "before_after",
+      "prior_denied_action": "sqs:createqueue",
+      "prior_error": "AWS AccessDenied (HTTP 403)",
+      "read_only_recheck": [
+        {
+          "kind": "queue",
+          "name": "lmaws_rbdc6ba65x7c954c29_audit",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "4E-7",
+          "estimated_usd": "4E-7"
+        }
+      ],
+      "write_authorization": "not established by read-only absence check; prior creation remains denied, not retried",
+      "status": "not_comparable",
+      "leftover_count": 0
+    },
+    {
+      "example": "queue_pipeline",
+      "prior_denied_action": "sqs:createqueue",
+      "prior_error": "AWS AccessDenied (HTTP 403)",
+      "read_only_recheck": [
+        {
+          "kind": "queue",
+          "name": "lmaws_rce9f92f3x380f4c5b_pipeline",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "4E-7",
+          "estimated_usd": "4E-7"
+        }
+      ],
+      "write_authorization": "not established by read-only absence check; prior creation remains denied, not retried",
+      "status": "not_comparable",
+      "leftover_count": 0
+    },
+    {
+      "example": "sandbox_lifecycle",
+      "prior_denied_action": "ssm:PutParameter",
+      "prior_error": "AWS AccessDeniedException (HTTP 400)",
+      "read_only_recheck": [
+        {
+          "kind": "parameter",
+          "name": "lmaws_rffb90e63xfdae4c4f_lifecycle",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "0",
+          "estimated_usd": "0"
+        }
+      ],
+      "write_authorization": "not established by read-only absence check; prior creation remains denied, not retried",
+      "status": "not_comparable",
+      "leftover_count": 0
+    },
+    {
+      "example": "table_items",
+      "prior_denied_action": "dynamodb:CreateTable",
+      "prior_error": "AWS AccessDeniedException (HTTP 400)",
+      "read_only_recheck": [
+        {
+          "kind": "table",
+          "name": "lmaws_r17e966f5x266c49b8_sample",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "0",
+          "estimated_usd": "0"
+        }
+      ],
+      "write_authorization": "not established by read-only absence check; prior creation remains denied, not retried",
+      "status": "not_comparable",
+      "leftover_count": 0
+    },
+    {
+      "example": "topic_publish",
+      "prior_denied_action": "SNS:CreateTopic",
+      "prior_error": "AWS AuthorizationError (HTTP 403)",
+      "read_only_recheck": [
+        {
+          "kind": "topic",
+          "name": "lmaws_r029fc100xaf7547ef_sample",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "5E-7",
+          "estimated_usd": "5E-7"
+        }
+      ],
+      "write_authorization": "not established by read-only absence check; prior creation remains denied, not retried",
+      "status": "not_comparable",
+      "leftover_count": 0
+    },
+    {
+      "example": "log_retention",
+      "prior_denied_action": "logs:CreateLogGroup",
+      "prior_error": "AWS AccessDeniedException (HTTP 400)",
+      "read_only_recheck": [
+        {
+          "kind": "log_group",
+          "name": "lmaws_rec0ae345x879b4c7e_sample",
+          "absent": true,
+          "profile": "default",
+          "region": "us-east-1",
+          "requests": 1,
+          "unit_price_usd": "0",
+          "estimated_usd": "0"
+        }
+      ],
+      "write_authorization": "not established by read-only absence check; prior creation remains denied, not retried",
+      "status": "not_comparable",
+      "leftover_count": 0
+    }
+  ],
+  "total_estimated_usd": "0.0000013",
+  "leftover_count": 0,
+  "no_new_creations": true
+}

@@ -20,8 +20,9 @@ Genuinely open items:
 
 - User-side write permissions for the six denied examples; full lifecycle live
   success has not been demonstrated. Four IAM examples remain skipped/estimated.
-- lmcloud provider initialization and latest-version parsing findings, and
-  incomplete AWS-provider API parity; see [comparisons](06-comparisons.md).
+- Incomplete AWS-provider list/message/category parity and opaque provider
+  request accounting; see [comparisons](06-comparisons.md). Provider init/version
+  blockers are resolved in lmcloud v0.1.10.
 - Replace/remove `scripts/test-live.py`, whose legacy default-profile write smoke
   conflicts with the current lmaws-only mutation policy. Use USER_TEST instead.
 - Any service expansion must preserve name/tag/ledger ownership, explicit profile
