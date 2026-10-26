@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the real AWS SDK transport against a loopback-only fake service."""
-import http.server,json,os,pathlib,subprocess,sys,threading,tempfile,urllib.parse,hashlib,shutil,xml.etree.ElementTree as ET
+import fake_ec2,http.server,json,os,pathlib,subprocess,sys,threading,tempfile,urllib.parse,hashlib,shutil,xml.etree.ElementTree as ET
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 class Fake(http.server.BaseHTTPRequestHandler):
@@ -34,6 +34,9 @@ class Fake(http.server.BaseHTTPRequestHandler):
         elif action=="ListBuckets" or (self.path=="/" and not action and not target and self.command=="GET"): self.xml("<ListAllMyBucketsResult><Buckets><Bucket><Name>lmaws_fixture_bucket</Name><BucketRegion>us-west-2</BucketRegion><CreationDate>2020-01-01T00:00:00Z</CreationDate></Bucket></Buckets><Owner><ID>fake</ID></Owner></ListAllMyBucketsResult>")
         elif target.startswith("AWSLambda") or self.path.startswith("/2015-03-31/functions") or target.startswith("Logs_") or target.startswith("AmazonEC2ContainerService") or target.startswith("secretsmanager"):
             self.json_inventory("ListFunctions" if self.path.startswith("/2015-03-31/functions") else op,body)
+        elif action in fake_ec2.EC2_ACTIONS and fake_ec2.handle(self,action,{**query,**form}): pass
+        elif self.path.endswith("/GetMetricStatistics"):
+            self.cbor({"Label":"metric","Datapoints":[{"Timestamp":CborTag(1,1793000000),"Average":1.5,"Maximum":2.0,"Sum":18.0,"Unit":"Count"}]})
         elif self.path.endswith("/DescribeAlarms"):
             self.cbor({"MetricAlarms":[{"AlarmName":"fake-alarm","AlarmArn":"arn:aws:cloudwatch:us-east-1:000000000000:alarm:fake-alarm","StateValue":"OK"}]})
         elif "Route53" in target or action=="ListHostedZones" or self.path.startswith("/2013-04-01/hostedzone"): self.xml("<ListHostedZonesResponse><HostedZones><HostedZone><Id>/hostedzone/ZFAKE</Id><Name>example.test.</Name><Config><PrivateZone>false</PrivateZone></Config><ResourceRecordSetCount>1</ResourceRecordSetCount></HostedZone></HostedZones><IsTruncated>false</IsTruncated></ListHostedZonesResponse>")
@@ -71,6 +74,9 @@ class Fake(http.server.BaseHTTPRequestHandler):
         else:self.json({})
     def ssm(self,op,body):
         x=json.loads(body or "{}");name=x.get("Name",x.get("ResourceId",""))
+        if op=="GetParameter":
+            if not name.startswith("/aws/service/"):return self.error_json("AccessDeniedException","private parameter")
+            return self.json({"Parameter":{"Name":name,"Type":"String","Value":"ami-0123456789abcdef0","Version":1}})
         if op=="DescribeParameters":self.json({"Parameters":[{"Name":"lmaws_fixture_parameter","Type":"String"}]})
         elif op=="ListTagsForResource":self.json({"TagList":[{"Key":k,"Value":v} for k,v in self.created.get(("parameter",name),{}).items()]})
         elif op=="PutParameter":
@@ -148,6 +154,7 @@ class Fake(http.server.BaseHTTPRequestHandler):
         data={"ListRoles":"<ListRolesResponse><ListRolesResult><Roles><member><RoleName>lmaws_fixture_role</RoleName><Arn>arn:aws:iam::000000000000:role/lmaws_fixture_role</Arn><CreateDate>2020-01-01T00:00:00Z</CreateDate></member></Roles></ListRolesResult></ListRolesResponse>"}
         self.xml(data.get(op,"<Response></Response>"))
     def json(self,obj): self.send(200,"application/x-amz-json-1.1",json.dumps(obj))
+    def ec2_error(self,code,message): self.send(400,"text/xml","<Response><Errors><Error><Code>%s</Code><Message>%s</Message></Error></Errors><RequestID>fake</RequestID></Response>"%(code,message))
     def error_json(self,typ,message): self.send(400,"application/x-amz-json-1.1",json.dumps({"__type":typ,"message":message}))
     def cbor(self,obj): self.send_bytes(200,"application/cbor",cbor(obj))
     def xml(self,text): self.send(200,"text/xml",text)
@@ -156,7 +163,11 @@ class Fake(http.server.BaseHTTPRequestHandler):
     def send_bytes(self,code,typ,b):
         self.send_response(code); self.send_header("Content-Type",typ); self.send_header("x-amzn-requestid","fake"); self.send_header("x-amz-bucket-region","us-east-1"); self.send_header("Content-Length",str(len(b))); self.end_headers(); self.wfile.write(b)
 
+class CborTag:
+    def __init__(self,tag,value): self.tag=tag;self.value=value
 def cbor(v):
+    if isinstance(v,CborTag): return cbor_uint(6,v.tag)+cbor(v.value)
+    if isinstance(v,float): return fake_ec2.cbor_float(v)
     if isinstance(v,bool): return bytes([0xf5 if v else 0xf4])
     if v is None: return b"\xf6"
     if isinstance(v,int): return cbor_uint(0,v) if v>=0 else cbor_uint(1,-1-v)
@@ -176,19 +187,19 @@ def run(host):
     host_prefix=(["cmd.exe","/c",str(host)] if host.suffix==".cmd" else [str(host)])
     server=http.server.ThreadingHTTPServer(("127.0.0.1",0),Fake)
     threading.Thread(target=server.serve_forever,daemon=True).start()
-    env=dict(os.environ,LMAWS_ENDPOINT="http://127.0.0.1:%d"%server.server_port,AWS_EC2_METADATA_DISABLED="true",AWS_PROFILE="lmaws-fake-no-such-profile")
+    env=dict(os.environ,LMAWS_FAST_WAITS="1",LMAWS_ENDPOINT="http://127.0.0.1:%d"%server.server_port,AWS_EC2_METADATA_DISABLED="true",AWS_PROFILE="lmaws-fake-no-such-profile")
     env.pop("LMAWS_LIVE",None)
     runner=shutil.which("lmscript");assert runner,"lmscript missing"
     try:
         with tempfile.TemporaryDirectory(prefix="lmaws-fake-") as td:
             work=pathlib.Path(td);schema=work/"schema.json"
             schema.write_bytes(subprocess.check_output(host_prefix+["--dsl-schema"],env=env,timeout=30))
-            def execute(name,body,expected=0):
+            def execute(name,body,expected=0,extra=None):
                 src=work/(name+".lms");out=work/(name+".dslb")
                 src.write_text('p = _dsl_ schema='+json.dumps(str(schema))+';\n'+body+'\nend _dsl_\nsavedsl(p, '+json.dumps(str(out))+');\n')
                 compiled=subprocess.run([runner,str(src)],cwd=work,env=env,text=True,encoding="utf-8",capture_output=True,timeout=60)
                 assert compiled.returncode==0,compiled.stderr
-                result=subprocess.run(host_prefix+["--dsl",str(out)],cwd=work,env=env,text=True,encoding="utf-8",capture_output=True,timeout=180)
+                result=subprocess.run(host_prefix+["--dsl",str(out)],cwd=work,env=dict(env,**(extra or {})),text=True,encoding="utf-8",capture_output=True,timeout=180)
                 assert result.returncode==expected,(name,result.returncode,result.stdout,result.stderr,Fake.requests[-8:])
                 assert "TOP_SECRET_SENTINEL" not in result.stdout+result.stderr,"AWS error message leaked"
                 return result
@@ -208,10 +219,11 @@ def run(host):
             execute('redaction','let cloud = aws.region("us-east-1"); let run = cloud.run("deny01", "lmaws-deny.jsonl"); let q = run.queue("error"); run.put(q, "message", "deny-fixture");',3)
             assert not Fake.created,'AWS error teardown failed'
             assert Fake.ever=={'queue','bucket','topic','parameter','table','log_group'},Fake.ever
+            ec2_proof=fake_ec2.tests(execute,env)
             assert all(request[5].startswith('127.0.0.1:') for request in Fake.requests),'non-loopback HTTP host'
             assert not any('DeleteQueue' in r[2] and 'lmaws_fixture' in r[4] for r in Fake.requests),'legacy fixture mutated'
-            proof=dict(inventories=16,write_lifecycles=6,pagination_rows=2,exception_teardown=True,aws_error_redaction=True,all_created_deleted=True,http_requests=len(Fake.requests),loopback_only=True)
+            proof=dict(ec2=ec2_proof,inventories=16,write_lifecycles=6,pagination_rows=2,exception_teardown=True,aws_error_redaction=True,all_created_deleted=True,http_requests=len(Fake.requests),loopback_only=True)
             (pathlib.Path(tempfile.gettempdir())/'lmaws-fake-proof.json').write_text(json.dumps(proof,indent=2)+'\n')
-            print('PASS fake SDK: 16 inventories, 6 tagged lifecycles, pagination, failure teardown, AWS error redaction; all deleted')
+            print('PASS fake SDK: 16 inventories, 6 tagged lifecycles, EC2 spot nano lifecycle/refusals/teardown, pagination, failure teardown, AWS error redaction; all deleted')
     finally:server.shutdown();server.server_close()
 if __name__=="__main__":run(pathlib.Path(sys.argv[1]).resolve())

@@ -344,8 +344,18 @@ public final class AwsBackend implements AutoCloseable {
         if (!"1".equals(System.getenv("LMAWS_LIVE")))
             throw new IllegalStateException("live writes require LMAWS_LIVE=1");
         String profile = activeProfile();
-        if (!"lmaws".equals(profile))
-            throw new IllegalStateException("live mutations require AWS_PROFILE=lmaws (active profile: " + profile + ")");
+        if (!MUTATING_PROFILES.contains(profile))
+            throw new IllegalStateException("live mutations require AWS_PROFILE=lmaws or lmaws-ec2 (active profile: " + profile + ")");
+    }
+
+    /** Profiles provisioned for owned writes; every other profile is read-only to lmaws. */
+    static final List<String> MUTATING_PROFILES = List.of("lmaws", "lmaws-ec2");
+
+    /** EC2 compute writes: the same profile gate, and us-east-1 only (prices and policy are regional). */
+    void requireComputeWriteEnabled() {
+        requireWriteEnabled();
+        if (!demo && endpoint == null && !"us-east-1".equals(regionName))
+            throw new IllegalStateException("live spot sandboxes require us-east-1 (active region: " + regionName + ")");
     }
 
     public static String activeProfile() {
@@ -389,6 +399,10 @@ public final class AwsBackend implements AutoCloseable {
     private List<Map<String, String>> demoInventory(String k) { return demoResources.values().stream().filter(x -> inventoryKind(k).equals(x.get("kind"))).map(x -> (Map<String, String>) new LinkedHashMap<>(x)).toList(); }
     private Map<String, String> demoCreate(String k, String n, String value, String runId) { String id = n; String key = demoKey(k, id); if(demoResources.containsKey(key))throw new IllegalStateException("demo resource already exists"); Map<String, String> m = row("kind", k, "id", id, "name", n, "created", Instant.now().toString(), "run_id", runId); if (value != null) m.put("value_metadata", "stored"); demoResources.put(key, m); return new LinkedHashMap<>(m); }
     private static String demoKey(String kind, String id) { return kind + "\u0000" + id; }
+
+    Ec2Client ec2Client() { return ec2(); }
+    SsmClient ssmClient() { return ssm(); }
+    CloudWatchClient cloudWatchClient() { return cloudwatch(); }
 
     private void tagBucket(String id,String runId) {
         s3().putBucketTagging(x -> x.bucket(id).tagging(t -> t.tagSet(Tag.builder().key("lmaws_test").value(runId).build())));

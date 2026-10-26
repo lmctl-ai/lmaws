@@ -10,6 +10,8 @@ public final class CloudHost implements AutoCloseable {
     private final List<Session> clients=new ArrayList<>();
     private final List<Sandbox> runs=new ArrayList<>();
     private final Map<SpendReport,CostLedger> spendLedgers=new IdentityHashMap<>();
+    private final Map<Session,Ec2Compute> compute=new IdentityHashMap<>();
+    private final List<Ec2Compute.SpotRun> spots=new ArrayList<>();
     private boolean closed;
     private CostLedger billing;
     private Session measured;
@@ -95,6 +97,7 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","region",List.of("string"),"Cloud",(c,s,a)->Value.object("Cloud",open(text(a[0]),false)));
         for(String inventory:INVENTORIES) r.method("Cloud",inventory,List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.inventory(inventory),c)));
         r.method("Cloud","run",List.of("string","string"),"Run",(c,s,a)->{Sandbox run=new Sandbox(session(s).backend,text(a[0]),Path.of(text(a[1])),session(s).cost);runs.add(run);return Value.object("Run",run);});
+        registerCompute(r);
         r.method("Rows","len",List.of(),"int",(c,s,a)->Value.ofInt(((Rows)s.asObject()).rows.size()));
         r.method("Rows","at",List.of("int"),"Row",(c,s,a)->{Rows rows=(Rows)s.asObject();long i=a[0].asInt();if(i<0||i>=rows.rows.size())throw VmException.host("row index outside inventory");return Value.object("Row",rows.rows.get((int)i));});
         r.method("Rows","csv",List.of("string"),"void",(c,s,a)->{((Rows)s.asObject()).write(text(a[0]));return Value.none();});
@@ -102,6 +105,7 @@ public final class CloudHost implements AutoCloseable {
         r.method("Rows","count",List.of("string","string"),"int",(c,s,a)->Value.ofInt(((Rows)s.asObject()).rows.stream().filter(row->Rows.get(row,text(a[0])).equals(text(a[1]))).count()));
         r.method("Rows","filter",List.of("string","string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(((Rows)s.asObject()).rows.stream().filter(row->Rows.get(row,text(a[0])).equals(text(a[1]))).toList(),c)));
         r.method("Row","get",List.of("string"),"string",(c,s,a)->Value.ofString(Rows.get(row(s),text(a[0]))));
+        r.method("Row","json",List.of(),"string",(c,s,a)->Value.ofString(Jsons.encode(row(s))));
         r.method("Row","number",List.of("string"),"int",(c,s,a)->{String v=Rows.get(row(s),text(a[0]));try{return Value.ofInt(v.isEmpty()?0:Long.parseLong(v));}catch(NumberFormatException e){throw VmException.host("field is not an integer");}});
         for(String kind:List.of("bucket","queue","topic","parameter","log_group","table")) r.method("Run",kind,kind.equals("parameter")?List.of("string","string"):List.of("string"),"Row",(c,s,a)->{var result=((Sandbox)s.asObject()).create(kind,text(a[0]),a.length>1?text(a[1]):"");c.charge(2048);return Value.object("Row",result);});
         r.method("Run","put",List.of("Row","string","string"),"void",(c,s,a)->{((Sandbox)s.asObject()).put(row(a[0]),text(a[1]),text(a[2]));return Value.none();});
@@ -109,6 +113,43 @@ public final class CloudHost implements AutoCloseable {
         r.method("Run","estimated_cost",List.of(),"float",(c,s,a)->Value.ofFloat(((Sandbox)s.asObject()).cost()==null?0.0:((Sandbox)s.asObject()).cost().total().doubleValue()));
         r.method("Run","remaining",List.of(),"int",(c,s,a)->Value.ofInt(((Sandbox)s.asObject()).remaining()));
         return r;
+    }
+    private Ec2Compute compute(Value value) {Session v=session(value);return compute.computeIfAbsent(v,x->new Ec2Compute(x.backend));}
+    private static Ec2Compute.SpotRun spot(Value value) {return (Ec2Compute.SpotRun)value.asObject();}
+    private static Value rows(List<Map<String,String>> data,Context c) {return Value.object("Rows",new Rows(data,c));}
+    private static Value one(Map<String,String> data,Context c) {c.charge(2048);return Value.object("Row",data);}
+    /** EC2 compute: read-only reports on Cloud, and one run-owned spot nano lifecycle (type Spot). */
+    private void registerCompute(Registry r) {
+        r.method("Cloud","ec2_instances",List.of("string","string"),"Rows",(c,s,a)->rows(compute(s).instances(text(a[0]),text(a[1])),c));
+        r.method("Cloud","cpu_credits",List.of("string","int"),"Rows",(c,s,a)->rows(compute(s).cpuCredits(text(a[0]),a[1].asInt()),c));
+        r.method("Cloud","addresses",List.of(),"Rows",(c,s,a)->rows(compute(s).addresses(),c));
+        r.method("Cloud","volumes",List.of(),"Rows",(c,s,a)->rows(compute(s).volumes(),c));
+        r.method("Cloud","subnets",List.of(),"Rows",(c,s,a)->rows(compute(s).subnets(),c));
+        r.method("Cloud","spot_prices",List.of("string","int"),"Rows",(c,s,a)->rows(compute(s).spotPrices(text(a[0]),a[1].asInt()),c));
+        r.method("Cloud","public_parameter",List.of("string"),"string",(c,s,a)->Value.ofString(compute(s).publicParameter(text(a[0]))));
+        r.method("Cloud","instance_status",List.of("string"),"Row",(c,s,a)->one(compute(s).status(text(a[0])),c));
+        r.method("Cloud","spot_run",List.of(),"Spot",(c,s,a)->{
+            Session v=session(s);
+            if(!spots.isEmpty())throw VmException.host("spot_run: one spot sandbox per host program");
+            Ec2Compute.SpotRun run=compute(s).new SpotRun(v.cost.runId(),v.cost.path().toAbsolutePath().getParent(),v.cost.cap());
+            spots.add(run);return Value.object("Spot",run);
+        });
+        r.method("Cloud","spot_recover",List.of("string"),"Row",(c,s,a)->one(compute(s).recover(text(a[0]),session(s).cost.path().toAbsolutePath().getParent()),c));
+        r.method("Spot","run_id",List.of(),"string",(c,s,a)->Value.ofString(spot(s).runId));
+        r.method("Spot","security_group",List.of("string"),"Row",(c,s,a)->one(spot(s).securityGroup(text(a[0])),c));
+        r.method("Spot","launch",List.of("string","string","string","string","float"),"Row",(c,s,a)->one(spot(s).launch(text(a[0]),text(a[1]),text(a[2]),text(a[3]),a[4].asFloat()),c));
+        r.method("Spot","wait_state",List.of("string","string","int"),"Row",(c,s,a)->one(spot(s).waitState(text(a[0]),text(a[1]),a[2].asInt()),c));
+        r.method("Spot","wait_status_ok",List.of("string","int"),"Row",(c,s,a)->one(spot(s).waitStatusOk(text(a[0]),a[1].asInt()),c));
+        r.method("Spot","stop",List.of("string"),"Row",(c,s,a)->one(spot(s).stop(text(a[0])),c));
+        r.method("Spot","start",List.of("string"),"Row",(c,s,a)->one(spot(s).start(text(a[0])),c));
+        r.method("Spot","terminate",List.of("string"),"Row",(c,s,a)->one(spot(s).terminate(text(a[0])),c));
+        r.method("Spot","delete_security_group",List.of("string"),"Row",(c,s,a)->one(spot(s).deleteSecurityGroup(text(a[0])),c));
+        r.method("Spot","teardown",List.of(),"Row",(c,s,a)->one(spot(s).teardown(),c));
+        r.method("Spot","verify",List.of(),"Rows",(c,s,a)->rows(spot(s).verify(),c));
+        r.method("Spot","leftovers",List.of(),"Rows",(c,s,a)->rows(spot(s).leftovers(),c));
+        r.method("Spot","denied_action",List.of(),"string",(c,s,a)->Value.ofString(spot(s).deniedAction()));
+        r.method("Spot","spot_price",List.of(),"float",(c,s,a)->Value.ofFloat(spot(s).spotPrice()));
+        r.method("Spot","estimated_cost",List.of(),"float",(c,s,a)->Value.ofFloat(spot(s).estimatedCost()));
     }
     private static String text(Value value) {
         try{return java.nio.charset.StandardCharsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT).onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT).decode(java.nio.ByteBuffer.wrap(value.asString().bytes())).toString();}
@@ -119,6 +160,7 @@ public final class CloudHost implements AutoCloseable {
     @Override public synchronized void close() {
         if(closed)return;
         RuntimeException failure=null;
+        for(var run:spots.reversed())try{run.close();}catch(RuntimeException e){failure=e;System.err.println("lmaws spot teardown failed: "+Main.safeError(e));}
         for(var run:runs.reversed())try{run.close();}catch(RuntimeException e){failure=e;}
         if(measured!=null)try{finishEvidence(measured);}catch(RuntimeException e){if(failure==null)failure=e;}
         for(var client:clients)try{client.backend.close();}catch(RuntimeException e){if(failure==null)failure=e;}
