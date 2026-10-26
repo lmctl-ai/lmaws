@@ -75,7 +75,9 @@ jobs:
           path: dist/*
           if-no-files-found: error
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Publish when the four Linux/macOS lanes produced binaries even if the Windows lane failed
+    # (Windows may be a stub early); a missing Windows asset is stated in the release notes.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     needs: native
     runs-on: ubuntu-22.04
     timeout-minutes: 10
@@ -91,6 +93,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd dist
-          test "$(find . -maxdepth 1 -type f -name 'lmaws-*' | wc -l)" -eq 5
+          for required in lmaws-linux-x64 lmaws-linux-arm64 lmaws-macos-x64 lmaws-macos-arm64; do test -f "$required" || { echo "missing $required"; exit 1; }; done
+          notes='AWS SDK for Java v2 scripting host. Native executables; no Java installation required. Linux: glibc >= 2.35. Windows: Microsoft VC++ runtime. Offline examples and fake-endpoint CI; live writes require opt-in and a run-owned ledger.'
+          if ! ls lmaws-windows-x64* >/dev/null 2>&1; then notes="$notes This release has no Windows binary: the Windows lane failed; use the previous release on Windows."; fi
           sha256sum lmaws-* > SHA256SUMS
-          timeout 180 gh release create "$GITHUB_REF_NAME" lmaws-* SHA256SUMS --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes 'AWS SDK for Java v2 scripting host. Five native executables; no Java installation required. Linux: glibc >= 2.35. Windows: Microsoft VC++ runtime. Offline examples and fake-endpoint CI; live writes require opt-in and a run-owned ledger.'
+          timeout 180 gh release create "$GITHUB_REF_NAME" lmaws-* SHA256SUMS --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "$notes"
