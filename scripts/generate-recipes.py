@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate thin runnable recipe entries and their synthetic-only examples."""
 from pathlib import Path
+import re,sys
 ROOT=Path(__file__).resolve().parents[1]
 INVENTORIES=['identity','buckets','instances','vpcs','security_groups','tables','queues','topics','functions','log_groups','alarms','zones','secrets','parameters','clusters','roles']
 LIFECYCLES=['queue','topic','table','bucket','parameter','log_group']
@@ -16,7 +17,20 @@ for name,function,what in [('prefix_search','recipe_prefix_search','Find lmaws_ 
 for name,function,category,what in [('idle_instances','recipe_idle','Idle and waste detection','Flag stopped-instance state for further review; never delete'),('tag_compliance','recipe_compliance','Tag and naming compliance','Report missing and unknown tag presence without assuming compliance')]:
  ITEMS.append(dict(name=name,category=category,task=name,library='audits',function=function,what=what,access='Read-only',cost='$0.00 displayed; request cap $0.05'))
 
-def generate():
+def flatten(path,seen=None):
+ seen=set() if seen is None else seen
+ path=path.resolve()
+ if path in seen:return ''
+ seen.add(path);lines=[]
+ for line in path.read_text().splitlines():
+  match=re.fullmatch(r'\s*import\s+"([^"]+)";\s*',line)
+  if match:lines.append(flatten(path.parent/match.group(1),seen))
+  elif line.lstrip().startswith(('#','//')):continue
+  else:lines.append(line)
+ return '\n'.join(lines).strip()+'\n'
+
+def generate(check=False):
+
  for item in ITEMS:
   name=item['name'];example='recipe_'+name;lib='recipes/lib/'+item['library']+'.lms'
   args='--task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/'+name+' [--live]'
@@ -30,12 +44,20 @@ def generate():
   else:body+='if (!contains(ARGV,"--task")) {options.task="queue";}\n'
   body+='if (!contains(ARGV,"--output")) {options.output="data/'+name+'";}\n'
   body+='let report='+item['function']+'(options);\nif (!options.preview) {println("report:",options.output+".json");}\n'
-  (ROOT/'recipes'/ (name+'.lms')).write_text(header+'\n'+body)
+  body=re.sub(r'\nimport \"[^\"]+\";\n', '\n', body)
+  entry=header+'\n# Generated standalone entry; reusable source: '+lib+'\n'+flatten(ROOT/lib)+'\n'+body
+  target=ROOT/'recipes'/(name+'.lms')
+  if check:assert target.read_text()==entry, str(target)+' is stale; run generate-recipes.py'
+  else:target.write_text(entry)
   exheader='# Synthetic-only: '+item['what']+'.\n# This picture-first example always disables live AWS and apply, even if inherited.\n# Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/'+example+'.lms\n'
   exbody='import "../recipes/lib/'+item['library']+'.lms";\nlet options=recipe_options(ARGV);\noptions.live=false;options.apply=false;options.preview=false;options.profile="default";\noptions.task="'+item['task']+'";options.output="data/'+example+'";\nlet report='+item['function']+'(options);\nassert(is_array(report.rows));\n'
   if item['library']=='lifecycle':exbody+='assert(len(report.rows)==1 && report.rows[0].remaining==0);\nreport.rows[0].name="owned synthetic '+item['task']+'";\n'
   exbody+='recipe_picture(report.rows,"'+item['what']+'","'+example+'");\n'
-  (ROOT/'examples'/(example+'.lms')).write_text(exheader+exbody)
+  exbody=re.sub(r'^import \"[^\"]+\";\n', '', exbody)
+  content=exheader+'# Generated standalone example from '+lib+'\n'+flatten(ROOT/lib)+'\n'+exbody
+  target=ROOT/'examples'/(example+'.lms')
+  if check:assert target.read_text()==content, str(target)+' is stale; run generate-recipes.py'
+  else:target.write_text(content)
  return ITEMS
 if __name__=='__main__':
- generate();print('generated',len(ITEMS),'recipes and synthetic examples')
+ generate('--check' in sys.argv);print('checked' if '--check' in sys.argv else 'generated',len(ITEMS),'recipes and synthetic examples')

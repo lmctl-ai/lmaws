@@ -29,7 +29,7 @@ The native release targets five platforms and uses a 4096 MB memory budget. Linu
 
 Reusable LMScript recipes for audits, inventory, spend review and safely owned sandboxes.
 The access column describes AWS permissions; local reports are written only when a recipe is called.
-Each wrapper is runnable directly. Import the paired library from its raw URL when composing recipes; wrappers perform the execution step.
+Each generated entry is self-contained and runnable directly. Import the paired library from its raw URL when composing recipes; entry scripts perform the execution step.
 Use `lmaws`, never the `aws` CLI. Read-only recipes use `default`; writes require
 `AWS_PROFILE=lmaws`, the ownership prefix/tag, a ledger and teardown.
 

@@ -42,6 +42,8 @@ def main() -> int:
         assert image_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), image_path
         assert caption.startswith("lmctl https://raw.githubusercontent.com/") and caption.endswith(f"/{example}.lms")
         assert "see source" not in caption.lower()
+    generated=subprocess.run([sys.executable,str(ROOT/"scripts/generate-recipes.py"),"--check"],cwd=ROOT,text=True,capture_output=True)
+    assert generated.returncode==0,generated.stdout+generated.stderr
     result = subprocess.run([sys.executable, str(ROOT / "scripts" / "recipe-index.py"), "--check", "--root-readme", str(ROOT/"README.md")], cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
     print(f"PASS recipe contract: {len(items)} recipes, {len({item.category for item in items})} categories")

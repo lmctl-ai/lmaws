@@ -8,6 +8,11 @@ cost. `scripts/generate-recipes.py` owns thin entry wrappers and their examples.
 Import paired `recipes/lib/*.lms` files from local paths or raw HTTP(S) URLs.
 Libraries only declare functions; executable wrappers call them with parsed
 arguments. Imports do not query AWS, change environment settings or create files.
+Executable entries and picture examples inline their shared source through the
+generator. This avoids the current top-level URL runner resolving a relative
+import against the empty working directory. Keep URL-import composition in the
+paired libraries; test empty-directory caption commands before changing this.
+
 Shared options cover period, top-N, prefix, region/profile, output, cap, preview
 and apply. Examples force synthetic mode even if live mode was inherited.
 
