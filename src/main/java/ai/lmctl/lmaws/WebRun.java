@@ -133,7 +133,7 @@ final class WebRun implements AutoCloseable {
                 String target=arg(a,"static_target",val("cf_domain")); String ip=arg(a,"dynamic_ip",val("public_ip"));
                 long sw=integerArg(a,"static_weight"), dw=integerArg(a,"dynamic_weight");
                 if(sw+dw!=100)throw new IllegalArgumentException("weighted DNS weights must sum to 100");
-                if(!state.containsKey("zone")){state.put("zone",aws().zoneId(domain));persist();} String zone=arg(a,"zone",val("zone")); aws().weightedSet(zone,fqdn,target,ip,sw,dw,false,()->{state.put("weighted_name",fqdn);state.put("weighted_static_target",target);state.put("weighted_dynamic_ip",ip);state.put("weighted_static_weight",String.valueOf(sw));state.put("weighted_dynamic_weight",String.valueOf(dw));state.put("weighted_record","true");persist();});
+                if(!state.containsKey("zone")){state.put("zone",aws().zoneId(domain));persist();} String zone=arg(a,"zone",val("zone")); aws().weightedSetOwned(zone,fqdn,target,ip,sw,dw,false,state.containsKey("weighted_record"),()->{state.put("weighted_name",fqdn);state.put("weighted_static_target",target);state.put("weighted_dynamic_ip",ip);state.put("weighted_static_weight",String.valueOf(sw));state.put("weighted_dynamic_weight",String.valueOf(dw));state.put("weighted_record","true");persist();});
             }
             case "https"->{aws().attachCertificate(val("distribution"),val("site"),val("cert"),true);state.put("https","true");}
             case "invalidate"->aws().invalidate(val("distribution"));

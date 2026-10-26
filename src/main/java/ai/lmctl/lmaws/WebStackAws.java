@@ -43,7 +43,8 @@ public final class WebStackAws implements AutoCloseable {
     public String recordCname(String zone,String fqdn,String value,boolean delete,Runnable accepted){recordName(zone,fqdn,true);if(value==null||value.length()>255)throw new IllegalArgumentException("invalid CNAME value");return record(zone,fqdn,RRType.CNAME,value,delete,accepted);}
     private String record(String zone,String fqdn,RRType type,String value,boolean delete,Runnable accepted){ResourceRecordSet rr=ResourceRecordSet.builder().name(fqdn.endsWith(".")?fqdn:fqdn+".").type(type).ttl(60L).resourceRecords(software.amazon.awssdk.services.route53.model.ResourceRecord.builder().value(value).build()).build();ChangeInfo ci=route53.changeResourceRecordSets(x->x.hostedZoneId(zone).changeBatch(ChangeBatch.builder().changes(Change.builder().action(delete?ChangeAction.DELETE:ChangeAction.CREATE).resourceRecordSet(rr).build()).build()).build()).changeInfo();if(accepted!=null)accepted.run();waitChange(ci.id(),Duration.ofMinutes(5));return ci.id();}
     /** Set the two owned weighted A records used by scenario 11. UPSERT is scoped to the exact run name and identifiers. */
-    public String weightedSet(String zone,String fqdn,String staticTarget,String dynamicIp,long staticWeight,long dynamicWeight,boolean delete,Runnable accepted){
+    public String weightedSet(String zone,String fqdn,String staticTarget,String dynamicIp,long staticWeight,long dynamicWeight,boolean delete,Runnable accepted){return weightedSetOwned(zone,fqdn,staticTarget,dynamicIp,staticWeight,dynamicWeight,delete,true,accepted);}
+    public String weightedSetOwned(String zone,String fqdn,String staticTarget,String dynamicIp,long staticWeight,long dynamicWeight,boolean delete,boolean allowExisting,Runnable accepted){
         weightedName(zone,fqdn); if(staticWeight<0||staticWeight>255||dynamicWeight<0||dynamicWeight>255)throw new IllegalArgumentException("weighted DNS weights must be 0..255");
         if(staticTarget==null||!staticTarget.matches("[a-z0-9-]+\\.cloudfront\\.net\\.?"))throw new SecurityException("invalid CloudFront weighted target");
         WebStack.requireHttpCidr(dynamicIp+"/32");
@@ -51,11 +52,12 @@ public final class WebStackAws implements AutoCloseable {
         // A run may shift only the two records it created. Refuse adoption of any
         // other record at this exact name before issuing an UPSERT.
         var existingPage=route53.listResourceRecordSets(x->x.hostedZoneId(zone).startRecordName(name).startRecordType(RRType.A).maxItems("100"));
-        for(var existing:existingPage.resourceRecordSets())
-            if(stripDot(existing.name()).equals(stripDot(fqdn)) && !("static-"+runId).equals(existing.setIdentifier()) && !("dynamic-"+runId).equals(existing.setIdentifier()))
-                throw new SecurityException("weighted DNS name already contains a foreign record");
+        for(var existing:existingPage.resourceRecordSets()) if(stripDot(existing.name()).equals(stripDot(fqdn))) {
+            boolean ours=("static-"+runId).equals(existing.setIdentifier())||("dynamic-"+runId).equals(existing.setIdentifier());
+            if(!ours||(!allowExisting&&!delete)) throw new SecurityException("weighted DNS name already contains a record not established by this run");
+        }
         ResourceRecordSet alias=ResourceRecordSet.builder().name(name).type(RRType.A).setIdentifier("static-"+runId).weight(staticWeight).aliasTarget(AliasTarget.builder().dnsName(staticTarget).hostedZoneId("Z2FDTNDATAQYW2").evaluateTargetHealth(false).build()).build();
-        ResourceRecordSet ip=ResourceRecordSet.builder().name(name).type(RRType.A).setIdentifier("dynamic-"+runId).weight(dynamicWeight).ttl(30L).resourceRecords(software.amazon.awssdk.services.route53.model.ResourceRecord.builder().value(dynamicIp).build()).build();
+        ResourceRecordSet ip=ResourceRecordSet.builder().name(name).type(RRType.A).setIdentifier("dynamic-"+runId).weight(dynamicWeight).ttl(60L).resourceRecords(software.amazon.awssdk.services.route53.model.ResourceRecord.builder().value(dynamicIp).build()).build();
         ChangeAction action=delete?ChangeAction.DELETE:ChangeAction.UPSERT;
         ChangeBatch batch=ChangeBatch.builder().changes(Change.builder().action(action).resourceRecordSet(alias).build(),Change.builder().action(action).resourceRecordSet(ip).build()).build();
         ChangeInfo ci=route53.changeResourceRecordSets(x->x.hostedZoneId(zone).changeBatch(batch).build()).changeInfo(); if(accepted!=null)accepted.run(); waitChange(ci.id(),Duration.ofMinutes(5)); return ci.id();
@@ -165,6 +167,10 @@ public final class WebStackAws implements AutoCloseable {
             for(var record:page.resourceRecordSets()) {
                 String n=stripDot(record.name());String site="lmaws-site-"+runId+"."+domain,app="lmaws-app-"+runId+"."+domain;
                 if(n.equals(site)||n.equals(app)||(n.startsWith("_")&&n.endsWith("."+site))){var row=row("route53",record.typeAsString(),n,n);row.put("owned","true");out.add(row);}
+                String weighted="lmaws-weighted-"+runId+"."+domain;
+                if(n.equals(weighted)&&("static-"+runId).equals(record.setIdentifier())||n.equals(weighted)&&("dynamic-"+runId).equals(record.setIdentifier())){
+                    var row=row("route53","weighted-A",n,record.setIdentifier());row.put("owned",ownerProof==null?"unknown":"true");row.put("identifier",record.setIdentifier());row.put("weight",String.valueOf(record.weight()));out.add(row);
+                }
             }
         }
         if(out.size()>10000)throw new IllegalStateException("web discovery resource limit");return out;

@@ -157,6 +157,10 @@ public final class WebTransportChecks {
                     "d1234567890.cloudfront.net", "192.0.2.20", 90, 10, false,
                     () -> seen.put("weightedAccepted", true));
             assertWeighted(seen, 90, 10, ChangeAction.UPSERT);
+            seen.put("sameWeighted", true);
+            expect(() -> web.weightedSetOwned("zone", "lmaws-weighted-" + RUN + "." + DOMAIN,
+                    "d1234567890.cloudfront.net", "192.0.2.20", 90, 10, false, false, null));
+            seen.remove("sameWeighted");
             web.weightedSet("zone", "lmaws-weighted-" + RUN + "." + DOMAIN,
                     "d1234567890.cloudfront.net", "192.0.2.20", 50, 50, false, null);
             assertWeighted(seen, 50, 50, ChangeAction.UPSERT);
@@ -246,6 +250,8 @@ public final class WebTransportChecks {
             if (type == Route53Client.class && name.equals("listResourceRecordSets")) {
                 if (Boolean.TRUE.equals(seen.get("foreignWeighted")))
                     return ListResourceRecordSetsResponse.builder().resourceRecordSets(ResourceRecordSet.builder().name("lmaws-weighted-" + RUN + "." + DOMAIN + ".").type(RRType.A).setIdentifier("foreign").resourceRecords(ResourceRecord.builder().value("192.0.2.50").build()).build()).build();
+                if (Boolean.TRUE.equals(seen.get("sameWeighted")))
+                    return ListResourceRecordSetsResponse.builder().resourceRecordSets(ResourceRecordSet.builder().name("lmaws-weighted-" + RUN + "." + DOMAIN + ".").type(RRType.A).setIdentifier("static-" + RUN).resourceRecords(ResourceRecord.builder().value("192.0.2.50").build()).build()).build();
                 return ListResourceRecordSetsResponse.builder().resourceRecordSets(List.of()).build();
             }
             if (type == S3Client.class && name.equals("getBucketTagging")) {
