@@ -851,8 +851,12 @@ public final class AwsBackend implements AutoCloseable {
         String k = createKind(kind); requireText(id, "id"); requireRunId(runId);
         if (demo) { Map<String, String> resource = demoResources.get(demoKey(k, id)); return resource != null && runId.equals(resource.get("run_id")); }
         String n = last(id);
-        String prefix = "bucket".equals(k) ? "lmaws-" + runId + "-" : "lmaws_" + runId + "_";
-        if (!n.startsWith(prefix)) return false;
+        if ("bucket".equals(k)) {
+            // Web stacks use the exact lmaws-site-<run> bucket; upload-only
+            // stacks retain the legacy lmaws-<run>-<suffix> shape. Both still
+            // require the authoritative lmaws_test tag below.
+            if (!n.equals("lmaws-site-" + runId) && !n.startsWith("lmaws-" + runId + "-")) return false;
+        } else if (!n.startsWith("lmaws_" + runId + "_")) return false;
         return switch (k) {
             case "bucket" -> hasTag(s3().getBucketTagging(x -> x.bucket(id)).tagSet(), runId);
             case "queue" -> runId.equals(sqs().listQueueTags(x -> x.queueUrl(id)).tags().get("lmaws_test"));

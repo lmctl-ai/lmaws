@@ -9,7 +9,7 @@ mappings before workers and queues; worker recovery uses exact names and run tag
 Worker logs reuse the receipt-proven final-delivery reconciliation after both
 functions and the mapping are removed. All Lambda logs use `lmaws_<slug>_logs_<run>`. Queue worker execution and SQS/log
 bounds join the whole-run estimate. Static cache TTLs are bounded; API cache TTLs
-stay zero. Main currently exposes 194 host signature lines including context.
+stay zero. The generated schema and signatures are the API count authority.
 
 New APIs and the exact IAM handoff are in [REMAINING_SCENARIOS](../docs/REMAINING_SCENARIOS.md).
 `test.sh` runs real SDK loopback mapping/redrive/presign/conditional dispatch tests
@@ -23,3 +23,5 @@ was applied and no live scenario was run in this work. Native packaging and any
 patch release are separate from this main-source work. Concurrent main version
 metadata is 0.1.19. The historical v0.1.18 release proof does not cover these
 additions; use the current source build until an artifact containing them is verified.
+
+Upload ownership accepts the exact web-stack bucket `lmaws-site-<run>` as well as legacy `lmaws-<run>-<suffix>` buckets. Either shape still requires the provider tag `lmaws_test=<run>`. Near-match web names and missing or foreign run tags are refused; SigV4 and environment setup share this check. SDK loopback regressions cover each branch.
