@@ -120,6 +120,7 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","web_find",List.of("string","string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(WebRun.find(session(s).backend,text(a[0]),text(a[1])),c)));
         r.method("Cloud","web_stack",List.of("string","string","string"),"Web",(c,s,a)->{if(!webRuns.isEmpty())throw VmException.host("one web run per host program");var v=session(s);WebRun run=new WebRun(v.backend,v.cost,text(a[0]),text(a[1]),text(a[2]));webRuns.add(run);return Value.object("Web",run);});
         r.method("Cloud","serverless_stack",List.of("string","string","string"),"Serverless",(c,s,a)->{var v=session(s);ServerlessRun run=new ServerlessRun(v.backend,v.cost,text(a[0]),text(a[1]),text(a[2]));serverlessRuns.add(run);return Value.object("Serverless",run);});
+        r.method("Cloud","serverless_find",List.of("string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.serverlessInventory(text(a[0])),c)));
         r.method("Serverless","step",List.of("string","string"),"Row",(c,s,a)->rowValue(c,((ServerlessRun)s.asObject()).step(text(a[0]),text(a[1]))));
         r.method("Serverless","status",List.of(),"Row",(c,s,a)->rowValue(c,((ServerlessRun)s.asObject()).summary()));
         r.method("Serverless","leftovers",List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(((ServerlessRun)s.asObject()).leftovers(),c)));

@@ -420,6 +420,21 @@ public final class AwsBackend implements AutoCloseable {
         }
         return bounded(rows);
     }
+    List<Map<String,String>> serverlessInventory(String runId) {
+        WebStack.requireRun(runId);
+        if(demo)return List.of();
+        List<Map<String,String>> rows=new ArrayList<>();
+        for(var row:prefixFunctions("lmaws_"+runId+"_"))if(runId.equals(row.get("run_id")))rows.add(row);
+        for(var row:prefixTables("lmaws_"+runId+"_"))if(runId.equals(row.get("run_id")))rows.add(row);
+        for(var row:prefixLogGroups("lmaws_"+runId+"_"))if(runId.equals(row.get("run_id")))rows.add(row);
+        for(var row:prefixBuckets("lmaws-"+runId+"-"))if(runId.equals(row.get("run_id")))rows.add(row);
+        for(var row:prefixEc2Tags("lmaws_"+runId+"_"))if(runId.equals(row.get("run_id")))rows.add(row);
+        String ruleToken=null; do { var page=events().listRules(software.amazon.awssdk.services.eventbridge.model.ListRulesRequest.builder().nextToken(ruleToken).build()); for(var rule:page.rules())if(rule.name()!=null&&rule.name().startsWith("lmaws_"+runId+"_")){
+            var tags=events().listTagsForResource(x->x.resourceARN(rule.arn())).tags();boolean owned=tags.stream().anyMatch(t->"lmaws_test".equals(t.key())&&runId.equals(t.value()));
+            if(owned)rows.add(row("kind","event_rule","id",rule.arn(),"name",rule.name(),"region",regionName,"run_id",runId));
+        } ruleToken=page.nextToken(); } while(ruleToken!=null&&!ruleToken.isBlank());
+        return List.copyOf(rows);
+    }
 
     private List<Map<String, String>> prefixTables(String prefix) {
         List<Map<String, String>> rows = new ArrayList<>();
@@ -497,6 +512,15 @@ public final class AwsBackend implements AutoCloseable {
     void emptyServerlessBucket(String bucket,String runId) {
         requireScenarioWrite();if(!owned("bucket",bucket,runId))throw new SecurityException("bucket ownership mismatch");
         for(var page:s3().listObjectsV2Paginator(x->x.bucket(bucket)))for(var object:page.contents())s3().deleteObject(x->x.bucket(bucket).key(object.key()));
+    }
+    Map<String,String> serverlessReport(String bucket,String table,String runId) {
+        requireScenarioWrite();requireRunId(runId);requireName(bucket);requireName(table);
+        if(demo)return row("bucket",bucket,"table",table,"latest_json","true","latest_html","true","table_items","2","run_id",runId);
+        if(!owned("bucket",bucket,runId)||!owned("table",table,runId))throw new SecurityException("report resources are not owned by this run");
+        var json=s3().getObjectAsBytes(software.amazon.awssdk.services.s3.model.GetObjectRequest.builder().bucket(bucket).key("latest.json").build()).asUtf8String();
+        var html=s3().getObjectAsBytes(software.amazon.awssdk.services.s3.model.GetObjectRequest.builder().bucket(bucket).key("latest.html").build()).asUtf8String();
+        long items=0;String token=null;do{var response=ddb().scan(software.amazon.awssdk.services.dynamodb.model.ScanRequest.builder().tableName(table).exclusiveStartKey(token==null?null:Map.of("pk",AttributeValue.builder().s(token).build())).select(software.amazon.awssdk.services.dynamodb.model.Select.COUNT).build());items+=response.count()==null?0:response.count();token=response.lastEvaluatedKey()==null?null:response.lastEvaluatedKey().getOrDefault("pk",AttributeValue.builder().s("").build()).s();}while(token!=null&&!token.isBlank());
+        return row("bucket",bucket,"table",table,"latest_json",Boolean.toString(!json.isBlank()),"latest_html",Boolean.toString(!html.isBlank()),"table_items",Long.toString(items),"run_id",runId);
     }
     private void requireScenarioWrite() {
         requireWriteEnabled();

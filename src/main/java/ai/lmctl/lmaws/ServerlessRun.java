@@ -42,7 +42,7 @@ final class ServerlessRun implements AutoCloseable {
     private String arg(Map<String,Object> args,String name,String fallback){Object value=args.get(name);return value==null?fallback:String.valueOf(value);}
     private int integer(Map<String,Object> args,String key,int fallback){Object v=args.get(key);if(v==null)return fallback;double n=v instanceof Number number?number.doubleValue():Double.parseDouble(v.toString());if(!Double.isFinite(n)||n!=Math.rint(n)||n<0||n>Integer.MAX_VALUE)throw new IllegalArgumentException("invalid integer "+key);return (int)n;}
     synchronized Map<String,String> step(String op,String json) {
-        if(!Set.of("table","bucket","lambda","event").contains(op))throw new IllegalArgumentException("unknown serverless step");
+        if(!Set.of("table","bucket","lambda","event","report","reserve_http","record_http").contains(op))throw new IllegalArgumentException("unknown serverless step");
         if("down".equals(state.get("status")))throw new IllegalStateException("run torn down; choose a new id");
         Map<String,Object> args=Json.object(Json.parse(json));String encoded=Jsons.encodeRaw(args);
         if("done".equals(state.get("step_"+op))){if(!encoded.equals(state.get("args_"+op)))throw new IllegalArgumentException("configuration changed; choose a new run");return summary();}
@@ -80,6 +80,18 @@ final class ServerlessRun implements AutoCloseable {
                 case "event"->{
                     String function=state.get("lambda_arn");if(function==null)throw new IllegalStateException("Lambda prerequisite missing");String name="lmaws_"+run+"_rule",schedule=arg(args,"schedule","rate(1 minute)");new EventRule(name,schedule,run);
                     if(!backend.isDemo())backend.putEventRule(name,schedule,run);state.put("rule",name);persist();if(!backend.isDemo())backend.putEventTarget(name,function,run);
+                }
+                case "report"->{
+                    if(state.get("bucket")==null||state.get("table")==null)throw new IllegalStateException("report requires bucket and table");
+                    state.putAll(backend.serverlessReport(state.get("bucket"),state.get("table"),run));persist();
+                }
+                case "reserve_http"->{
+                    long requests=integer(args,"requests",0),bytes=integer(args,"bytes",0);if(requests>10000||bytes>104857600)throw new IllegalArgumentException("HTTP admission exceeds bounds");
+                    var amount=java.math.BigDecimal.valueOf(requests).multiply(new java.math.BigDecimal("0.000001")).add(java.math.BigDecimal.valueOf(bytes).multiply(new java.math.BigDecimal("0.09")).divide(new java.math.BigDecimal("1073741824"),12,java.math.RoundingMode.CEILING));
+                    var cap=new java.math.BigDecimal(state.getOrDefault("cost_cap","0.10"));if(amount.compareTo(cap)>0)throw new CostLedger.BudgetExceeded("HTTP admission exceeds scenario cap");state.put("http_reserved",amount.toPlainString());state.put("http_reserved_requests",Long.toString(requests));state.put("http_reserved_bytes",Long.toString(bytes));
+                }
+                case "record_http"->{
+                    var amount=new java.math.BigDecimal(state.getOrDefault("http_reserved","0"));var actual=java.math.BigDecimal.valueOf(integer(args,"requests",0)).multiply(new java.math.BigDecimal("0.000001")).add(java.math.BigDecimal.valueOf(integer(args,"bytes",0)).multiply(new java.math.BigDecimal("0.09")).divide(new java.math.BigDecimal("1073741824"),12,java.math.RoundingMode.CEILING));if(actual.compareTo(amount)>0)throw new CostLedger.BudgetExceeded("HTTP usage exceeded admitted bound");state.put("http_actual",actual.toPlainString());state.remove("http_reserved");
                 }
             }
             state.put("step_"+op,"done");state.remove("intent");state.put("status","up");persist();return summary();
