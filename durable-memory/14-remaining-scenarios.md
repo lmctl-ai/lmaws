@@ -19,5 +19,6 @@ explicit go (`LMWEBLAB_REMAINING_LIVE_GO=1`), profile lmaws, a fresh explicit he
 run id and no fake endpoint. Scenario 07 additionally needs mapping permissions:
 function-only `lambda:*` in the reviewed v6 snapshot does not cover them. No policy
 was applied and no live scenario was run in this work. Native packaging and any
-patch release are separate from this main-source work; v0.1.18 remains the latest
-verified release and lacks these additions.
+patch release are separate from this main-source work. Concurrent main version
+metadata is 0.1.19. The historical v0.1.18 release proof does not cover these
+additions; use the current source build until an artifact containing them is verified.
