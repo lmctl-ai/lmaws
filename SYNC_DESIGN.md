@@ -1,7 +1,8 @@
-# File lifecycle registry design
+# File lifecycle registry
 
-The consolidated API-only file lifecycle registry proposal (recommended name
-**lmfiles**, formerly lmsync) is [docs/LMSYNC_DESIGN.md](docs/LMSYNC_DESIGN.md).
+Canonical design and implementation qualification:
+[docs/LMSYNC_DESIGN.md](docs/LMSYNC_DESIGN.md).
 
-Design only; no repository created. The registry has no remote actions or
-business-rule engine; user LMScripts orchestrate existing action hosts.
+The confirmed product is [lmfiles](https://github.com/lmctl-ai/lmfiles), with
+milestones 1A/1B implemented. The registry has no remote actions or business-rule
+engine; one user LMScript orchestrates each job with existing action hosts.

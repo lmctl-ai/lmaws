@@ -1,4 +1,4 @@
-# lmfiles: file lifecycle registry (proposed name)
+# lmfiles: file lifecycle registry
 
 Implementation: **[lmctl-ai/lmfiles](https://github.com/lmctl-ai/lmfiles)** now exists
 under the confirmed name **lmfiles**. The Lead separately authorized milestones
@@ -6,12 +6,13 @@ under the confirmed name **lmfiles**. The Lead separately authorized milestones
 measurements are documented in that repo; the larger API/tier plan below still
 includes deferred 1C work. No real AWS/SFTP action or release was authorized.
 
-Status: **design only, brief v2 plus lifecycle/lmssh addenda and F1–F9 review revision**. This is the current registry design. It
+Status: **v2 design baseline, reviewed and qualified by the implemented 1A/1B subset**. This is the current registry design. It
 consolidates the useful publication examples from root `SYNC_DESIGN.md` at
 `d0f033f`, replacing its integrated sync/policy engine with the boundary below.
-No implementation, AWS command, remote-host test, workflow dispatch or benchmark
-is performed here. No product name is final and no repository is created. The
-requested document path remains `docs/LMSYNC_DESIGN.md`; legacy lmsync links point here.
+The original design phase performed no runtime actions. The subsequent build
+authorization created the confirmed lmfiles repo and allowed its manual fake-only
+CI; this document still authorizes no real cloud/SSH operation or release. The
+canonical document path remains `docs/LMSYNC_DESIGN.md`; legacy lmsync links point here.
 
 Contents: [boundary](#definition-and-boundary), [API](#1-core-api-and-neutral-data),
 [belief/verification](#2-believed-state-and-verification-scripts),
@@ -742,8 +743,9 @@ Do not assert RocksDB is necessary while a viable Java sorted-store design exist
 
 ### Eight lifecycle recipes: one file per job
 
-These are **design sketches**, not executable shipped examples: the registry
-schema does not exist yet. Each future `.lms` contains its orchestration, CONFIG
+These are **full-lifecycle design sketches**. The implemented 1A/1B schema and
+six runnable examples are in lmfiles; the eight broader workflows below include
+deferred 1C calls. Each future `.lms` contains its orchestration, CONFIG
 constants and product-specific `_lmcode_` blocks; it may import helpers but never
 requires an invisible scheduler. Registry pseudocode below uses the proposed API;
 the existing transfer signatures are audited in the pairing sections below.
@@ -751,9 +753,9 @@ All committed fixtures/pictures are synthetic. No live job or picture generation
 is performed by this documentation task.
 
 Each recipe gets `examples/<name>.lms`, a synthetic image and a picture-first
-caption `lmctl https://raw.githubusercontent.com/lmctl-ai/<chosen-repo>/main/examples/<name>.lms`
-when the product repo actually exists. `<chosen-repo>` is deliberately a placeholder,
-not a created repo or runnable URL today. Captions explain inputs, outputs, stage
+caption `lmctl https://raw.githubusercontent.com/lmctl-ai/lmfiles/main/examples/<name>.lms`
+when that particular example is implemented. The eight planned names below are
+not promises of currently runnable URLs; use the product README for current jobs. Captions explain inputs, outputs, stage
 names and cost assumptions. Never commit real legal-source/account/host data or
 credentials. Images show counts/state flow, with the action-host estimated cost
 line for billable scripts; the registry has no cloud-price ledger.
@@ -1401,8 +1403,8 @@ end _lmcode_
 ```
 
 This is a mechanism sketch, not a currently executable lmfiles script. Markers/
-`cli` are supported aliases, but lmfiles does not yet exist and has no installed
-schema. Current `read_lines` returns an array: do not load a million-line plan
+`cli` are supported aliases. lmfiles now has a 1A/1B schema; any unimplemented
+1C method in this full-design sketch remains illustrative. Current `read_lines` returns an array: do not load a million-line plan
 through it. Use the registry's proposed local bounded-batch helpers, or partition files into
 bounded batches consumed with existing file APIs. Shared codec fixtures belong
 with the optional registry log format, not a redesign of the action hosts. Process one batch or a streaming file in a host, not one process per
@@ -1689,3 +1691,7 @@ change cursors/checkpoints/archives, multi-process coordination and100M scale/
 metadata-heavy/compaction/power-loss qualification. Existing transport gaps remain
 separate. Manual lmfiles CI is permitted by the build brief; lmctlhq workflow
 dispatch, tags/releases and real cloud/SSH actions remain outside this task.
+
+Five-platform managed/native qualification is green for the implementation:
+https://github.com/lmctl-ai/lmfiles/actions/runs/40526639317
+No tags or releases were created.
