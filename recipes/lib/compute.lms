@@ -138,7 +138,7 @@ fn recipe_ami_lookup(options) {
   let o = recipe_normalize(options);
   if (o.preview) { return recipe_preview(o, "ami_lookup"); }
   # The read-only default profile denies ssm:GetParameter; the lmaws-ec2 profile may read /aws/service/ only.
-  assert(!o.live || o.profile == "lmaws-ec2");
+  assert(!o.live || o.profile == "lmaws-ec2", "the live AMI lookup needs --profile lmaws-ec2 (the default profile cannot read SSM parameters)");
   let out = _compute_output(o, "ami_lookup");
   let params = recipe_ami_parameters();
   let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
@@ -226,7 +226,7 @@ fn recipe_spot_nano_lifecycle(options) {
     println("plan: t4g.nano (fallback t3.nano) one-time spot, 8 GiB gp3 root deleted on termination, no public IPv4, new tagged security group without inbound rules, at most 10 minutes, cap $0.05");
     return plan;
   }
-  assert(!o.live || (o.apply && o.profile == "lmaws-ec2"));
+  assert(!o.live || (o.apply && o.profile == "lmaws-ec2"), "a live spot sandbox needs --live --apply --profile lmaws-ec2");
   let out = _compute_output(o, "spot_nano_lifecycle");
   let p1 = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_spot_plan");
@@ -328,7 +328,7 @@ fn recipe_compute_chart(name, title, ylabel, header, rows, colors) {
   }
   let chart = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${"images/" + name + ".png"}, 900, 560);
-plot.cmd(${"set termoption noenhanced; set datafile separator ','; set title '" + title + "'; set ylabel '" + ylabel + "'; set style data histograms; set style histogram clustered gap 1; set style fill solid 0.85 border -1; set boxwidth 0.9; set grid ytics; set yrange [0:*]; set key top right; set xtics rotate by -25; set bmargin 6; set rmargin 10"});
+plot.cmd(${"set termoption noenhanced; set datafile separator ','; set title '" + title + "'; set ylabel '" + ylabel + "'; set style data histograms; set style histogram clustered gap 1; set style fill solid 0.85 border -1; set boxwidth 0.9; set grid ytics; set yrange [0:*]; set offsets 0, 0, graph 0.12, 0; " + (len(header) == 2 ? "unset key" : "set key top right") + "; set xtics rotate by -25; set bmargin 6; set rmargin 10"});
 plot.cmd(${"plot 'data/" + name + ".csv' every ::1" + using});
 plot.close();
 end _dsl_

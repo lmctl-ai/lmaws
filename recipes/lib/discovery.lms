@@ -7,7 +7,7 @@ import "./common.lms";
 fn recipe_discovery(options) {
   let o=recipe_normalize(options);
   if(o.preview) {return recipe_preview(o,o.task);}
-  assert(!o.apply || (o.live && o.profile=="lmaws"));
+  assert(!o.apply || (o.live && o.profile=="lmaws"), "deleting leftovers needs --live --apply --profile lmaws");
   if(o.live) {
     if(!o.output_explicit) {o.output=".lmaws-local/search/"+o.task;}
     assert(starts_with(o.output,".lmaws-local/"));

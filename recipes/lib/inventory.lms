@@ -11,7 +11,7 @@ fn recipe_inventory(options) {
   if (o.preview) { return recipe_preview(o, o.task); }
   let output = str(o.output);
   assert(contains(["identity", "buckets", "instances", "vpcs", "security_groups", "tables", "queues", "topics", "functions", "log_groups", "alarms", "zones", "secrets", "parameters", "clusters", "roles"],o.task) || o.task=="all");
-  assert(!o.live || (o.task!="identity" && o.task!="roles" && o.profile!="admin"));
+  assert(!o.live || (o.task!="identity" && o.task!="roles" && o.profile!="admin"), "live inventory skips IAM identity/roles (federated sessions cannot call IAM) and never uses the admin profile");
   let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_inventory");
 if ((${o.task} == "identity" || ${o.task} == "all") && !${o.live}) { file_write(${output + ".identity.raw.json"}, cloud.identity().json()); }

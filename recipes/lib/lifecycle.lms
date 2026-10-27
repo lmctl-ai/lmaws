@@ -29,7 +29,7 @@ fn recipe_lifecycle(options) {
   let o = recipe_normalize(options);
   let task = str(o.task);
   if (o.preview) { return recipe_preview(o, task); }
-  assert(!o.live || (o.apply && o.profile=="lmaws"));
+  assert(!o.live || (o.apply && o.profile=="lmaws"), "a live sandbox needs --live --apply --profile lmaws (the default profile is read-only)");
   assert(contains(["queue","topic","table","bucket","parameter","log_group"],task));
   let name = "recipe_" + task;
   if(task=="bucket") {name="recipe-bucket";}

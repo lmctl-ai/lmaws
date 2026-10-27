@@ -176,7 +176,7 @@ fn recipe_grant_session_policy(options) {
   if (o.preview) { return recipe_preview(o, "grant_session_policy"); }
   if (o.apply) {
     assert(o.live);
-    assert(o.profile == "admin");
+    assert(o.profile == "admin", "IAM policy writes need --profile admin and LMAWS_ADMIN_GRANT=1 (grant recipes only)");
     assert(getenv("LMAWS_ADMIN_GRANT", "") == "1");
   }
   let output = str(o.output);

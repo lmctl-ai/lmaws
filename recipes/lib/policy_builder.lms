@@ -467,7 +467,7 @@ fn recipe_policy_builder(options) {
     o.live = false;
     o.apply = false;
   } else if (o.live) {
-    assert(o.profile == "admin");
+    assert(o.profile == "admin", "IAM policy writes need --profile admin and LMAWS_ADMIN_GRANT=1 (grant recipes only)");
   }
   let output = str(o.output);
   mkdir(dirname(output), true);
@@ -652,6 +652,15 @@ end _dsl_
 fn _pb_table(name, title, lines_of_text) {
   assert(regex_test(name, "^[a-z][a-z0-9_]*$"));
   mkdir("images");
+  # Wrap long lines (continuation indented under the value column) instead of letting gnuplot clip them.
+  let wrapped = [];
+  for (text in lines_of_text) {
+    let rest = str(text); let first = true;
+    while (len(rest) > 96) { push(wrapped, substr(rest, 0, 96)); rest = "                " + substr(rest, 96, len(rest) - 96); first = false; }
+    push(wrapped, rest);
+  }
+  if (len(wrapped) > 30) { let more = len(wrapped) - 29; let kept = []; let k = 0; while (k < 29) { push(kept, wrapped[k]); k = k + 1; } push(kept, "... " + str(more) + " more lines: the full text is in the recipe report"); wrapped = kept; }
+  lines_of_text = wrapped;
   let cmds = "set termoption noenhanced; set title '" + title + "' font ',15'; unset border; unset tics; unset key; set xrange [0:1]; set yrange [0:" + str(len(lines_of_text) + 1) + "]";
   let i = 0;
   for (text in lines_of_text) {
@@ -660,7 +669,7 @@ fn _pb_table(name, title, lines_of_text) {
     i = i + 1;
   }
   let chart = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
-plot.png(${"images/" + name + ".png"}, 940, 420);
+plot.png(${"images/" + name + ".png"}, 1040, ${max(420, 70 + 34 * len(lines_of_text))});
 plot.cmd(${cmds});
 plot.cmd("plot -10 notitle");
 plot.close();
@@ -694,8 +703,8 @@ fn recipe_policy_picture(report, task, name) {
       "Action denied : " + str(get(d, "action", "")) + " (" + str(get(d, "action_class", "")) + ")",
       "Resource ARN  : " + str(get(d, "resource", "")),
       "Denial kind   : " + str(get(d, "denial_type", "")),
-      "Failed check  : " + substr(str(get(d, "failed_condition", "")), 0, 74),
-      "Plain English : " + substr(str(get(d, "plain_english", "")), 0, 74),
+      "Failed check  : " + str(get(d, "failed_condition", "")),
+      "Plain English : " + str(get(d, "plain_english", "")),
       "Builder fix   : " + str(get(d, "builder_snippet", ""))
     ];
     _pb_table(name, "IAM AccessDenied diagnostic and synthesized builder fix", lines);

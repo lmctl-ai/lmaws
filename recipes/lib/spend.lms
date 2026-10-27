@@ -29,7 +29,7 @@ fn recipe_spend(options) {
   let topic = _spend_topic(o);
   if (o.preview) { return recipe_preview(o, topic); }
   assert(o.top<=100);
-  if (o.live) { assert(o.profile == "default"); }
+  if (o.live) { assert(o.profile == "default", "live spend reports use --profile default (read-only billing data)"); }
   let output = _spend_output(o, topic);
   let program = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let spend = aws.spend(${topic}, ${o.period}, ${o.top}, ${o.cap});

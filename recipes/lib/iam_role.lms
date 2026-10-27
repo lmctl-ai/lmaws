@@ -29,7 +29,7 @@ fn recipe_grant_lambda_role(options) {
   let o=recipe_normalize(merge(options,{admin_allowed:true}));
   let apply_requested=o.apply && o.live && !o.preview;
   if(o.live) {
-    assert(o.profile=="admin");assert(getenv("LMAWS_ADMIN_GRANT","")=="1");
+    assert(o.profile=="admin", "IAM role grants need --profile admin");assert(getenv("LMAWS_ADMIN_GRANT","")=="1", "IAM role grants need LMAWS_ADMIN_GRANT=1");
     if(!o.output_explicit) {o.output=".lmaws-local/iam-role/grant_lambda_role";}
     assert(starts_with(replace_all(o.output,"\\","/"),".lmaws-local/iam-role/"));
     assert(!contains(o.output,".."));
