@@ -522,15 +522,47 @@ public final class AwsBackend implements AutoCloseable {
     }
     private static String eventPermissionId(String rule){return "lmaws-event-"+Integer.toUnsignedString(rule.hashCode(),16);}
     Map<String,String> createLambda(String name,String role,String runtime,String handler,String source,int memory,int timeout,String runId) {
+        return createLambda(name,role,runtime,handler,source,memory,timeout,runId,"lmaws_"+name.substring("lmaws_".length())+"_logs_"+runId);
+    }
+    Map<String,String> createLambda(String name,String role,String runtime,String handler,String source,int memory,int timeout,String runId,String logGroup) {
         requireScenarioWrite();requireName(name);requireRunId(runId);
+        requireLogGroupName(logGroup,runId);
         new LambdaFunction(name,role,runtime,handler,source,memory,timeout,runId);
         if(memory>512||timeout>30)throw new IllegalArgumentException("scenario Lambda caps: 512 MiB / 30 seconds");
-        if(demo)return row("kind","lambda","id","arn:aws:lambda:local:000000000000:function:"+name,"name",name,"run_id",runId,"state","active");
+        if(demo)return row("kind","lambda","id","arn:aws:lambda:local:000000000000:function:"+name,"name",name,"run_id",runId,"log_group",logGroup,"state","active");
+        ensureLogGroup(logGroup,runId);
         String roleArn=role.startsWith("arn:")?role:"arn:aws:iam::"+sts().getCallerIdentity().account()+":role/"+role;
         byte[] zip=LambdaFunction.sourceZip(handler,source);
-        var response=lambda().createFunction(x->x.functionName(name).role(roleArn).runtime(software.amazon.awssdk.services.lambda.model.Runtime.fromValue(runtime)).handler(handler).memorySize(memory).timeout(timeout).code(c->c.zipFile(SdkBytes.fromByteArray(zip))).publish(true).tags(Map.of("lmaws_test",runId)));
+        var response=lambda().createFunction(x->x.functionName(name).role(roleArn).runtime(software.amazon.awssdk.services.lambda.model.Runtime.fromValue(runtime)).handler(handler).memorySize(memory).timeout(timeout).code(c->c.zipFile(SdkBytes.fromByteArray(zip))).loggingConfig(software.amazon.awssdk.services.lambda.model.LoggingConfig.builder().logFormat("JSON").logGroup(logGroup).build()).publish(true).tags(Map.of("lmaws_test",runId)));
         String arn=response.functionArn();lambdaRuns.put(arn,runId);
-        return row("kind","lambda","id",arn,"name",name,"arn",arn,"run_id",runId,"state",response.stateAsString()==null?"Pending":response.stateAsString());
+        return row("kind","lambda","id",arn,"name",name,"arn",arn,"run_id",runId,"log_group",logGroup,"state",response.stateAsString()==null?"Pending":response.stateAsString());
+    }
+    private void requireLogGroupName(String logGroup,String runId) {
+        if(logGroup==null||!logGroup.matches("lmaws_[a-z0-9_-]{1,48}_logs_"+Pattern.quote(runId))) throw new SecurityException("Lambda log group must be lmaws_<slug>_logs_<run>");
+    }
+    private void ensureLogGroup(String logGroup,String runId) {
+        try {
+            var groups=logs().describeLogGroups(x->x.logGroupNamePrefix(logGroup)).logGroups();
+            var existing=groups.stream().filter(g->logGroup.equals(g.logGroupName())).findFirst();
+            if(existing.isPresent()) {
+                var tags=logs().listTagsLogGroup(x->x.logGroupName(logGroup)).tags();
+                if(!runId.equals(tags.get("lmaws_test"))) throw new SecurityException("Lambda log group exists without this run tag");
+                return;
+            }
+            logs().createLogGroup(x->x.logGroupName(logGroup));
+            logs().tagLogGroup(x->x.logGroupName(logGroup).tags(Map.of("lmaws_test",runId)));
+        } catch (software.amazon.awssdk.services.cloudwatchlogs.model.ResourceAlreadyExistsException e) {
+            var tags=logs().listTagsLogGroup(x->x.logGroupName(logGroup)).tags();
+            if(!runId.equals(tags.get("lmaws_test"))) throw new SecurityException("Lambda log group race has foreign ownership");
+        }
+    }
+    void deleteLambdaLogGroup(String logGroup,String runId) {
+        if(logGroup==null||logGroup.isBlank())return;
+        requireLogGroupName(logGroup,runId);
+        if(demo)return;
+        var tags=logs().listTagsLogGroup(x->x.logGroupName(logGroup)).tags();
+        if(!runId.equals(tags.get("lmaws_test"))) throw new SecurityException("refusing foreign Lambda log group");
+        logs().deleteLogGroup(x->x.logGroupName(logGroup));
     }
     Map<String,String> waitLambdaActive(String arn,String runId,int seconds) {
         if(seconds<1||seconds>120)throw new IllegalArgumentException("Lambda Active wait must be 1..120 seconds");

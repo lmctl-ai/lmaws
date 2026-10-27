@@ -14,8 +14,8 @@ final class ServerlessRun implements AutoCloseable {
     ServerlessRun(AwsBackend backend,CostLedger cost,String run,String domain,String file) {
         WebStack.requireRun(run);if(run.length()>24)throw new IllegalArgumentException("serverless run must be 4..24 hex digits");
         if(domain==null||!domain.matches("[a-z0-9](?:[a-z0-9.-]{0,250}[a-z0-9])?")||domain.contains(".."))throw new IllegalArgumentException("invalid domain");
-        // User explicitly restricted this rollout to fake transports. No credential or role probing.
-        if(!backend.isDemo()&&(System.getenv("LMAWS_ENDPOINT")==null||System.getenv("LMAWS_ENDPOINT").isBlank()))throw new SecurityException("serverless live deployment awaits Lead authorization and the execution-role grant");
+        if(!backend.isDemo() && (!"lmaws".equals(AwsBackend.activeProfile()) || !AwsBackend.isLiveEnabled() || !"us-east-1".equals(backend.region())))
+            throw new SecurityException("live serverless deployment requires AWS_PROFILE=lmaws, LMAWS_LIVE=1 and us-east-1");
         this.backend=backend;this.cost=cost;this.run=run;this.domain=domain;path=Path.of(file).toAbsolutePath().normalize();
         if(java.util.stream.StreamSupport.stream(path.spliterator(),false).noneMatch(p->p.toString().equals(".lmweblab-local")))throw new IllegalArgumentException("serverless state must be in .lmweblab-local");
         try {
@@ -62,14 +62,18 @@ final class ServerlessRun implements AutoCloseable {
                 }
                 case "lambda"->{
                     String name="lmaws_"+run+"_fn",role=arg(args,"role","lmaws_lambda_exec"),runtime=arg(args,"runtime","python3.12"),handler=arg(args,"handler","handler.handler");
+                    String slug=arg(args,"slug",run); if(!slug.matches("[a-z0-9_-]{1,24}"))throw new IllegalArgumentException("invalid Lambda scenario slug");
+                    String logGroup="lmaws_"+slug+"_logs_"+run;
                     int memory=integer(args,"memory_mb",128),timeout=integer(args,"timeout_s",10),ttl=integer(args,"ttl_seconds",3600);
                     if(memory>512||timeout>30||ttl<1||ttl>86400)throw new IllegalArgumentException("scenario memory/timeout/TTL caps exceeded");
                     Path sourcePath=Path.of(arg(args,"source_file",""));if(!Files.isRegularFile(sourcePath)||Files.size(sourcePath)>196608)throw new IllegalArgumentException("bounded source_file required");
                     String prefix="import os\n";
                     for(var e:Map.of("RUN_ID",run,"TABLE_NAME",state.getOrDefault("table",""),"BUCKET_NAME",state.getOrDefault("bucket",""),"TTL_SECONDS",String.valueOf(ttl)).entrySet())prefix+="os.environ["+Jsons.encodeRaw(e.getKey())+"]="+Jsons.encodeRaw(e.getValue())+"\n";
                     String source=prefix+Files.readString(sourcePath);new LambdaFunction(name,role,runtime,handler,source,memory,timeout,run);
-                    String arn=backend.isDemo()?"arn:aws:lambda:local:000000000000:function:"+name:backend.createLambda(name,role,runtime,handler,source,memory,timeout,run).get("arn");
+                    state.put("log_group",logGroup);persist();
+                    String arn=backend.isDemo()?"arn:aws:lambda:local:000000000000:function:"+name:backend.createLambda(name,role,runtime,handler,source,memory,timeout,run,logGroup).get("arn");
                     state.put("lambda_name",name);state.put("lambda_arn",arn);persist();
+                    if(!backend.isDemo())backend.waitLambdaActive(arn,run,120);
                     String reason=arg(args,"url_reason","ephemeral scenario API with no secrets; bounded requests and explicit teardown");
                     state.put("lambda_url",backend.isDemo()?"https://"+name+".lambda-url.local/":backend.lambdaUrl(arn,reason));persist();
                 }
@@ -81,10 +85,10 @@ final class ServerlessRun implements AutoCloseable {
             state.put("step_"+op,"done");state.remove("intent");state.put("status","up");persist();return summary();
         }catch(Exception error){try{down();}catch(Exception cleanup){error.addSuppressed(cleanup);}if(error instanceof RuntimeException runtime)throw runtime;throw new IllegalStateException("serverless step failed",error);}
     }
-    synchronized Map<String,String> summary(){var result=new LinkedHashMap<String,String>();for(String k:List.of("run_id","status","table","bucket","lambda_name","lambda_arn","lambda_url","rule"))result.put(k,state.getOrDefault(k,""));result.put("estimated_cost_usd",backend.isDemo()?"0.00":cost.total().toPlainString());return result;}
+    synchronized Map<String,String> summary(){var result=new LinkedHashMap<String,String>();for(String k:List.of("run_id","status","table","bucket","lambda_name","lambda_arn","lambda_url","log_group","rule"))result.put(k,state.getOrDefault(k,""));result.put("estimated_cost_usd",backend.isDemo()?"0.00":cost.total().toPlainString());return result;}
     synchronized List<Map<String,String>> leftovers(){
         var rows=new ArrayList<Map<String,String>>();
-        for(String kind:List.of("table","bucket","lambda_name","rule"))if(state.containsKey(kind))rows.add(Map.of("kind",kind,"name",state.get(kind),"run_id",run));
+        for(String kind:List.of("table","bucket","lambda_name","log_group","rule"))if(state.containsKey(kind))rows.add(Map.of("kind",kind,"name",state.get(kind),"run_id",run));
         return rows;
     }
     synchronized Map<String,String> down(){
@@ -92,6 +96,7 @@ final class ServerlessRun implements AutoCloseable {
             var errors=new ArrayList<RuntimeException>();
             cleanup("rule",()->{if(!backend.isDemo())backend.deleteEventRule(state.get("rule"),run);},errors);
             cleanup("lambda_name",()->{if(!backend.isDemo())backend.deleteLambda(state.get("lambda_arn"),run);state.remove("lambda_arn");state.remove("lambda_url");},errors);
+            cleanup("log_group",()->{backend.deleteLambdaLogGroup(state.get("log_group"),run);state.remove("log_group");},errors);
             cleanup("table",()->{if(!backend.isDemo()&&backend.exists("table",state.get("table"))){if(!backend.owned("table",state.get("table"),run))throw new SecurityException("table tag mismatch");backend.delete("table",state.get("table"));}},errors);
             cleanup("bucket",()->{if(!backend.isDemo()&&backend.exists("bucket",state.get("bucket"))){if(!backend.owned("bucket",state.get("bucket"),run))throw new SecurityException("bucket tag mismatch");backend.emptyServerlessBucket(state.get("bucket"),run);backend.delete("bucket",state.get("bucket"));}},errors);
             if(!errors.isEmpty()){state.put("status","cleanup_failed");persist();var error=new IllegalStateException("serverless cleanup incomplete");errors.forEach(error::addSuppressed);throw error;}

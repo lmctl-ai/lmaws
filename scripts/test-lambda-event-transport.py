@@ -15,7 +15,7 @@ import json,tempfile,shutil
 with tempfile.TemporaryDirectory(prefix='lmaws-serverless-error-') as directory:
     work=pathlib.Path(directory);state=work/'.lmweblab-local'/'state.json'
     script=work/'failure.lms';bytecode=work/'failure.dslb';schema=work/'schema.json'
-    host=pathlib.Path(env['LMAWS_TEST_HOST']).resolve()
+    host=pathlib.Path(env.get('LMAWS_TEST_HOST',str(root/'target/jvm-bin/lmaws'))).resolve()
     runner=['cmd.exe','/c',str(host)] if host.suffix.lower()=='.cmd' else [str(host)]
     schema.write_bytes(subprocess.check_output(runner+['--dsl-schema','--json'],env=env,timeout=30))
     execute=runner+['--dry-run','--dsl',bytecode.as_posix()]

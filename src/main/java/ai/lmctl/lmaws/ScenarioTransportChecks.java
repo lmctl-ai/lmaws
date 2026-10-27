@@ -44,13 +44,14 @@ public final class ScenarioTransportChecks {
             e.sendResponseHeaders(status,status==204?-1:bytes.length);if(bytes.length>0)e.getResponseBody().write(bytes);e.close();
         });server.start();
         try(var backend=new AwsBackend("us-east-1",false)){
-            backend.createLambda(FN,"lmaws_lambda_exec","python3.12","app.handler","def handler(e,c): return e",128,10,RUN);
+            backend.createLambda(FN,"lmaws_lambda_exec","python3.12","app.handler","def handler(e,c): return e",128,10,RUN,"lmaws_s03_logs_"+RUN);
             check("Active".equals(backend.waitLambdaActive(ARN,RUN,5).get("state")),"bounded Active wait");
             check(statePolls.get()>=2,"Pending was not polled");stateFailed.set(true);refused(()->backend.waitLambdaActive(ARN,RUN,1));stateFailed.set(false);
             backend.invokeLambda(ARN,"{}");backend.lambdaUrl(ARN,"public offline transport fixture");
             check(requests.stream().anyMatch(x->x.contains("InvokeFunctionUrl")&&x.contains("NONE")),"URL permission missing");
             check(requests.stream().anyMatch(x->x.contains("InvokedViaFunctionUrl")&&x.contains("lambda:InvokeFunction")),"URL-only invoke permission missing");
             var create=requests.stream().filter(x->x.startsWith("POST /2015-03-31/functions ")).findFirst().orElseThrow();
+            check(create.contains("lmaws_s03_logs_"+RUN),"custom Lambda logging group missing");
             var encoded=(Map<?,?>)io.lmctl.lmcode.Json.parse(create.substring(create.indexOf("{\"")));
             var code=(Map<?,?>)encoded.get("Code");byte[] zip=Base64.getDecoder().decode((String)code.get("ZipFile"));
             try(var in=new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(zip))){check("app.py".equals(in.getNextEntry().getName()),"zip entry");check(new String(in.readAllBytes(),StandardCharsets.UTF_8).contains("def handler"),"zip source");}

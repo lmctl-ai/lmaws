@@ -13,10 +13,10 @@ public final class ServerlessChecks {
         try(var backend=new AwsBackend("us-east-1",true,cost)){
             try(var run=new ServerlessRun(backend,cost,"cafe03","example.com",state.toString())){
                 run.step("table","{}");run.step("bucket","{}");run.step("lambda",config);run.step("event","{}");
-                if(run.leftovers().size()!=4)throw new AssertionError("expected four simulated resource receipts");
+                if(run.leftovers().size()!=5)throw new AssertionError("expected five simulated resource receipts including custom logs");
             }
             try(var run=new ServerlessRun(backend,cost,"cafe03","example.com",state.toString())){
-                if(!"up".equals(run.summary().get("status"))||run.leftovers().size()!=4)throw new AssertionError("close discarded up state");
+                if(!"up".equals(run.summary().get("status"))||run.leftovers().size()!=5)throw new AssertionError("close discarded up state");
                 run.down();if(!run.leftovers().isEmpty())throw new AssertionError("cleanup receipts remain");run.down();
             }
             refused(()->new ServerlessRun(backend,cost,"dead04","example.com",state.toString()));
