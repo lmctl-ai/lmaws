@@ -33,3 +33,5 @@ Canonical external records: [USER_TEST](../docs/USER_TEST.md),
 [current comparison campaign](../evidence/comparison-campaign-v013.json),
 [provider findings](../compare/PROVIDER_TEST.md).
 Superseded release/candidate notes and evidence are available in Git history.
+
+- [13-lambda-role.md](13-lambda-role.md): bounded admin Lambda execution-role grant, PassRole lint and pending session rollout.

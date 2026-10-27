@@ -1,0 +1,81 @@
+# Access: Write with the admin profile only when applying; preview is offline by default.
+# What: Manage the single pre-built lmaws_lambda_exec Lambda execution role.
+# Safety: the host enforces the Lambda-only trust policy, lmaws_boundary and scoped policies.
+import "./common.lms";
+
+fn lambda_role_spec() {
+  return {
+    trust_policy: {
+      Version: "2012-10-17",
+      Statement: [{Effect: "Allow", Action: "sts:AssumeRole", Principal: {Service: "lambda.amazonaws.com"}}]
+    },
+    permissions_boundary: "arn:aws:iam::${aws:PrincipalAccount}:policy/lmaws_boundary",
+    managed_policies: ["arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"],
+    inline_policies: {
+      lmaws_lambda_data: {
+        Version: "2012-10-17",
+        Statement: [
+          {Effect: "Allow", Action: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem", "dynamodb:DescribeTable"], Resource: ["arn:aws:dynamodb:*:*:table/lmaws_*", "arn:aws:dynamodb:*:*:table/lmaws_*/index/*"]},
+          {Effect: "Allow", Action: ["sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:ChangeMessageVisibility"], Resource: "arn:aws:sqs:*:*:lmaws_*"},
+          {Effect: "Allow", Action: "sns:Publish", Resource: "arn:aws:sns:*:*:lmaws_*"},
+          {Effect: "Allow", Action: ["s3:GetObject", "s3:PutObject", "s3:ListBucket"], Resource: ["arn:aws:s3:::lmaws-*", "arn:aws:s3:::lmaws-*/*"]}
+        ]
+      }
+    }
+  };
+}
+
+fn recipe_grant_lambda_role(options) {
+  let o=recipe_normalize(merge(options,{admin_allowed:true}));
+  let apply_requested=o.apply && o.live && !o.preview;
+  if(o.live) {
+    assert(o.profile=="admin");assert(getenv("LMAWS_ADMIN_GRANT","")=="1");
+    if(!o.output_explicit) {o.output=".lmaws-local/iam-role/grant_lambda_role";}
+    assert(starts_with(replace_all(o.output,"\\","/"),".lmaws-local/iam-role/"));
+    assert(!contains(o.output,".."));
+  }
+  let role=str(get(o,"role_name","lmaws_lambda_exec"));
+  assert(role=="lmaws_lambda_exec");
+  let spec=str(get(o,"role_spec",""));
+  if(spec=="") {spec=json_stringify(lambda_role_spec());}
+  let output=str(get(o,"output",o.live ? ".lmaws-local/iam-role/grant_lambda_role" : "data/grant_lambda_role"));
+  let get_raw=output+".get.raw.json";
+  let put_raw=output+".put.raw.json";
+
+  let p=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud=aws.example("recipe_grant_lambda_role");
+let before=cloud.iam_role_get(${role});
+let changed=cloud.iam_role_put(${role},${spec},${apply_requested});
+file_write(${get_raw},before.json());
+file_write(${put_raw},changed.json());
+end _dsl_
+  let result=recipe_run(p,merge(o,{preview:false,apply:apply_requested}));
+  let before_obj=json_parse(read_file(get_raw));
+  let changed_obj=json_parse(read_file(put_raw));
+  remove_file(get_raw);remove_file(put_raw);
+  let report={
+    kind: "iam_role",
+    name: str(get(changed_obj,"name",role)),
+    arn: str(get(changed_obj,"arn","")),
+    exists: str(get(changed_obj,"exists","false"))=="true",
+    applied: str(get(changed_obj,"applied","false"))=="true",
+    action: str(get(changed_obj,"action",apply_requested?"updated":"dry_run")),
+    changed: str(get(changed_obj,"changed","false"))=="true",
+    diff_lines: json_parse(str(get(changed_obj,"diff_lines","[]"))),
+    lint_valid: str(get(changed_obj,"lint_valid","false"))=="true",
+    document: str(get(changed_obj,"document",spec)),
+    before: before_obj,
+    synthetic: !o.live,
+    rows: [],
+    output_file: output+".json"
+  };
+  for(line in report.diff_lines) {
+    let label=contains(line,"permissions_boundary:") ? "Boundary" : contains(line,"trust_policy:") ? "Lambda trust" : contains(line,"managed_policies:") ? "Managed policy" : "Inline policy";
+    push(report.rows,{name:label,kind:label,detail:str(line),count:1});println("IAM role diff: "+str(line));
+  }
+  if(len(report.rows)==0) {push(report.rows,{name:"unchanged",kind:"grant",detail:"no changes",count:0});}
+  mkdir(dirname(output),true);write_file(output+".json",json_stringify(report,2));write_csv(output+".csv",report.rows);
+  if(o.preview) {println(recipe_cost_line(merge(report,{result:result})));}
+  return merge(report,{result:result});
+}
+

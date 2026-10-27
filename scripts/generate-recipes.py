@@ -22,6 +22,7 @@ for name,what in [('spend_detail','Review account spend detail and optimization 
 ITEMS.append(dict(name='policy_lint',category='Identity and access posture',task='policy_lint',library='iam_policy',function='recipe_policy_lint',what='Validate and lint an IAM managed policy JSON document offline against lmaws guardrails',access='Read-only',cost='$0.00 offline lint'))
 ITEMS.append(dict(name='grant_session_policy',category='Identity and access posture',task='grant_session_policy',library='iam_policy',function='recipe_grant_session_policy',what='Preview statement-level diff or grant the lmaws_session customer-managed IAM policy',access='Write with the admin profile',cost='$0.00 IAM metadata; live apply requires AWS_PROFILE=admin and LMAWS_ADMIN_GRANT=1'))
 ITEMS.append(dict(name='session_doctor',category='Identity and access posture',task='session_doctor',library='iam_policy',function='recipe_session_doctor',what='Inspect profile session types, 0600 credential cache expiry and dry-run/read-only permission probes',access='Read-only',cost='$0.00 synthetic; live read and EC2 DryRun probes create no resources; cap $0.05'))
+ITEMS.append(dict(name='grant_lambda_role',category='Identity and access posture',task='grant_lambda_role',library='iam_role',function='recipe_grant_lambda_role',what='Preview or apply the pre-built lmaws_lambda_exec execution role with the mandatory boundary and scoped data access',access='Write with the admin profile',cost='$0.00 synthetic; live IAM metadata only; apply requires AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1 and --apply'))
 
 COMPUTE_ARGS='--region us-east-1 --profile default --output data/NAME [--live]'
 for name,what,access,cost,args,run in [
@@ -100,6 +101,7 @@ def generate(check=False):
   if name=='policy_lint':args='--file POLICY.json --top 20 --output data/policy_lint'
   if name=='grant_session_policy':args='--policy lmaws_session --file POLICY.json --profile admin --top 20 --output data/grant_session_policy [--live] [--apply]'
   if name=='session_doctor':args='--profile lmaws --region us-east-1 --top 20 --output data/session_doctor [--live]'
+  if name=='grant_lambda_role':args='--role lmaws_lambda_exec --profile admin [--live] [--apply] [--output .lmaws-local/iam-role/report]'
   if 'args' in item:args=item['args']
   when={'Identity and access posture':'Before a posture review; IAM-dependent recipes remain synthetic for federated profiles','Permission builder and IAM analysis':'When specifying, shrinking, splitting, diffing, explaining or simulating AWS IAM policies without hand-editing raw JSON','Inventory':'Before a change or when reviewing current service coverage','Cost and spend':'When investigating a billing period or prioritizing savings opportunities','Idle and waste detection':'When triaging stopped resources; confirm age and usage before action','Tag and naming compliance':'Before enforcing tag or naming policies; review unknown metadata','Leftover search and cleanup by prefix':'After a test run or shutdown to review names and local ledger records','Safe lifecycle sandboxes':'Before a service integration, validate a disposable create/cleanup path','Compute and fleet':'When reviewing a small EC2 fleet without SSH or the aws CLI, or proving a disposable spot lifecycle'}[item['category']]
   header='\n'.join('# '+k+': '+v for k,v in [('Access',item['access']),('What',item['what']),('When',when),('Run',('lmctl recipes/'+name+'.lms '+item['run']).strip() if 'run' in item else 'lmctl recipes/'+name+'.lms '+('--task queue ' if name=='lifecycle' else '')+'--top 10'),('Preview','lmctl recipes/'+name+'.lms --preview'),('Arguments',args),('Typical-cost',item['cost']),('Category',item['category']),('Library',lib),('Function',item['function']),('Example',example)])
@@ -112,9 +114,8 @@ def generate(check=False):
   body+='if (!contains(ARGV,"--output")) {options.output="data/'+name+'";}\n'
   body+='let report='+item['function']+'(options);\nif (!options.preview) {println("report:",get(report,"output_file",options.output+".json"));println(recipe_cost_line(report));}\n'
   body=re.sub(r'\nimport \"[^\"]+\";\n', '\n', body)
+  if name in ['grant_session_policy','grant_lambda_role']:body=body.replace('recipe_options(ARGV)','recipe_grant_options(ARGV)')
   entry=header+'\n# Generated standalone entry; reusable source: '+lib+'\n'+flatten(ROOT/lib)+'\n'+body
-  if name=='grant_session_policy':
-   entry=entry.replace('  return recipe_normalize(o);','  o.admin_allowed=true;\n  return recipe_normalize(o);',1)
   target=ROOT/'recipes'/(name+'.lms')
   if check:assert target.read_text()==entry, str(target)+' is stale; run generate-recipes.py'
   else:target.write_text(entry)
