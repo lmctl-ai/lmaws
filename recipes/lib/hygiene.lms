@@ -1,0 +1,205 @@
+# Access: Read-only reports; importing this library performs no work.
+# What: Account snapshot (quickstart), open ports, unattached volumes, log retention, public IPv4 cost, secret age, which profile.
+# When: First run of lmaws, or a periodic hygiene and waste review without the aws CLI.
+# Run: lmctl recipes/quickstart.lms
+# Preview: lmctl recipes/open_ports.lms --preview
+import "./compute.lms";
+
+// Import-only. Synthetic by default; live reports go under the git-ignored .lmaws-local/hygiene/.
+fn _hy_output(o, name) {
+  let out = str(o.output);
+  if (o.live && !o.output_explicit) { out = ".lmaws-local/hygiene/" + name; }
+  mkdir(dirname(out), true);
+  return out;
+}
+fn _hy_inventory(o, out, kinds) {
+  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_hygiene");
+if (${contains(kinds, "buckets")}) { file_write(${out + ".buckets.raw.json"}, cloud.buckets().json()); }
+if (${contains(kinds, "instances")}) { file_write(${out + ".instances.raw.json"}, cloud.instances().json()); }
+if (${contains(kinds, "vpcs")}) { file_write(${out + ".vpcs.raw.json"}, cloud.vpcs().json()); }
+if (${contains(kinds, "security_groups")}) { file_write(${out + ".security_groups.raw.json"}, cloud.security_groups().json()); }
+if (${contains(kinds, "tables")}) { file_write(${out + ".tables.raw.json"}, cloud.tables().json()); }
+if (${contains(kinds, "queues")}) { file_write(${out + ".queues.raw.json"}, cloud.queues().json()); }
+if (${contains(kinds, "topics")}) { file_write(${out + ".topics.raw.json"}, cloud.topics().json()); }
+if (${contains(kinds, "functions")}) { file_write(${out + ".functions.raw.json"}, cloud.functions().json()); }
+if (${contains(kinds, "log_groups")}) { file_write(${out + ".log_groups.raw.json"}, cloud.log_groups().json()); }
+if (${contains(kinds, "alarms")}) { file_write(${out + ".alarms.raw.json"}, cloud.alarms().json()); }
+if (${contains(kinds, "secrets")}) { file_write(${out + ".secrets.raw.json"}, cloud.secrets().json()); }
+if (${contains(kinds, "parameters")}) { file_write(${out + ".parameters.raw.json"}, cloud.parameters().json()); }
+if (${contains(kinds, "volumes")}) { file_write(${out + ".volumes.raw.json"}, cloud.volumes().json()); }
+if (${contains(kinds, "ec2_instances")}) { file_write(${out + ".ec2_instances.raw.json"}, cloud.ec2_instances("", "").json()); }
+if (${contains(kinds, "addresses")}) { file_write(${out + ".addresses.raw.json"}, cloud.addresses().json()); }
+end _dsl_
+  let result = recipe_run(p, o);
+  let data = {};
+  for (kind in kinds) { data[kind] = json_parse(read_file(out + "." + kind + ".raw.json")); }
+  return {data: data, result: result};
+}
+fn _hy_save(out, report) { write_file(out + ".json", json_stringify(report, 2)); write_csv(out + ".csv", report.rows); return report; }
+
+fn recipe_quickstart(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "quickstart"); }
+  let out = _hy_output(o, "quickstart");
+  let kinds = ["buckets", "instances", "vpcs", "security_groups", "tables", "queues", "topics", "functions", "log_groups", "alarms", "secrets", "parameters"];
+  let inv = _hy_inventory(o, out, kinds);
+  let rows = []; let total = 0;
+  for (kind in kinds) { let n = len(inv.data[kind]); total = total + n; push(rows, {kind: "count", resource: replace_all(kind, "_", " "), count: n}); }
+  println("resources found:", total, "| synthetic:", !o.live);
+  println("next: lmctl recipes/open_ports.lms --live   (read-only, AWS_PROFILE=default) or see docs/PROFILES.md");
+  return merge(_hy_save(out, {rows: rows, total: total, synthetic: !o.live, read_only: true}), {result: inv.result, output_file: out + ".json"});
+}
+
+fn recipe_open_ports(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "open_ports"); }
+  let out = _hy_output(o, "open_ports");
+  let inv = _hy_inventory(o, out, ["security_groups"]);
+  let rows = []; let ports = {};
+  for (g in inv.data["security_groups"]) {
+    if (get(g, "public", "false") != "true") { continue; }
+    let open = str(get(g, "open_ports", ""));
+    for (port in split(open, ",")) {
+      if (port == "") { continue; }
+      let label = port == "-1" ? "all ports" : port;
+      ports[label] = get(ports, label, 0) + 1;
+      let risk = contains(["22", "3389", "-1", "3306", "5432", "6379", "27017"], port) ? "high: admin or database port open to the internet" : (contains(["80", "443"], port) ? "expected for public web" : "review");
+      push(rows, {kind: "open_port", group: get(g, "name", ""), vpc: get(g, "vpc", ""), port: label, risk: risk});
+    }
+  }
+  let high = 0; for (r in rows) { if (starts_with(r.risk, "high")) { high = high + 1; } }
+  println("security groups open to 0.0.0.0/0 or ::/0:", len(rows), "port rules,", high, "high risk");
+  return merge(_hy_save(out, {rows: rows, ports: ports, high_risk: high, synthetic: !o.live, changes_made: false}), {result: inv.result, output_file: out + ".json"});
+}
+
+fn recipe_unattached_volumes(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "unattached_volumes"); }
+  let out = _hy_output(o, "unattached_volumes");
+  let inv = _hy_inventory(o, out, ["volumes"]);
+  let rows = []; let gib = 0;
+  # gp3/gp2 per GB-month in us-east-1; io1/io2 and st1/sc1 differ, see the EBS pricing page.
+  let price = {gp3: 0.08, gp2: 0.10, st1: 0.045, sc1: 0.015, standard: 0.05, io1: 0.125, io2: 0.125};
+  for (v in inv.data["volumes"]) {
+    if (get(v, "state", "") != "available") { continue; }
+    let size = num(get(v, "size_gib", "0")); gib = gib + size;
+    let rate = get(price, get(v, "type", "gp3"), 0.08);
+    push(rows, {kind: "unattached_volume", name: get(v, "name", get(v, "id", "")), az: get(v, "az", ""), size_gib: size, type: get(v, "type", ""), monthly_usd: _compute_r(size * rate, 2)});
+  }
+  let monthly = 0; for (r in rows) { monthly = monthly + r.monthly_usd; }
+  println("unattached volumes:", len(rows), "|", gib, "GiB | about $" + str(_compute_r(monthly, 2)) + "/month; snapshot before deleting, nothing is deleted here");
+  return merge(_hy_save(out, {rows: rows, total_gib: gib, monthly_usd: _compute_r(monthly, 2), synthetic: !o.live, changes_made: false}), {result: inv.result, output_file: out + ".json"});
+}
+
+fn recipe_log_retention_audit(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "log_retention_audit"); }
+  let out = _hy_output(o, "log_retention_audit");
+  let groups = []; let result = {};
+  if (o.live) { let inv = _hy_inventory(o, out, ["log_groups"]); groups = inv.data["log_groups"]; result = inv.result; }
+  else {
+    groups = [{name: "/aws/lambda/orders", retention: "0"}, {name: "/aws/lambda/billing", retention: "0"}, {name: "/ecs/web", retention: "30"}, {name: "/aws/rds/audit", retention: "365"}, {name: "/app/debug", retention: "0"}, {name: "/vpc/flow", retention: "14"}];
+    println("estimated cost: $0.00");
+  }
+  let rows = []; let buckets = {"never expires": 0, "1-30 days": 0, "31-365 days": 0, "over 1 year": 0};
+  for (g in groups) {
+    let days = num(get(g, "retention", "0"));
+    let bucket = days == 0 ? "never expires" : (days <= 30 ? "1-30 days" : (days <= 365 ? "31-365 days" : "over 1 year"));
+    buckets[bucket] = buckets[bucket] + 1;
+    push(rows, {kind: "log_group", name: get(g, "name", ""), retention_days: days, bucket: bucket, advice: days == 0 ? "set a retention (for example 30 days): stored logs cost $0.03/GB-month forever" : "ok"});
+  }
+  println("log groups:", len(rows), "| never expire:", buckets["never expires"]);
+  return merge(_hy_save(out, {rows: rows, buckets: buckets, synthetic: !o.live, changes_made: false}), {result: result, output_file: out + ".json"});
+}
+
+fn recipe_public_ipv4_cost(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "public_ipv4_cost"); }
+  let out = _hy_output(o, "public_ipv4_cost");
+  let inv = _hy_inventory(o, out, ["ec2_instances", "addresses"]);
+  let rows = []; let eips = {};
+  for (a in inv.data["addresses"]) {
+    eips[get(a, "public_ip", "")] = true;
+    push(rows, {kind: "public_ipv4", source: get(a, "idle", "false") == "true" ? "Elastic IP (idle)" : "Elastic IP (attached)", name: get(a, "name", ""), monthly_usd: 3.6});
+  }
+  for (i in inv.data["ec2_instances"]) {
+    let ip = get(i, "public_ip", "");
+    if (ip == "" || has_key(eips, ip) || get(i, "state", "") != "running") { continue; }
+    push(rows, {kind: "public_ipv4", source: "auto-assigned to instance", name: get(i, "name", get(i, "id", "")), monthly_usd: 3.6});
+  }
+  let by = {}; for (r in rows) { by[r.source] = get(by, r.source, 0) + 3.6; }
+  println("public IPv4 addresses:", len(rows), "| about $" + str(_compute_r(3.6 * len(rows), 2)) + "/month ($0.005/hour each, attached or idle)");
+  return merge(_hy_save(out, {rows: rows, by_source: by, monthly_usd: _compute_r(3.6 * len(rows), 2), synthetic: !o.live, changes_made: false}), {result: inv.result, output_file: out + ".json"});
+}
+
+fn recipe_secret_age(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "secret_age"); }
+  let out = _hy_output(o, "secret_age");
+  let secrets = []; let result = {}; let now = "2026-10-26";
+  if (o.live) { let inv = _hy_inventory(o, out, ["secrets"]); secrets = inv.data["secrets"]; result = inv.result; now = strftime(now(), "%Y-%m-%d"); }
+  else {
+    secrets = [{name: "prod/db-password", last_changed: "2025-09-01T00:00:00Z"}, {name: "prod/api-key", last_changed: "2026-08-20T00:00:00Z"}, {name: "ci/deploy-token", last_changed: "2026-01-15T00:00:00Z"}, {name: "staging/db-password", last_changed: "2026-10-01T00:00:00Z"}];
+    println("estimated cost: $0.00");
+  }
+  let rows = [];
+  for (s in secrets) {
+    let changed = substr(str(get(s, "last_changed", "")), 0, 10);
+    let days = changed == "" || changed == "null" ? -1 : _hy_days(changed, now);
+    push(rows, {kind: "secret", name: get(s, "name", ""), last_changed: changed, age_days: days, status: days < 0 ? "unknown" : (days > 90 ? "rotate: older than 90 days" : "ok")});
+  }
+  let old = 0; for (r in rows) { if (r.age_days > 90) { old = old + 1; } }
+  println("secrets:", len(rows), "| not changed for 90+ days:", old, "| values are never read");
+  return merge(_hy_save(out, {rows: rows, older_than_90: old, synthetic: !o.live, values_read: false}), {result: result, output_file: out + ".json"});
+}
+# Days between two YYYY-MM-DD dates (civil-from-days arithmetic; no time zone involved).
+fn _hy_days(a, b) { return _hy_day_number(b) - _hy_day_number(a); }
+fn _hy_day_number(text) {
+  let parts = split(text, "-"); let y = num(parts[0]); let m = num(parts[1]); let d = num(parts[2]);
+  if (m <= 2) { y = y - 1; m = m + 12; }
+  return 365 * y + floor(y / 4) - floor(y / 100) + floor(y / 400) + floor((153 * (m - 3) + 2) / 5) + d;
+}
+
+fn recipe_which_profile(options) {
+  let o = recipe_normalize(options);
+  if (o.preview) { return recipe_preview(o, "which_profile"); }
+  let rows = [
+    {kind: "profile", task: "pictures and synthetic examples", profile: "none", flags: "(no AWS calls)"},
+    {kind: "profile", task: "read-only inventory, audits, spend", profile: "default", flags: "--live"},
+    {kind: "profile", task: "service sandboxes (queue, bucket, ...)", profile: "lmaws", flags: "--live --apply"},
+    {kind: "profile", task: "EC2 spot nano sandbox, AMI lookup", profile: "lmaws-ec2", flags: "--live (--apply)"},
+    {kind: "profile", task: "IAM policy and role grants", profile: "admin", flags: "--live --apply + LMAWS_ADMIN_GRANT=1"}];
+  println("profiles: see docs/PROFILES.md; estimated cost: $0.00");
+  let out = str(o.output); mkdir(dirname(out), true);
+  return merge(_hy_save(out, {rows: rows, synthetic: true}), {result: {}, output_file: out + ".json"});
+}
+
+# ---------- synthetic pictures (examples only) ----------
+fn recipe_hygiene_picture(report, task, name) {
+  assert(get(report, "synthetic", false), "pictures are drawn from synthetic data only");
+  if (task == "quickstart") {
+    let rows = []; for (r in report.rows) { push(rows, [r.resource, r.count]); }
+    recipe_compute_chart(name, "Synthetic account snapshot: resources per service", "resources", ["service", "count"], rows, ["#5db7d1"]);
+  } else if (task == "open_ports") {
+    let rows = []; for (port in keys(report.ports)) { push(rows, ["port " + port, report.ports[port]]); }
+    recipe_compute_chart(name, "Synthetic: ports open to the internet (rules)", "security group rules", ["port", "rules"], rows, ["#e15759"]);
+  } else if (task == "unattached_volumes") {
+    let rows = []; for (r in report.rows) { push(rows, [r.name + " " + r.az, r.monthly_usd]); }
+    if (len(rows) == 0) { rows = [["none", 0]]; }
+    recipe_compute_chart(name, "Synthetic: unattached EBS volumes, monthly cost", "USD per month", ["volume", "USD/month"], rows, ["#f2a541"]);
+  } else if (task == "log_retention_audit") {
+    let rows = []; for (b in ["never expires", "1-30 days", "31-365 days", "over 1 year"]) { push(rows, [b, report.buckets[b]]); }
+    recipe_compute_chart(name, "Synthetic: log groups by retention", "log groups", ["retention", "groups"], rows, ["#7fc97f"]);
+  } else if (task == "public_ipv4_cost") {
+    let rows = []; for (src in keys(report.by_source)) { push(rows, [src, _compute_r(report.by_source[src], 2)]); }
+    recipe_compute_chart(name, "Synthetic: public IPv4 monthly cost by source", "USD per month", ["source", "USD/month"], rows, ["#f2a541"]);
+  } else if (task == "secret_age") {
+    let rows = []; for (r in report.rows) { push(rows, [r.name, r.age_days]); }
+    recipe_compute_chart(name, "Synthetic: days since each secret changed (rotate after 90)", "days", ["secret", "age (days)"], rows, ["#c97fbf"]);
+  } else if (task == "which_profile") {
+    let lines = []; for (r in report.rows) { push(lines, r.profile + "    " + r.task + "    " + r.flags); }
+    recipe_compute_table(name, "Which AWS profile do I need?", lines);
+  } else { assert(false, "unknown hygiene picture " + task); }
+  return "images/" + name + ".png";
+}

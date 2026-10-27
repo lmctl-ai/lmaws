@@ -66,6 +66,17 @@ for name,what,access,cost,args,run in [
  ('policy_migrate_json','Migrate hand-written IAM policy JSON into a typed fluent lmaws permission builder program','Read-only','$0.00 offline JSON migration','[--file POLICY.json] --output data/NAME','')]:
  ITEMS.append(dict(name=name,category='Permission builder and IAM analysis',task=name,library='policy_builder',function='recipe_policy_builder',what=what,access=access,cost=cost,args=args.replace('NAME',name),run=run))
 
+HYGIENE_ARGS='--region us-east-1 --profile default --output data/NAME [--live]'
+for name,category,what,run in [
+ ('quickstart','Inventory','Quickstart: one command to an account snapshot picture (resources per service)',''),
+ ('open_ports','Identity and access posture','Security groups open to the internet, by port, with admin/database ports flagged',''),
+ ('secret_age','Identity and access posture','Secrets not changed for 90+ days (values are never read)',''),
+ ('which_profile','Identity and access posture','Which AWS profile and flags each kind of recipe needs',''),
+ ('unattached_volumes','Idle and waste detection','Unattached EBS volumes with size and monthly cost (never deletes)',''),
+ ('public_ipv4_cost','Idle and waste detection','Every billed public IPv4 address (Elastic and auto-assigned) and its monthly cost',''),
+ ('log_retention_audit','Idle and waste detection','Log groups that never expire, grouped by retention','')]:
+ ITEMS.append(dict(name=name,category=category,task=name,library='hygiene',function='recipe_'+name,what=what,access='Read-only',cost='$0.00 synthetic and offline' if name=='which_profile' else '$0.00 synthetic; live Describe/List calls are free; cap $0.05',args=('--output data/NAME' if name=='which_profile' else HYGIENE_ARGS).replace('NAME',name),run=run))
+
 def flatten(path,seen=None):
  seen=set() if seen is None else seen
  path=path.resolve()
@@ -123,6 +134,7 @@ def generate(check=False):
   exbody='import "../recipes/lib/'+item['library']+'.lms";\nlet options=recipe_options(ARGV);\noptions.live=false;options.apply=false;options.preview=false;options.profile="default";\noptions.task="'+item['task']+'";options.output="data/'+example+'";\nlet report='+item['function']+'(options);\nassert(is_array(report.rows));\n'
   if item['library']=='lifecycle':exbody+='assert(len(report.rows)==1 && report.rows[0].remaining==0);\nreport.rows[0].name="owned synthetic '+item['task']+'";\n'
   if item['library']=='compute':exbody+='recipe_compute_picture(report,"'+item['task']+'","'+example+'");\n'
+  elif item['library']=='hygiene':exbody+='recipe_hygiene_picture(report,"'+item['task']+'","'+example+'");\n'
   elif item['library']=='policy_builder':exbody+='recipe_policy_picture(report,"'+item['task']+'","'+example+'");\n'
   else:exbody+='recipe_picture(report.rows,"'+item['what']+'","'+example+'");\n'
   if item['library']=='spend':
