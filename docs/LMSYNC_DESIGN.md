@@ -143,7 +143,7 @@ Registry.item_tombstone(item: ItemId, note: string) -> RecordReceipt
 Registry.select(predicate: Query, snapshot: Snapshot) -> ItemCursor
 Registry.stage_difference(a: StageSelector, b: StageSelector, options: JoinOptions) -> ItemCursor
 Registry.by_attribute(name: string, predicate: ScalarPredicate) -> ItemCursor
-Registry.by_hash(algorithm: string, digest: bytes) -> ItemCursor
+Registry.by_hash(algorithm: string, digest: string) -> ItemCursor
 Registry.by_timestamp(field: TimeField, range: TimeRange, scope: Query) -> ItemCursor
 Registry.aggregate(query: Query, groups: GroupFields, metrics: AggregateFields) -> AggregateCursor
 Registry.changes(after: EventCursor, filter: EventFilter, max_rows: int) -> EventBatch
@@ -538,8 +538,8 @@ design adds no transport dependency to the registry.
 
 Sources: [MVStore](https://h2database.github.io/html/mvstore.html),
 [iq80](https://github.com/dain/leveldb), [MapDB](https://mapdb.org/doc/),
-[SQLite JDBC](https://github.com/xerial/sqlite-jdbc). These provide feature evidence,
-not measured lmfiles results. Check pinned-version reachability and file locking
+[SQLite JDBC](https://github.com/xerial/sqlite-jdbc), plus sibling `lmdb` native-image configs (`--exclude-config` on H2 AWT metadata).
+Check pinned-version reachability, `MetaType`/`FilePath` reflection and file locking
 in the actual GraalVM binary; a working JVM test is not native-image certification.
 No dependency is added by this design.
 
@@ -793,7 +793,7 @@ invisible when the script chooses not to revalidate.
 Current lmcurl calls for a bounded public-text fixture, inside this one job:
 
 ```text
-request_program = _lmcode_ cli="lmcurl";
+let request_program = _lmcode_ cli="lmcurl";
 let s = curl.session(${BASE_URL});
 let request = s.get(${URL_PATH}).timeout(10000).limit(1048576).retry(3, 500);
 if (${RECORDED_ETAG} != "") {
@@ -858,14 +858,14 @@ lmaws already performs owned S3 writes and web publication. Its current checked
 public surface includes `Run.bucket(string) -> Row`,
 `Run.put(Row,string,string) -> void`, `Run.cleanup()`,
 `Cloud.web_stack(string,string,string) -> Web`, `Web.step(string,string) -> Row`,
-`Web.status()`, `Web.down()` and `Cloud.s3_presigned_put(...)`. Presigning is not
-a file transfer. Run sandboxes clean their resources; they are not persistent
+`Web.status()` and `Web.down()` (internal presigning is not exposed in the DSL
+schema and is not a file transfer). Run sandboxes clean their resources; they are not persistent
 incremental site targets merely because the PUT method exists.
 
 Current small text-write example (the existing sandbox API, not a new uploader):
 
 ```text
-upload_program = _lmcode_ cli="lmaws";
+let upload_program = _lmcode_ cli="lmaws";
 let cloud = aws.demo();
 let run = cloud.example_run();
 let bucket = run.bucket("site-example");
@@ -877,7 +877,7 @@ end _lmcode_
 For persistent existing web scenarios, current calls are:
 
 ```text
-web_program = _lmcode_ cli="lmaws";
+let web_program = _lmcode_ cli="lmaws";
 let cloud = aws.demo();
 let web = cloud.web_stack("cafe1234", "example.com", ".lmweblab-local/web.json");
 let uploaded = web.step("bucket", "{\"site_dir\":\"./site\"}");
@@ -951,7 +951,7 @@ recorded copies and transfer without a remote tree listing or checksum compariso
 Current upload pattern; defaults are set before `ssh.connect` copies them:
 
 ```text
-sftp_upload = _lmcode_ cli="lmssh";
+let sftp_upload = _lmcode_ cli="lmssh";
 ssh.known_hosts(${KNOWN_HOSTS}).strict_host_key("yes")
    .identity(${KEY_FILE}).connect_timeout(10).timeout(120).reuse(true);
 let s = ssh.connect(${DEST_ALIAS});
@@ -972,7 +972,7 @@ paths before constructing text; do not interpolate untrusted commands.
 Resume is also available through the **current** raw SFTP batch API:
 
 ```text
-resume = _lmcode_ cli="lmssh";
+let resume = _lmcode_ cli="lmssh";
 ssh.known_hosts(${KNOWN_HOSTS}).strict_host_key("yes")
    .identity(${KEY_FILE}).timeout(120).reuse(true);
 let s = ssh.connect(${DEST_ALIAS});
@@ -1187,19 +1187,19 @@ let DB_PATH = ".lmfiles-local/site.db";
 let PLAN_PATH = ".lmfiles-local/plan.jsonl";
 let RESULT_PATH = ".lmfiles-local/results.jsonl";
 # === END CONFIG ===
-state_program = _lmcode_ cli="lmfiles";
+let state_program = _lmcode_ cli="lmfiles";
   # future local scan/query API; user-written if/loop chooses instructions
 end _lmcode_
 savedsl(state_program, ".lmfiles-local/state.dslb");
 let a = system(concat(dsl_cli(state_program), ["--dsl", ".lmfiles-local/state.dslb"]), 120000);
 assert(a.code == 0);
 
-transfer_program = _lmcode_ cli="lmcurl";
+let transfer_program = _lmcode_ cli="lmcurl";
   # current get/header/retry/send/save calls selected by user-written policy
 end _lmcode_
 # save and run the transfer host only if this script selected actions
 
-record_program = _lmcode_ cli="lmfiles";
+let record_program = _lmcode_ cli="lmfiles";
   # future local record/log-replay API consumes confirmed RESULT_PATH projections
 end _lmcode_
 # save and run, check every exit code, close resources, report this job's result
