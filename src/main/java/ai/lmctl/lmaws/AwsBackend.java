@@ -144,7 +144,7 @@ public final class AwsBackend implements AutoCloseable {
 
     public AwsBackend(String region, boolean demo, CostLedger cost) { this(region,demo,cost,activeProfile()); }
 
-    private AwsBackend(String region,boolean demo,CostLedger cost,String profileName) {
+    AwsBackend(String region,boolean demo,CostLedger cost,String profileName) {
         this.profileName=profileName;
         String selected = region == null || region.isBlank()
                 ? (demo ? "us-east-1" : Objects.requireNonNull(DefaultAwsRegionProviderChain.builder().build().getRegion(), "AWS region is not configured").id())
@@ -1072,6 +1072,14 @@ public final class AwsBackend implements AutoCloseable {
         return Boolean.getBoolean("lmaws.apply") || "1".equals(System.getenv("LMAWS_APPLY"));
     }
 
+    public static boolean isAdminGrantEnabled() {
+        return "1".equals(System.getenv("LMAWS_ADMIN_GRANT"));
+    }
+
+    boolean isAdminGrantEnabledForBackend() {
+        return isAdminGrantEnabled() || (endpoint != null && Boolean.getBoolean("lmaws.adminGrantTest"));
+    }
+
     public static String activeProfile() {
         String prop = System.getProperty("lmaws.profile");
         if (prop != null && !prop.isBlank()) return prop;
@@ -1109,6 +1117,37 @@ public final class AwsBackend implements AutoCloseable {
         IamPolicies.LintResult lint = IamPolicies.lint(documentJson);
         System.out.println(lint.summaryLine());
         return lint.toMap();
+    }
+
+    public Map<String, String> iamPolicyLintInstanceRole(String documentJson) {
+        if (cost != null) cost.request("iam", "LintInstanceRolePolicyDocument");
+        IamPolicies.LintResult lint = IamPolicies.lintInstanceRole(documentJson);
+        System.out.println(lint.summaryLine());
+        return lint.toMap();
+    }
+
+    public List<Map<String, String>> fleetRolesDiscover() {
+        if (cost != null) cost.request("ec2", "DescribeFleetInstanceRoles");
+        return FleetRoles.discover(this);
+    }
+
+    public List<Map<String, String>> fleetRolesOpsNeeds() {
+        return FleetRoles.opsNeedsTable();
+    }
+
+    public Map<String, String> fleetRolesPlan() {
+        if (cost != null) cost.request("ec2", "PlanFleetInstanceRoles");
+        return FleetRoles.plan(this);
+    }
+
+    public Map<String, String> fleetRolesApply(boolean apply, boolean humanConfirmed) {
+        if (cost != null) cost.request("iam", apply ? "ApplyFleetInstanceRoles" : "PlanFleetInstanceRoles");
+        return FleetRoles.apply(this, apply, humanConfirmed);
+    }
+
+    public Map<String, String> fleetRolesRollback(String rollbackJson, boolean apply, boolean humanConfirmed) {
+        if (cost != null) cost.request("ec2", apply ? "RollbackFleetInstanceRoles" : "PlanRollbackFleetInstanceRoles");
+        return FleetRoles.rollback(this, rollbackJson, apply, humanConfirmed);
     }
 
     public Map<String, String> iamPolicyGet(String policyName) {
@@ -1576,6 +1615,13 @@ public final class AwsBackend implements AutoCloseable {
     private static String demoKey(String kind, String id) { return kind + "\u0000" + id; }
 
     Ec2Client ec2Client() { return ec2(); }
+    IamClient iamClient() { return iam(); }
+    StsClient stsClient() { return sts(); }
+    software.amazon.awssdk.auth.credentials.AwsCredentialsProvider credentialsProvider() {
+        return endpoint != null
+            ? StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))
+            : ProfileCredentialsProvider.builder().profileName(profileName).build();
+    }
     SsmClient ssmClient() { return ssm(); }
     CloudWatchClient cloudWatchClient() { return cloudwatch(); }
     StsClient stsClientForDoctor() { return sts(); }

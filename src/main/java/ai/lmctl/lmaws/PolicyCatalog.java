@@ -52,6 +52,7 @@ public final class PolicyCatalog {
             Map.entry("GetBucketWebsite", CLASS_READ),
             Map.entry("GetBucketCors", CLASS_READ),
             Map.entry("GetObject", CLASS_READ),
+            Map.entry("GetObjectAttributes", CLASS_READ),
             Map.entry("GetObjectVersion", CLASS_READ),
             Map.entry("GetObjectTagging", CLASS_READ),
             Map.entry("HeadBucket", CLASS_READ),
@@ -78,6 +79,9 @@ public final class PolicyCatalog {
         register("ec2", Map.ofEntries(
             Map.entry("DescribeInstances", CLASS_LIST),
             Map.entry("DescribeInstanceStatus", CLASS_LIST),
+            Map.entry("DescribeInstanceAttribute", CLASS_LIST),
+            Map.entry("DescribeInstanceCreditSpecifications", CLASS_LIST),
+            Map.entry("DescribeIamInstanceProfileAssociations", CLASS_LIST),
             Map.entry("DescribeInstanceTypes", CLASS_LIST),
             Map.entry("DescribeImages", CLASS_LIST),
             Map.entry("DescribeVolumes", CLASS_LIST),
@@ -121,6 +125,9 @@ public final class PolicyCatalog {
             Map.entry("ReleaseAddress", CLASS_WRITE),
             Map.entry("AssociateAddress", CLASS_WRITE),
             Map.entry("DisassociateAddress", CLASS_WRITE),
+            Map.entry("AssociateIamInstanceProfile", CLASS_PERMISSIONS),
+            Map.entry("DisassociateIamInstanceProfile", CLASS_PERMISSIONS),
+            Map.entry("ReplaceIamInstanceProfileAssociation", CLASS_PERMISSIONS),
             Map.entry("CancelSpotInstanceRequests", CLASS_WRITE),
             Map.entry("CreateTags", CLASS_TAGGING),
             Map.entry("DeleteTags", CLASS_TAGGING)
@@ -213,12 +220,15 @@ public final class PolicyCatalog {
         ));
         register("ssm", Map.ofEntries(
             Map.entry("DescribeParameters", CLASS_LIST),
+            Map.entry("ListAssociations", CLASS_LIST),
+            Map.entry("ListInstanceAssociations", CLASS_LIST),
             Map.entry("ListTagsForResource", CLASS_READ),
             Map.entry("GetParameter", CLASS_READ),
             Map.entry("GetParameters", CLASS_READ),
             Map.entry("GetParametersByPath", CLASS_READ),
             Map.entry("GetParameterHistory", CLASS_READ),
             Map.entry("PutParameter", CLASS_WRITE),
+            Map.entry("UpdateInstanceInformation", CLASS_WRITE),
             Map.entry("DeleteParameter", CLASS_WRITE),
             Map.entry("DeleteParameters", CLASS_WRITE),
             Map.entry("LabelParameterVersion", CLASS_WRITE),
@@ -438,6 +448,45 @@ public final class PolicyCatalog {
         register("account", Map.ofEntries(
             Map.entry("GetContactInformation", CLASS_READ),
             Map.entry("PutContactInformation", CLASS_PERMISSIONS)
+        ));
+        register("codecommit", Map.ofEntries(
+            Map.entry("ListRepositories", CLASS_LIST),
+            Map.entry("ListBranches", CLASS_LIST),
+            Map.entry("GetRepository", CLASS_READ),
+            Map.entry("GetBranch", CLASS_READ),
+            Map.entry("GetCommit", CLASS_READ),
+            Map.entry("GitPull", CLASS_READ),
+            Map.entry("GitPush", CLASS_WRITE),
+            Map.entry("DeleteRepository", CLASS_WRITE),
+            Map.entry("DeleteBranch", CLASS_WRITE)
+        ));
+        register("cognito-idp", Map.ofEntries(
+            Map.entry("ListUserPools", CLASS_LIST),
+            Map.entry("ListUsers", CLASS_LIST),
+            Map.entry("DescribeUserPool", CLASS_READ),
+            Map.entry("AdminGetUser", CLASS_READ),
+            Map.entry("AdminCreateUser", CLASS_WRITE),
+            Map.entry("AdminSetUserPassword", CLASS_WRITE),
+            Map.entry("DeleteUserPool", CLASS_WRITE),
+            Map.entry("DeleteUserPoolClient", CLASS_WRITE),
+            Map.entry("DeleteUserPoolDomain", CLASS_WRITE),
+            Map.entry("DeleteUser", CLASS_WRITE),
+            Map.entry("AdminDeleteUser", CLASS_WRITE),
+            Map.entry("ForgetDevice", CLASS_WRITE),
+            Map.entry("AdminForgetDevice", CLASS_WRITE)
+        ));
+        register("cloudtrail", Map.ofEntries(
+            Map.entry("LookupEvents", CLASS_READ),
+            Map.entry("CreateTrail", CLASS_WRITE),
+            Map.entry("UpdateTrail", CLASS_WRITE),
+            Map.entry("DeleteTrail", CLASS_WRITE),
+            Map.entry("StopLogging", CLASS_WRITE)
+        ));
+        register("config", Map.ofEntries(
+            Map.entry("DescribeConfigurationRecorders", CLASS_READ),
+            Map.entry("StopConfigurationRecorder", CLASS_WRITE),
+            Map.entry("DeleteConfigurationRecorder", CLASS_WRITE),
+            Map.entry("DeleteDeliveryChannel", CLASS_WRITE)
         ));
     }
 

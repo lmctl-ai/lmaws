@@ -35,6 +35,17 @@ public final class IamPolicies {
     public static final String RULE_FORBIDDEN_ACTION_PREFIX = "FORBIDDEN_ACTION_PREFIX";
     public static final String RULE_SCOPED_WRITE_REQUIRED = "SCOPED_WRITE_REQUIRED";
 
+    // Separate lint mode rule IDs for fleet instance roles (awsspot-ops-t4g1, awsspot-ops-t4g2, awsspot-ops-boundary)
+    public static final String RULE_INSTANCE_ROLE_NO_ADMIN = "INSTANCE_ROLE_NO_ADMIN_WILDCARD";
+    public static final String RULE_INSTANCE_ROLE_FORBIDDEN_ESCALATION = "INSTANCE_ROLE_FORBIDDEN_ESCALATION";
+    public static final String RULE_INSTANCE_ROLE_SELF_STOP_SCOPED = "INSTANCE_ROLE_SELF_STOP_SCOPED";
+    public static final String RULE_INSTANCE_ROLE_WEBSITE_ASSUME_SCOPED = "INSTANCE_ROLE_WEBSITE_ASSUME_SCOPED";
+    public static final String RULE_INSTANCE_ROLE_WWW_S3_SCOPED = "INSTANCE_ROLE_WWW_S3_SCOPED";
+    public static final String RULE_INSTANCE_ROLE_CODECOMMIT_NO_DELETE = "INSTANCE_ROLE_CODECOMMIT_NO_DELETE";
+    public static final String RULE_INSTANCE_ROLE_SECRETS_READ_ONLY = "INSTANCE_ROLE_SECRETS_READ_ONLY";
+    public static final String RULE_INSTANCE_ROLE_COGNITO_NO_DELETE = "INSTANCE_ROLE_COGNITO_NO_DELETE";
+    public static final String RULE_INSTANCE_ROLE_ORIGIN_GUARD = "INSTANCE_ROLE_ORIGIN_AND_REGION_GUARD";
+
     /**
      * Reviewable one-line-per-entry data table of read/inventory actions and their required scope.
      * Adding a new safe read is a one-line change here. Sensitive reads such as acm:GetCertificate
@@ -641,6 +652,408 @@ public final class IamPolicies {
             compact,
             pretty
         );
+    }
+
+    /**
+     * Separate lint mode for least-privilege EC2 fleet instance roles ({@code awsspot-ops-t4g1},
+     * {@code awsspot-ops-t4g2}) and their mandatory permissions boundary ({@code awsspot-ops-boundary}).
+     * Keeps {@link #lint(String)} (for {@code lmaws_session}) completely unweakened while validating
+     * legitimate operational capabilities (self-stop by instance tag/ARN, website-deploy AssumeRole,
+     * www.egtry.com S3 sync, CodeCommit sync with delete deny, SecretsManager read-only, Cognito
+     * operational access with unconditional delete deny, and mandatory EC2 instance-origin + us-east-1
+     * region guardrails).
+     */
+    @SuppressWarnings("unchecked")
+    public static LintResult lintInstanceRole(String rawJson) {
+        List<String> checks = new ArrayList<>();
+        List<String> findings = new ArrayList<>();
+        List<StatementCheck> statementChecks = new ArrayList<>();
+
+        checks.add("json_syntax");
+        if (rawJson == null || rawJson.isBlank()) {
+            findings.add("Policy document is empty");
+            return new LintResult(false, 0, "", 0, 0, 0, 0, checks, findings, statementChecks, "", "");
+        }
+
+        Object parsedObj;
+        try {
+            parsedObj = Json.parse(decodeAwsDocument(rawJson));
+        } catch (RuntimeException ex) {
+            findings.add("Invalid JSON document: " + Jsons.mask(ex.getMessage()));
+            return new LintResult(false, 0, "", 0, 0, 0, 0, checks, findings, statementChecks, "", "");
+        }
+        if (!(parsedObj instanceof Map<?, ?> rawMap)) {
+            findings.add("Policy document root must be a JSON object");
+            return new LintResult(false, 0, "", 0, 0, 0, 0, checks, findings, statementChecks, "", "");
+        }
+
+        Map<String, Object> doc = (Map<String, Object>) rawMap;
+        String compact = compactJson(doc);
+        String pretty = prettyJson(doc);
+        int compactLen = compact.length();
+
+        checks.add("compact_size <= " + MANAGED_POLICY_LIMIT);
+        if (compactLen > MANAGED_POLICY_LIMIT) {
+            findings.add("Compact policy length " + compactLen + " exceeds managed policy limit " + MANAGED_POLICY_LIMIT);
+        }
+
+        String version = String.valueOf(doc.getOrDefault("Version", ""));
+        checks.add("version == " + EXPECTED_VERSION);
+        if (!EXPECTED_VERSION.equals(version)) {
+            findings.add("Policy Version must be '" + EXPECTED_VERSION + "', got '" + version + "'");
+        }
+
+        checks.add("statements_non_empty");
+        Object stmtObj = doc.get("Statement");
+        if (!(stmtObj instanceof List<?> stmtList) || stmtList.isEmpty()) {
+            findings.add("Policy Statement must be a non-empty JSON array");
+            return new LintResult(false, compactLen, version, 0, 0, 0, 0, checks, findings, statementChecks, compact, pretty);
+        }
+
+        checks.add("instance_role_no_admin_wildcard(" + RULE_INSTANCE_ROLE_NO_ADMIN + ")");
+        checks.add("instance_role_no_privilege_escalation(" + RULE_INSTANCE_ROLE_FORBIDDEN_ESCALATION + ")");
+        checks.add("instance_role_scoped_ops(" + RULE_INSTANCE_ROLE_SELF_STOP_SCOPED + ","
+            + RULE_INSTANCE_ROLE_WEBSITE_ASSUME_SCOPED + "," + RULE_INSTANCE_ROLE_WWW_S3_SCOPED + ","
+            + RULE_INSTANCE_ROLE_CODECOMMIT_NO_DELETE + "," + RULE_INSTANCE_ROLE_SECRETS_READ_ONLY + ","
+            + RULE_INSTANCE_ROLE_COGNITO_NO_DELETE + ")");
+        checks.add("instance_role_origin_and_region_guard(" + RULE_INSTANCE_ROLE_ORIGIN_GUARD + ")");
+
+        boolean hasCodeCommitAllow = false;
+        boolean hasCodeCommitDeleteDeny = false;
+        boolean hasCognitoAllow = false;
+        boolean hasCognitoDeleteDeny = false;
+        boolean hasOriginGuardDeny = false;
+        boolean hasRegionGuardDeny = false;
+
+        for (Object item : stmtList) {
+            if (!(item instanceof Map<?, ?> rawStmt)) continue;
+            Map<String, Object> m = (Map<String, Object>) rawStmt;
+            String eff = String.valueOf(m.getOrDefault("Effect", ""));
+            List<String> acts = stringList(m.getOrDefault("Action", m.get("NotAction")));
+            List<String> resList = stringList(m.getOrDefault("Resource", m.get("NotResource")));
+            String condLower = compactJson(m.get("Condition")).toLowerCase(Locale.ROOT);
+            if ("Allow".equals(eff)) {
+                if (acts.stream().anyMatch(a -> a.trim().toLowerCase(Locale.ROOT).startsWith("codecommit:"))) {
+                    hasCodeCommitAllow = true;
+                }
+                if (acts.stream().anyMatch(a -> a.trim().toLowerCase(Locale.ROOT).startsWith("cognito-idp:"))) {
+                    hasCognitoAllow = true;
+                }
+            } else if ("Deny".equals(eff)) {
+                boolean starRes = resList.stream().anyMatch(r -> "*".equals(r.trim()) || r.contains(":codecommit:"));
+                if (starRes
+                        && hasActionIgnoreCase(acts, "codecommit:DeleteRepository")
+                        && hasActionIgnoreCase(acts, "codecommit:DeleteBranch")) {
+                    hasCodeCommitDeleteDeny = true;
+                }
+                if (resList.stream().anyMatch(r -> "*".equals(r.trim()))
+                        && hasActionIgnoreCase(acts, "cognito-idp:*Delete*")
+                        && hasActionIgnoreCase(acts, "cognito-idp:ForgetDevice")
+                        && hasActionIgnoreCase(acts, "cognito-idp:AdminForgetDevice")
+                        && (m.get("Condition") == null || condLower.equals("null") || condLower.equals("{}"))) {
+                    hasCognitoDeleteDeny = true;
+                }
+                if (condLower.contains("\"ec2:sourceinstancearn\":\"true\"")) {
+                    hasOriginGuardDeny = true;
+                }
+                if (condLower.contains("\"aws:requestedregion\":\"us-east-1\"")) {
+                    hasRegionGuardDeny = true;
+                }
+            }
+        }
+
+        int allowRead = 0;
+        int allowScoped = 0;
+        int denyCount = 0;
+
+        for (int i = 0; i < stmtList.size(); i++) {
+            Object item = stmtList.get(i);
+            if (!(item instanceof Map<?, ?> rawStmtMap)) {
+                findings.add("Statement[" + i + "] is not a JSON object");
+                statementChecks.add(new StatementCheck("Statement[" + i + "]", "", "violation", 0, 0, false, "not a JSON object"));
+                continue;
+            }
+            Map<String, Object> stmtMap = (Map<String, Object>) rawStmtMap;
+            String sid = String.valueOf(stmtMap.getOrDefault("Sid", "Statement[" + i + "]"));
+            String effect = String.valueOf(stmtMap.getOrDefault("Effect", ""));
+            if (stmtMap.containsKey("Principal") || stmtMap.containsKey("NotPrincipal")) {
+                findings.add("statement " + sid + ": Principal/NotPrincipal is not allowed in an instance permissions policy");
+            }
+            if ("Deny".equals(effect)) {
+                List<String> actions = stringList(stmtMap.getOrDefault("Action", stmtMap.get("NotAction")));
+                List<String> resources = stringList(stmtMap.getOrDefault("Resource", stmtMap.get("NotResource")));
+                if (actions.isEmpty() || resources.isEmpty()) {
+                    findings.add("statement " + sid + ": Deny statement must specify Action/NotAction and Resource/NotResource");
+                    statementChecks.add(new StatementCheck(sid, effect, "violation", actions.size(), resources.size(), false, "incomplete Deny statement"));
+                } else {
+                    denyCount++;
+                    statementChecks.add(new StatementCheck(sid, effect, "deny_guardrail", actions.size(), resources.size(), true, "instance-role deny guardrail"));
+                }
+                continue;
+            }
+            if (!"Allow".equals(effect)) {
+                findings.add("statement " + sid + ": Effect must be 'Allow' or 'Deny', got '" + effect + "'");
+                statementChecks.add(new StatementCheck(sid, effect, "violation", 0, 0, false, "invalid Effect"));
+                continue;
+            }
+            if (stmtMap.containsKey("NotAction") || stmtMap.containsKey("NotResource")) {
+                findings.add("statement " + sid + ": Allow statement must not use NotAction or NotResource");
+                statementChecks.add(new StatementCheck(sid, effect, "violation", 0, 0, false, "uses NotAction or NotResource"));
+                continue;
+            }
+
+            List<String> actions = stringList(stmtMap.get("Action"));
+            List<String> resources = stringList(stmtMap.get("Resource"));
+            if (actions.isEmpty() || resources.isEmpty()) {
+                findings.add("statement " + sid + ": Allow statement must have non-empty Action and Resource");
+                statementChecks.add(new StatementCheck(sid, effect, "violation", actions.size(), resources.size(), false, "empty Action or Resource"));
+                continue;
+            }
+
+            String categoryOrError = checkInstanceRoleAllowStatement(
+                sid, actions, resources, stmtMap.get("Condition"),
+                hasCodeCommitDeleteDeny, hasCognitoDeleteDeny);
+            if (categoryOrError.startsWith("ERROR:")) {
+                String err = categoryOrError.substring("ERROR:".length());
+                findings.add(err);
+                statementChecks.add(new StatementCheck(sid, effect, "violation", actions.size(), resources.size(), false, err));
+            } else if (categoryOrError.startsWith("READ:")) {
+                allowRead++;
+                statementChecks.add(new StatementCheck(sid, effect, "allow_read", actions.size(), resources.size(), true, categoryOrError.substring("READ:".length())));
+            } else {
+                allowScoped++;
+                statementChecks.add(new StatementCheck(sid, effect, "allow_scoped_write", actions.size(), resources.size(), true, categoryOrError.substring("SCOPED:".length())));
+            }
+        }
+
+        if (hasCodeCommitAllow && !hasCodeCommitDeleteDeny) {
+            findings.add("policy [rule=" + RULE_INSTANCE_ROLE_CODECOMMIT_NO_DELETE
+                + "]: CodeCommit Allow statements require a companion Deny on codecommit:DeleteRepository and codecommit:DeleteBranch");
+        }
+        if (hasCognitoAllow && !hasCognitoDeleteDeny) {
+            findings.add("policy [rule=" + RULE_INSTANCE_ROLE_COGNITO_NO_DELETE
+                + "]: Cognito Allow statements require an unconditional companion Deny on cognito-idp:*Delete*, cognito-idp:ForgetDevice, and cognito-idp:AdminForgetDevice");
+        }
+        if (!hasOriginGuardDeny || !hasRegionGuardDeny) {
+            findings.add("policy [rule=" + RULE_INSTANCE_ROLE_ORIGIN_GUARD
+                + "]: instance-role policy must include explicit Deny guardrails for non-EC2 credential origin (Null ec2:SourceInstanceArn=true) and non-us-east-1 regions");
+        }
+
+        boolean valid = findings.isEmpty();
+        return new LintResult(
+            valid,
+            compactLen,
+            version,
+            stmtList.size(),
+            allowRead,
+            allowScoped,
+            denyCount,
+            checks,
+            findings,
+            statementChecks,
+            compact,
+            pretty
+        );
+    }
+
+    private static String checkInstanceRoleAllowStatement(
+            String sid,
+            List<String> actions,
+            List<String> resources,
+            Object conditionObj,
+            boolean hasCodeCommitDeleteDeny,
+            boolean hasCognitoDeleteDeny) {
+        String condCompact = conditionObj == null ? "" : compactJson(conditionObj);
+        String condLower = condCompact.toLowerCase(Locale.ROOT);
+
+        // 1. Refuse admin wildcards and privilege escalation actions unconditionally
+        Set<String> forbiddenExact = Set.of(
+            "*", "*:*", "iam:*", "sts:*", "ec2:*", "s3:*", "organizations:*", "account:*", "kms:*", "secretsmanager:*"
+        );
+        Set<String> forbiddenEscalationPrefixes = Set.of("iam:", "organizations:", "account:");
+        Set<String> forbiddenFleetActions = Set.of(
+            "kms:createkey",
+            "kms:schedulekeydeletion",
+            "kms:putkeypolicy",
+            "kms:encrypt",
+            "kms:generatedatakey",
+            "ec2:terminateinstances",
+            "ec2:deletevolume",
+            "ec2:releaseaddress",
+            "ec2:associateaddress",
+            "ec2:disassociateaddress",
+            "ec2:runinstances",
+            "ec2:startinstances",
+            "ec2:rebootinstances",
+            "ec2:associateiaminstanceprofile",
+            "ec2:disassociateiaminstanceprofile",
+            "ec2:replaceiaminstanceprofileassociation",
+            "cloudtrail:deletetrail",
+            "cloudtrail:stoplogging",
+            "cloudtrail:updatetrail",
+            "config:deleteconfigurationrecorder",
+            "config:stopconfigurationrecorder",
+            "config:deletedeliverychannel",
+            "s3:deletebucket",
+            "s3:putbucketpolicy",
+            "s3:deletebucketpolicy",
+            "codecommit:deleterepository",
+            "codecommit:deletebranch",
+            "secretsmanager:createsecret",
+            "secretsmanager:putsecretvalue",
+            "secretsmanager:deletesecret"
+        );
+        for (String action : actions) {
+            String lower = action.trim().toLowerCase(Locale.ROOT);
+            if (forbiddenExact.contains(lower)) {
+                return "ERROR:statement " + sid + " [rule=" + RULE_INSTANCE_ROLE_NO_ADMIN
+                    + "]: refuses admin/wildcard action '" + action + "' in instance role";
+            }
+            for (String prefix : forbiddenEscalationPrefixes) {
+                if (lower.startsWith(prefix)) {
+                    return "ERROR:statement " + sid + " [rule=" + RULE_INSTANCE_ROLE_FORBIDDEN_ESCALATION
+                        + "]: refuses privilege escalation or admin action '" + action + "' in instance role (agents must never hold or create admin)";
+                }
+            }
+            if (forbiddenFleetActions.contains(lower)) {
+                return "ERROR:statement " + sid + " [rule=" + RULE_INSTANCE_ROLE_FORBIDDEN_ESCALATION
+                    + "]: refuses destructive or fleet-controller action '" + action + "' in instance role";
+            }
+        }
+
+        // 2. Self-stop watchdog: ec2:StopInstances
+        if (actions.size() == 1 && "ec2:stopinstances".equalsIgnoreCase(actions.get(0).trim())) {
+            boolean validResource = resources.stream().allMatch(r ->
+                r.trim().matches("arn:aws:ec2:us-east-1:(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):instance/\\*"));
+            boolean hasProjectTag = condLower.contains("\"aws:resourcetag/project\":\"awsspot\"");
+            boolean hasRoleOrInstanceScope = condLower.contains("aws:resourcetag/role")
+                || condLower.contains("aws:resourcetag/name")
+                || condLower.contains("ec2:sourceinstancearn");
+            boolean hasRegion = condLower.contains("\"aws:requestedregion\":\"us-east-1\"");
+            if (validResource && hasProjectTag && hasRoleOrInstanceScope && hasRegion) {
+                return "SCOPED:scoped self-stop on tagged awsspot instance (" + RULE_INSTANCE_ROLE_SELF_STOP_SCOPED + ")";
+            }
+            return "ERROR:statement " + sid + " [rule=" + RULE_INSTANCE_ROLE_SELF_STOP_SCOPED
+                + "]: ec2:StopInstances must be scoped to arn:aws:ec2:us-east-1:${aws:PrincipalAccount}:instance/* with Project=awsspot, Role/Name tag, and aws:RequestedRegion=us-east-1";
+        }
+
+        // 3. Website deploy role assumption: sts:AssumeRole on role/lmctl-website-deploy
+        if (actions.size() == 1 && "sts:assumerole".equalsIgnoreCase(actions.get(0).trim())) {
+            boolean validRoleArn = resources.size() == 1
+                && resources.get(0).trim().matches("arn:aws:iam::(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):role/lmctl-website-deploy");
+            if (validRoleArn) {
+                return "SCOPED:scoped sts:AssumeRole on role/lmctl-website-deploy (" + RULE_INSTANCE_ROLE_WEBSITE_ASSUME_SCOPED + ")";
+            }
+            return "ERROR:statement " + sid + " [rule=" + RULE_INSTANCE_ROLE_WEBSITE_ASSUME_SCOPED
+                + "]: sts:AssumeRole in instance role is only permitted for role/lmctl-website-deploy, got " + resources;
+        }
+
+        // 4. www.egtry.com S3 bucket & object sync
+        if (actions.stream().allMatch(a -> a.trim().toLowerCase(Locale.ROOT).startsWith("s3:"))) {
+            Set<String> bucketRead = Set.of("s3:listbucket", "s3:getbucketlocation");
+            Set<String> objectSync = Set.of(
+                "s3:getobject", "s3:getobjecttagging", "s3:getobjectattributes",
+                "s3:putobject", "s3:putobjecttagging",
+                "s3:deleteobject", "s3:deleteobjecttagging", "s3:abortmultipartupload"
+            );
+            if (actions.stream().allMatch(a -> bucketRead.contains(a.trim().toLowerCase(Locale.ROOT)))
+                    && resources.equals(List.of("arn:aws:s3:::www.egtry.com"))) {
+                return "READ:scoped S3 bucket read on arn:aws:s3:::www.egtry.com (" + RULE_INSTANCE_ROLE_WWW_S3_SCOPED + ")";
+            }
+            if (actions.stream().allMatch(a -> objectSync.contains(a.trim().toLowerCase(Locale.ROOT)))
+                    && resources.equals(List.of("arn:aws:s3:::www.egtry.com/*"))) {
+                return "SCOPED:scoped S3 object sync on arn:aws:s3:::www.egtry.com/* (" + RULE_INSTANCE_ROLE_WWW_S3_SCOPED + ")";
+            }
+            return "ERROR:statement " + sid + " [rule=" + RULE_INSTANCE_ROLE_WWW_S3_SCOPED
+                + "]: S3 actions in instance role must be scoped strictly to arn:aws:s3:::www.egtry.com or arn:aws:s3:::www.egtry.com/*";
+        }
+
+        // 5. CodeCommit git pull/push and repository metadata (with companion delete deny)
+        if (actions.stream().allMatch(a -> a.trim().toLowerCase(Locale.ROOT).startsWith("codecommit:"))) {
+            Set<String> allowedCc = Set.of(
+                "codecommit:gitpull", "codecommit:gitpush",
+                "codecommit:getrepository", "codecommit:getbranch", "codecommit:getcommit",
+                "codecommit:listrepositories", "codecommit:listbranches"
+            );
+            boolean validActions = actions.stream().allMatch(a -> allowedCc.contains(a.trim().toLowerCase(Locale.ROOT)));
+            boolean validResources = resources.size() == 1
+                && resources.get(0).trim().matches("arn:aws:codecommit:us-east-1:(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):\\*");
+            boolean hasRegion = condLower.contains("\"aws:requestedregion\":\"us-east-1\"");
+            if (validActions && validResources && hasRegion && hasCodeCommitDeleteDeny) {
+                return "SCOPED:scoped CodeCommit sync with delete guardrail (" + RULE_INSTANCE_ROLE_CODECOMMIT_NO_DELETE + ")";
+            }
+            return "ERROR:statement " + sid + " [rule=" + RULE_INSTANCE_ROLE_CODECOMMIT_NO_DELETE
+                + "]: CodeCommit actions must be limited to GitPull/GitPush/Get*/List* on arn:aws:codecommit:us-east-1:${aws:PrincipalAccount}:* with aws:RequestedRegion=us-east-1 and a companion delete Deny";
+        }
+
+        // 6. Secrets Manager read-only & KMS Decrypt via Secrets Manager
+        if (actions.stream().allMatch(a -> a.trim().toLowerCase(Locale.ROOT).startsWith("secretsmanager:"))) {
+            boolean hasRegion = condLower.contains("\"aws:requestedregion\":\"us-east-1\"");
+            if (actions.size() == 1 && "secretsmanager:listsecrets".equalsIgnoreCase(actions.get(0).trim())
+                    && resources.equals(List.of("*")) && hasRegion) {
+                return "READ:scoped SecretsManager ListSecrets in us-east-1 (" + RULE_INSTANCE_ROLE_SECRETS_READ_ONLY + ")";
+            }
+            Set<String> secretReads = Set.of("secretsmanager:getsecretvalue", "secretsmanager:describesecret");
+            boolean validReadActs = actions.stream().allMatch(a -> secretReads.contains(a.trim().toLowerCase(Locale.ROOT)));
+            boolean validSecretArn = resources.size() == 1
+                && resources.get(0).trim().matches("arn:aws:secretsmanager:us-east-1:(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):secret:\\*");
+            if (validReadActs && validSecretArn && hasRegion) {
+                return "READ:scoped SecretsManager read-only in us-east-1 (" + RULE_INSTANCE_ROLE_SECRETS_READ_ONLY + ")";
+            }
+            return "ERROR:statement " + sid + " [rule=" + RULE_INSTANCE_ROLE_SECRETS_READ_ONLY
+                + "]: SecretsManager in instance role must be read-only (ListSecrets or GetSecretValue/DescribeSecret on arn:aws:secretsmanager:us-east-1:${aws:PrincipalAccount}:secret:*) with aws:RequestedRegion=us-east-1";
+        }
+        if (actions.stream().anyMatch(a -> a.trim().toLowerCase(Locale.ROOT).startsWith("kms:"))) {
+            boolean onlyDecrypt = actions.size() == 1 && "kms:decrypt".equalsIgnoreCase(actions.get(0).trim());
+            boolean validKeyArn = resources.size() == 1
+                && resources.get(0).trim().matches("arn:aws:kms:us-east-1:(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):key/\\*");
+            boolean hasRegion = condLower.contains("\"aws:requestedregion\":\"us-east-1\"");
+            boolean hasViaService = condLower.contains("\"kms:viaservice\":\"secretsmanager.us-east-1.amazonaws.com\"");
+            if (onlyDecrypt && validKeyArn && hasRegion && hasViaService) {
+                return "READ:scoped KMS Decrypt via SecretsManager in us-east-1 (" + RULE_INSTANCE_ROLE_SECRETS_READ_ONLY + ")";
+            }
+            return "ERROR:statement " + sid + " [rule=" + RULE_INSTANCE_ROLE_FORBIDDEN_ESCALATION
+                + "]: kms actions in instance role are restricted to kms:Decrypt on arn:aws:kms:us-east-1:${aws:PrincipalAccount}:key/* conditioned on kms:ViaService=secretsmanager.us-east-1.amazonaws.com";
+        }
+
+        // 7. Cognito User Pools non-destructive operational access
+        if (actions.stream().anyMatch(a -> a.trim().toLowerCase(Locale.ROOT).startsWith("cognito-idp:"))) {
+            boolean allCognito = actions.stream().allMatch(a -> a.trim().toLowerCase(Locale.ROOT).startsWith("cognito-idp:"));
+            boolean noDeleteInAllow = actions.stream().noneMatch(a -> {
+                String l = a.trim().toLowerCase(Locale.ROOT);
+                return l.contains("delete") || l.contains("forgetdevice");
+            });
+            boolean hasRegion = condLower.contains("\"aws:requestedregion\":\"us-east-1\"");
+            boolean hasAccountLock = condLower.contains("\"aws:resourceaccount\":\"${aws:principalaccount}\"");
+            if (allCognito && noDeleteInAllow && hasRegion && hasAccountLock && hasCognitoDeleteDeny) {
+                return "SCOPED:scoped Cognito User Pools operational access with unconditional delete Deny (" + RULE_INSTANCE_ROLE_COGNITO_NO_DELETE + ")";
+            }
+            return "ERROR:statement " + sid + " [rule=" + RULE_INSTANCE_ROLE_COGNITO_NO_DELETE
+                + "]: Cognito actions require aws:RequestedRegion=us-east-1, aws:ResourceAccount=${aws:PrincipalAccount}, and an unconditional companion Deny on cognito-idp:*Delete*/ForgetDevice/AdminForgetDevice";
+        }
+
+        // 8. Scoped public SSM Ubuntu AMI lookup & Ubuntu SSM Agent heartbeat
+        if (actions.stream().allMatch(a -> "ssm:getparameter".equalsIgnoreCase(a.trim()) || "ssm:getparameters".equalsIgnoreCase(a.trim()))
+                && resources.stream().allMatch(r -> r.trim().startsWith("arn:aws:ssm:us-east-1::parameter/aws/service/canonical/ubuntu/"))) {
+            return "READ:scoped public Ubuntu AMI SSM parameter lookup (" + ALLOWLIST_SSM_PUBLIC_READ + ")";
+        }
+        Set<String> ssmHeartbeatActs = Set.of(
+            "ssm:updateinstanceinformation", "ssm:listinstanceassociations", "ssm:listassociations"
+        );
+        if (actions.stream().allMatch(a -> ssmHeartbeatActs.contains(a.trim().toLowerCase(Locale.ROOT)))
+                && resources.equals(List.of("*"))
+                && condLower.contains("\"aws:requestedregion\":\"us-east-1\"")) {
+            return "SCOPED:scoped SSM agent heartbeat in us-east-1 (" + ALLOWLIST_SSM_PUBLIC_READ + ")";
+        }
+
+        // 9. Safe inventory/status/CPU monitor reads on '*'
+        boolean allSafeStarReads = actions.stream().allMatch(IamPolicies::isInventoryReadAction);
+        if (allSafeStarReads && resources.equals(List.of("*"))) {
+            return "READ:read-only fleet status and CloudWatch CPU monitor (" + ALLOWLIST_STAR_READ + ")";
+        }
+
+        return "ERROR:statement " + sid + " [rule=" + RULE_SCOPED_WRITE_REQUIRED
+            + "]: unapproved action(s) " + actions + " on resource(s) " + resources + " for fleet instance role";
     }
 
     private static String checkWriteScope(

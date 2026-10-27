@@ -130,6 +130,15 @@ public final class CloudHost implements AutoCloseable {
             Map<String,String> out=(s.asObject() instanceof Session sess)?sess.backend.iamPolicyLint(text(a[0])):IamPolicies.lint(text(a[0])).toMap();
             return rowValue(c,out);
         });
+        r.method("Cloud","iam_policy_lint_instance_role",List.of("string"),"Row",(c,s,a)->{
+            Map<String,String> out=(s.asObject() instanceof Session sess)?sess.backend.iamPolicyLintInstanceRole(text(a[0])):IamPolicies.lintInstanceRole(text(a[0])).toMap();
+            return rowValue(c,out);
+        });
+        r.method("Cloud","fleet_roles_discover",List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.fleetRolesDiscover(),c)));
+        r.method("Cloud","fleet_roles_ops_needs",List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.fleetRolesOpsNeeds(),c)));
+        r.method("Cloud","fleet_roles_plan",List.of(),"Row",(c,s,a)->rowValue(c,session(s).backend.fleetRolesPlan()));
+        r.method("Cloud","fleet_roles_apply",List.of("bool","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.fleetRolesApply(a[0].asBool(),a[1].asBool())));
+        r.method("Cloud","fleet_roles_rollback",List.of("string","bool","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.fleetRolesRollback(text(a[0]),a[1].asBool(),a[2].asBool())));
         r.method("Cloud","iam_policy_get",List.of("string"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamPolicyGet(text(a[0]))));
         r.method("Cloud","iam_policy_versions",List.of("string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.iamPolicyVersions(text(a[0])),c)));
         r.method("Cloud","iam_policy_put",List.of("string","string","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamPolicyPut(text(a[0]),text(a[1]),a[2].asBool())));
@@ -313,6 +322,7 @@ public final class CloudHost implements AutoCloseable {
         r.method("Policy","json",List.of(),"string",(c,s,a)->Value.ofString(policy(s).json()));
         r.method("Policy","compact_json",List.of(),"string",(c,s,a)->Value.ofString(policy(s).compactJson()));
         r.method("Policy","lint",List.of(),"Row",(c,s,a)->rowValue(c,policy(s).lint()));
+        r.method("Policy","lint_instance_role",List.of(),"Row",(c,s,a)->rowValue(c,policy(s).lintInstanceRole()));
         r.method("Policy","fit_inline",List.of(),"Row",(c,s,a)->rowValue(c,policy(s).fitInline()));
         r.method("Policy","split_managed",List.of(),"Rows",(c,s,a)->rows(policy(s).splitManaged(),c));
         r.method("Policy","diff",List.of("string"),"Rows",(c,s,a)->rows(policy(s).diff(text(a[0])),c));

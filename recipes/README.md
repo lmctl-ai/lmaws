@@ -53,6 +53,7 @@ println("matched rows:",len(report.rows));
 
 | File | What it does | Access | Arguments | Typical cost |
 |---|---|---|---|---|
+| [`fleet_roles.lms`](fleet_roles.lms) | Plan, lint, apply (one instance at a time) and roll back least-privilege operational IAM roles and mandatory permissions boundary for fleet instances t4g1 and t4g2 | Write with the admin profile | --profile default --output data/fleet_roles [--live] [--apply --profile admin --i-am-the-admin-human] [--rollback FILE] | $0.00 synthetic plan; live read-only discovery uses default; apply requires AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1, --apply and --i-am-the-admin-human |
 | [`grant_lambda_role.lms`](grant_lambda_role.lms) | Preview or apply the pre-built lmaws_lambda_exec execution role with the mandatory boundary and scoped data access | Write with the admin profile | --role lmaws_lambda_exec --profile admin [--live] [--apply] [--output .lmaws-local/iam-role/report] | $0.00 synthetic; live IAM metadata only; apply requires AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1 and --apply |
 | [`grant_session_policy.lms`](grant_session_policy.lms) | Preview statement-level diff or grant the lmaws_session customer-managed IAM policy | Write with the admin profile | --policy lmaws_session --file POLICY.json --profile admin --top 20 --output data/grant_session_policy [--live] [--apply] | $0.00 IAM metadata; live apply requires AWS_PROFILE=admin and LMAWS_ADMIN_GRANT=1 |
 | [`inventory_identity.lms`](inventory_identity.lms) | Inspect bounded identity metadata (synthetic only; federated IAM cases skipped live) | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_identity [--live] | $0.00 synthetic; live capped request estimate in ledger |
@@ -181,6 +182,15 @@ println("matched rows:",len(report.rows));
 ## Picture-first examples
 
 Each recipe points at an offline synthetic example so its output can be previewed safely.
+
+### fleet_roles
+
+![Plan, lint, apply (one instance at a time) and roll back least-privilege operational IAM roles and mandatory permissions boundary for fleet instances t4g1 and t4g2](../docs/images/recipe_fleet_roles.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_fleet_roles.lms`
+
+Example: [`examples/recipe_fleet_roles.lms`](../examples/recipe_fleet_roles.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/fleet_roles.lms`; function `recipe_fleet_roles`.
 
 ### grant_lambda_role
 

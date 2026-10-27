@@ -23,6 +23,7 @@ ITEMS.append(dict(name='policy_lint',category='Identity and access posture',task
 ITEMS.append(dict(name='grant_session_policy',category='Identity and access posture',task='grant_session_policy',library='iam_policy',function='recipe_grant_session_policy',what='Preview statement-level diff or grant the lmaws_session customer-managed IAM policy',access='Write with the admin profile',cost='$0.00 IAM metadata; live apply requires AWS_PROFILE=admin and LMAWS_ADMIN_GRANT=1'))
 ITEMS.append(dict(name='session_doctor',category='Identity and access posture',task='session_doctor',library='iam_policy',function='recipe_session_doctor',what='Inspect profile session types, 0600 credential cache expiry and dry-run/read-only permission probes',access='Read-only',cost='$0.00 synthetic; live read and EC2 DryRun probes create no resources; cap $0.05'))
 ITEMS.append(dict(name='grant_lambda_role',category='Identity and access posture',task='grant_lambda_role',library='iam_role',function='recipe_grant_lambda_role',what='Preview or apply the pre-built lmaws_lambda_exec execution role with the mandatory boundary and scoped data access',access='Write with the admin profile',cost='$0.00 synthetic; live IAM metadata only; apply requires AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1 and --apply'))
+ITEMS.append(dict(name='fleet_roles',category='Identity and access posture',task='fleet_roles',library='fleet_roles',function='recipe_fleet_roles',what='Plan, lint, apply (one instance at a time) and roll back least-privilege operational IAM roles and mandatory permissions boundary for fleet instances t4g1 and t4g2',access='Write with the admin profile',cost='$0.00 synthetic plan; live read-only discovery uses default; apply requires AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1, --apply and --i-am-the-admin-human',args='--profile default --output data/fleet_roles [--live] [--apply --profile admin --i-am-the-admin-human] [--rollback FILE]',run=''))
 
 COMPUTE_ARGS='--region us-east-1 --profile default --output data/NAME [--live]'
 for name,what,access,cost,args,run in [
@@ -126,7 +127,7 @@ def generate(check=False):
   body+='if (!contains(ARGV,"--output")) {options.output="data/'+name+'";}\n'
   body+='let report='+item['function']+'(options);\nif (!options.preview) {println("report:",get(report,"output_file",options.output+".json"));println(recipe_cost_line(report));}\n'
   body=re.sub(r'\nimport \"[^\"]+\";\n', '\n', body)
-  if name in ['grant_session_policy','grant_lambda_role']:body=body.replace('recipe_options(ARGV)','recipe_grant_options(ARGV)')
+  if name in ['grant_session_policy','grant_lambda_role','fleet_roles']:body=body.replace('recipe_options(ARGV)','recipe_grant_options(ARGV)')
   entry=header+'\n# Generated standalone entry; reusable source: '+lib+'\n'+flatten(ROOT/lib)+'\n'+body
   target=ROOT/'recipes'/(name+'.lms')
   if check:assert target.read_text()==entry, str(target)+' is stale; run generate-recipes.py'

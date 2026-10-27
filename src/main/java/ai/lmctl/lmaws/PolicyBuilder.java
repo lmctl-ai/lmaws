@@ -625,6 +625,10 @@ public final class PolicyBuilder {
         return IamPolicies.lint(json()).toMap();
     }
 
+    public Map<String, String> lintInstanceRole() {
+        return IamPolicies.lintInstanceRole(json()).toMap();
+    }
+
     public Map<String, String> fitInline() {
         return PolicyAnalyzer.fitInline(json());
     }
