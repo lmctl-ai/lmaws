@@ -732,13 +732,13 @@ public final class AwsBackend implements AutoCloseable {
         if(!demo) {
             if(!owned("queue",sourceUrl,runId)||!owned("queue",dlqUrl,runId)) throw new SecurityException("SQS redrive queue ownership mismatch");
             String arn=sqs().getQueueAttributes(GetQueueAttributesRequest.builder().queueUrl(dlqUrl).attributeNames(QueueAttributeName.QUEUE_ARN).build()).attributesAsStrings().get("QueueArn");
-            String policy=Jsons.encode(Map.of("deadLetterTargetArn",arn,"maxReceiveCount","3"));
+            String policy=Jsons.encodeRaw(Map.of("deadLetterTargetArn",arn,"maxReceiveCount","3"));
             sqs().setQueueAttributes(x->x.queueUrl(sourceUrl).attributes(Map.of(QueueAttributeName.REDRIVE_POLICY,policy)));
         }
         return row("kind","sqs_redrive","source",sourceUrl,"dlq",dlqUrl,"max_receive_count","3","run_id",runId,"state","active");
     }
     Map<String,String> clearSqsRedrive(String sourceUrl,String runId) {
-        requireScenarioWrite(); requireRunId(runId); requireName(last(sourceUrl)); if(!demo) { if(!owned("queue",sourceUrl,runId)) throw new SecurityException("SQS source queue ownership mismatch"); sqs().setQueueAttributes(x->x.queueUrl(sourceUrl).attributes(Map.of(QueueAttributeName.REDRIVE_POLICY,"{}"))); }
+        requireScenarioWrite(); requireRunId(runId); requireName(last(sourceUrl)); if(!demo) { if(!owned("queue",sourceUrl,runId)) throw new SecurityException("SQS source queue ownership mismatch"); sqs().setQueueAttributes(x->x.queueUrl(sourceUrl).attributes(Map.of(QueueAttributeName.REDRIVE_POLICY,""))); }
         return row("kind","sqs_redrive","source",sourceUrl,"state","cleared","run_id",runId);
     }
     String lambdaUrl(String arn,String reason) {
