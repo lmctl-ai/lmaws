@@ -7,6 +7,7 @@ Current maintenance notes:
 - [03-live.md](03-live.md): canonical live procedure, current results and zero leftovers.
 - [04-examples.md](04-examples.md): 123 examples (counts checked by test-recipes.py), autoruns, images and cost labels.
 - [05-release.md](05-release.md): published versions, distribution and genuinely open items.
+- [16-release-procedure.md](16-release-procedure.md): one release owner, versioning, cut/prove/retag safely.
 - [06-comparisons.md](06-comparisons.md): lmcloud equivalents, findings and safety checks.
 - [09-spend-reports.md](09-spend-reports.md): capped read-only billing analysis and private output.
 - [07-example-costs.md](07-example-costs.md): profiles, ownership, teardown, sweeper and caps.
