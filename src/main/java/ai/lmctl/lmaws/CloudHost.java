@@ -15,6 +15,7 @@ public final class CloudHost implements AutoCloseable {
     private final List<WebRun> webRuns=new ArrayList<>();
     private final List<LambdaFunction> lambdaFunctions=new ArrayList<>();
     private final List<EventRule> eventRules=new ArrayList<>();
+    private final List<ServerlessRun> serverlessRuns=new ArrayList<>();
     private boolean closed;
     private CostLedger billing;
     private Session measured;
@@ -115,6 +116,11 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","run",List.of("string","string"),"Run",(c,s,a)->{Sandbox run=new Sandbox(session(s).backend,text(a[0]),Path.of(text(a[1])),session(s).cost);runs.add(run);return Value.object("Run",run);});
         r.method("Cloud","web_find",List.of("string","string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(WebRun.find(session(s).backend,text(a[0]),text(a[1])),c)));
         r.method("Cloud","web_stack",List.of("string","string","string"),"Web",(c,s,a)->{if(!webRuns.isEmpty())throw VmException.host("one web run per host program");var v=session(s);WebRun run=new WebRun(v.backend,v.cost,text(a[0]),text(a[1]),text(a[2]));webRuns.add(run);return Value.object("Web",run);});
+        r.method("Cloud","serverless_stack",List.of("string","string","string"),"Serverless",(c,s,a)->{var v=session(s);ServerlessRun run=new ServerlessRun(v.backend,v.cost,text(a[0]),text(a[1]),text(a[2]));serverlessRuns.add(run);return Value.object("Serverless",run);});
+        r.method("Serverless","step",List.of("string","string"),"Row",(c,s,a)->rowValue(c,((ServerlessRun)s.asObject()).step(text(a[0]),text(a[1]))));
+        r.method("Serverless","status",List.of(),"Row",(c,s,a)->rowValue(c,((ServerlessRun)s.asObject()).summary()));
+        r.method("Serverless","leftovers",List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(((ServerlessRun)s.asObject()).leftovers(),c)));
+        r.method("Serverless","down",List.of(),"Row",(c,s,a)->rowValue(c,((ServerlessRun)s.asObject()).down()));
         r.method("Cloud","lambda_function",List.of("string","string","string","string","string","int","int"),"Lambda",
                 (c,s,a)->{ Session v=session(s); int memory=(int)a[5].asInt(), timeout=(int)a[6].asInt(); if(memory>512||timeout>30) throw VmException.host("scenario Lambda caps are memory <=512 MiB and timeout <=30 seconds");
                     LambdaFunction fn=new LambdaFunction(v.backend,text(a[0]),text(a[1]),text(a[2]),text(a[3]),text(a[4]),memory,timeout,v.cost.runId()); if(!v.backend.isDemo()) fn.providerArn(v.backend.createLambda(text(a[0]),text(a[1]),text(a[2]),text(a[3]),text(a[4]),memory,timeout,v.cost.runId()).get("arn")); lambdaFunctions.add(fn); return Value.object("Lambda",fn); });
