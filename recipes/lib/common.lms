@@ -104,8 +104,8 @@ fn recipe_run(program, options) {
     if(starts_with(line,"estimated cost: $")) {println(line);found=true;}
   }
   if(!found && r.code!=0) {println("estimated cost: $"+str(o.cap)+" (reserved upper bound; host receipt unavailable)");}
-  assert(r.code==0);
-  assert(found);
+  assert(r.code==0, "the lmaws host failed (exit "+str(r.code)+"); its message is printed above. See docs/TROUBLESHOOTING.md");
+  assert(found, "the lmaws host printed no cost receipt; check that the installed lmaws release matches this recipe");
   return r;
 }
 fn recipe_preview(options,task) {
