@@ -10,6 +10,9 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.LinkOption;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
@@ -335,9 +338,23 @@ public final class CredentialProcess {
     }
 
     private static void enforceOwnerOnlyDir(Path dir) throws IOException {
-        Files.createDirectories(dir);
+        if (Files.isSymbolicLink(dir)) throw new IOException("credential cache directory must not be a symbolic link");
+        boolean created = !Files.exists(dir, LinkOption.NOFOLLOW_LINKS);
+        if (created && supportsPosix(dir.toAbsolutePath().getParent() == null ? dir : dir.toAbsolutePath().getParent())) {
+            Path parent = dir.toAbsolutePath().getParent();
+            if (parent != null) Files.createDirectories(parent);
+            try { Files.createDirectory(dir, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------"))); }
+            catch (FileAlreadyExistsException raced) { created = false; }
+        } else if (created) {
+            Files.createDirectories(dir);
+        }
         if (supportsPosix(dir)) {
-            Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwx------"));
+            // Tighten to 0700 (only the owner can; a directory of another user fails here and the cache is not used).
+            Set<PosixFilePermission> perms = Files.getPosixFilePermissions(dir, LinkOption.NOFOLLOW_LINKS);
+            for (PosixFilePermission p : GROUP_OR_OTHER_PERMS) if (perms.contains(p)) {
+                Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwx------"));
+                break;
+            }
         } else {
             File f = dir.toFile();
             f.setReadable(false, false);
@@ -363,10 +380,10 @@ public final class CredentialProcess {
     }
 
     public static boolean hasStrictOwnerOnlyPermissions(Path file) {
-        if (!Files.isRegularFile(file)) return false;
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) return false;
         if (supportsPosix(file)) {
             try {
-                Set<PosixFilePermission> perms = Files.getPosixFilePermissions(file);
+                Set<PosixFilePermission> perms = Files.getPosixFilePermissions(file, LinkOption.NOFOLLOW_LINKS);
                 for (PosixFilePermission p : GROUP_OR_OTHER_PERMS) {
                     if (perms.contains(p)) return false;
                 }
@@ -380,7 +397,7 @@ public final class CredentialProcess {
 
     @SuppressWarnings("unchecked")
     public static Optional<TokenResult> readCachedToken(Path cacheFile, Instant now) {
-        if (!Files.isRegularFile(cacheFile)) return Optional.empty();
+        if (!Files.isRegularFile(cacheFile, LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
         if (!hasStrictOwnerOnlyPermissions(cacheFile)) {
             try {
                 Files.deleteIfExists(cacheFile);
@@ -416,8 +433,11 @@ public final class CredentialProcess {
         }
         Path tmp = cacheFile.resolveSibling(cacheFile.getFileName().toString() + ".tmp-" + ProcessHandle.current().pid() + "-" + System.nanoTime());
         try {
-            Files.writeString(tmp, token.toCredentialProcessJson() + "\n", StandardCharsets.UTF_8);
+            // Create the temp file owner-only before any secret is written (no world-readable window).
+            if (supportsPosix(parent == null ? tmp.toAbsolutePath().getParent() : parent)) Files.createFile(tmp, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+            else Files.createFile(tmp);
             enforceOwnerOnlyFile(tmp);
+            Files.writeString(tmp, token.toCredentialProcessJson() + "\n", StandardCharsets.UTF_8, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
             try {
                 Files.move(tmp, cacheFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (AtomicMoveNotSupportedException e) {
