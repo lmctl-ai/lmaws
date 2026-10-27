@@ -9,9 +9,12 @@ final class ServerlessExtras {
     static String environment(ServerlessRun run,Map<String,Object> args) {
         var env=new LinkedHashMap<String,String>();
         env.put("QUEUE_URL",run.state.getOrDefault("queue",""));env.put("DLQ_URL",run.state.getOrDefault("dlq",""));
-        for(String key:List.of("MAX_UPLOAD_BYTES","UPLOAD_EXPIRY_SECONDS","CONTENT_TYPES")) {
-            Object v=args.get(key.toLowerCase(Locale.ROOT));if(v!=null)env.put(key,String.valueOf(v));
-        }
+        Object maxUpload=args.get("max_upload_bytes");
+        if(maxUpload!=null)env.put("MAX_UPLOAD_BYTES",Integer.toString(integer(args,"max_upload_bytes",1048576,10*1024*1024)));
+        Object expiry=args.get("upload_expiry_seconds");
+        if(expiry!=null)env.put("UPLOAD_EXPIRY_SECONDS",Integer.toString(integer(args,"upload_expiry_seconds",300,900)));
+        Object contentTypes=args.get("content_types");
+        if(contentTypes!=null)env.put("CONTENT_TYPES",String.valueOf(contentTypes));
         if(args.containsKey("upload_bucket")) {
             String bucket=String.valueOf(args.get("upload_bucket"));
             if(!bucket.equals("lmaws-site-"+run.run))throw new SecurityException("upload bucket outside this run");
@@ -59,7 +62,7 @@ final class ServerlessExtras {
     }
     private static int integer(Map<String,Object> args,String key,int fallback,int max) {
         Object raw=args.getOrDefault(key,fallback);double n=raw instanceof Number v?v.doubleValue():Double.parseDouble(raw.toString());
-        if(!Double.isFinite(n)||n!=Math.rint(n)||n<1||n>max)throw new IllegalArgumentException("invalid worker "+key);return(int)n;
+        if(!Double.isFinite(n)||n!=Math.rint(n)||n<1||n>max)throw new IllegalArgumentException("invalid "+key);return(int)n;
     }
     static void down(ServerlessRun run,List<RuntimeException> errors) {
         if(!run.backend.isDemo()&&run.state.containsKey("intent_worker")&&run.state.containsKey("worker_arn")&&!run.state.containsKey("mapping")) {

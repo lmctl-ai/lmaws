@@ -10,6 +10,10 @@ public final class RemainingChecks {
   try(var backend=new AwsBackend("us-east-1",true,cost)) {
    Path state=dir.resolve("state.json");
    try(var run=new ServerlessRun(backend,cost,"cafe07","example.com",state.toString())) {
+    String uploadEnv=ServerlessExtras.environment(run,io.lmctl.lmcode.Json.object(io.lmctl.lmcode.Json.parse("{\"max_upload_bytes\":1048576,\"upload_expiry_seconds\":10,\"content_types\":\"image/png\"}")));
+    if(!uploadEnv.contains("MAX_UPLOAD_BYTES")||!uploadEnv.contains("1048576")||!uploadEnv.contains("UPLOAD_EXPIRY_SECONDS")||!uploadEnv.contains("10")||uploadEnv.contains("1048576.0")||uploadEnv.contains("10.0"))throw new AssertionError("numeric upload environment was not canonicalized: "+uploadEnv);
+    refused(() -> ServerlessExtras.environment(run,Map.of("max_upload_bytes",1.5)));
+    refused(() -> ServerlessExtras.environment(run,Map.of("upload_expiry_seconds",901.0)));
     run.step("table","{}");
     String code=ServerlessExtras.workerSource(run,source);
     if(!code.contains("os.environ['RUN_ID']=\"cafe07\"")||!code.contains("os.environ['TABLE_NAME']=\"lmaws_cafe07_table\""))throw new AssertionError("worker source lost its run/table environment");
@@ -32,4 +36,5 @@ public final class RemainingChecks {
   }finally{try(var paths=Files.walk(root)){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())Files.deleteIfExists(p);}}
   System.out.println("PASS durable queue/worker reopen, ordered teardown, repeat down and bounded static cache");
  }
+ private static void refused(Runnable op){try{op.run();}catch(RuntimeException expected){return;}throw new AssertionError("invalid upload environment accepted");}
 }
