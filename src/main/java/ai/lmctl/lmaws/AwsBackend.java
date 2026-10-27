@@ -716,17 +716,35 @@ public final class AwsBackend implements AutoCloseable {
         return out;
     }
     Map<String,String> deleteEventSourceMapping(String arn,String runId) {
-        requireScenarioWrite(); requireRunId(runId); try { eventSourceMappingStatus(arn,runId); } catch(ResourceNotFoundException absent) { mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId); }
+        requireScenarioWrite(); requireRunId(runId);
+        if(mappingRuns.containsKey(arn)&&!runId.equals(mappingRuns.get(arn)))throw new SecurityException("event source mapping ownership mismatch");
+        if(!demo){
+            if(!arn.matches("arn:aws:lambda:us-east-1:[0-9]{12}:event-source-mapping:[A-Za-z0-9-]{8,128}"))throw new SecurityException("event source mapping ARN outside the scenario region");
+            String account=arn.split(":")[4];if(!account.equals(accountId()))throw new SecurityException("event source mapping account mismatch");
+            if(!mappingListed(arn)){mappingRuns.remove(arn);return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId);}
+        }
+        try { eventSourceMappingStatus(arn,runId); } catch(ResourceNotFoundException absent) { mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId); }
         if(!demo) {
             String uuid=arn.substring(arn.lastIndexOf(':')+1);
             String state=eventSourceMappingStatus(arn,runId).getOrDefault("state","");
             if(!"Deleting".equalsIgnoreCase(state))try { lambda().deleteEventSourceMapping(x->x.uuid(uuid)); } catch(ResourceNotFoundException ignored) { mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId); }
             long deadline=System.nanoTime()+Duration.ofSeconds(120).toNanos();
-            while(System.nanoTime()<deadline) { try { lambda().getEventSourceMapping(x->x.uuid(arn.substring(arn.lastIndexOf(':')+1))); sleepReady(); } catch(ResourceNotFoundException gone) { mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId); } }
+            while(System.nanoTime()<deadline) { if(!mappingListed(arn)){mappingRuns.remove(arn);return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId);} sleepReady(); }
             throw new IllegalStateException("SQS Lambda event source mapping did not disappear within 120 seconds");
         }
         mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId);
     }
+    private boolean mappingListed(String arn){
+        int seen=0,pages=0;for(var page:lambda().listEventSourceMappingsPaginator()){
+            if(++pages>100)throw new IllegalStateException("event source mapping inventory exceeded 100 pages");
+            for(var m:page.eventSourceMappings()){
+            if(++seen>1000)throw new IllegalStateException("event source mapping inventory exceeded 1000 items");
+            if(arn.equals(m.eventSourceMappingArn()))return true;
+            }
+        }
+        return false;
+    }
+    private String accountId(){if(cachedAccountId==null)cachedAccountId=sts().getCallerIdentity(GetCallerIdentityRequest.builder().build()).account();return cachedAccountId;}
     Map<String,String> setSqsRedrive(String sourceUrl,String dlqUrl,String runId) {
         requireScenarioWrite(); requireRunId(runId); requireName(last(sourceUrl));requireName(last(dlqUrl)); if(sourceUrl.equals(dlqUrl)) throw new IllegalArgumentException("DLQ must differ from source queue");
         if(!demo) {
