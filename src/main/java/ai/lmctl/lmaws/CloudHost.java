@@ -293,10 +293,12 @@ public final class CloudHost implements AutoCloseable {
     }
     public Context context(long budget) {Context c=new Context();c.memoryLimitBytes=budget;c.setObject("aws","Cloud",new Object());return c;}
     void emergencyWebCleanup() {
+        try(AutoCloseable scope=billing==null?null:billing.cleanupScope()) {
         for(var rule:eventRules.reversed())try{rule.delete();}catch(RuntimeException e){System.err.println("event cleanup incomplete; inspect private ledger");}
         for(var function:lambdaFunctions.reversed())try{function.delete();}catch(RuntimeException e){System.err.println("Lambda cleanup incomplete; inspect private ledger");}
         for(var run:serverlessRuns.reversed())try{run.down();}catch(RuntimeException e){System.err.println("serverless cleanup incomplete; inspect private state");}
-        for(var run:webRuns.reversed())try{run.down();}catch(RuntimeException e){System.err.println("web shutdown cleanup incomplete; inspect private state");}
+        for(var run:webRuns.reversed())try{run.emergencyDown();}catch(RuntimeException e){System.err.println("web shutdown cleanup incomplete; inspect private state");}
+        }catch(Exception failure){System.err.println("emergency cleanup scope failed; inspect private state");}
     }
     @Override public synchronized void close() {
         if(closed)return;

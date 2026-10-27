@@ -189,6 +189,11 @@ final class WebRun implements AutoCloseable {
         total=total.add(new java.math.BigDecimal(state.getOrDefault("viewer_cost","0")));
         return total;
     }
+    synchronized void emergencyDown() {
+        if("down".equals(state.get("status")))return;
+        boolean possibleWrite=state.containsKey("intent")||state.keySet().stream().anyMatch(k->k.startsWith("step_")||Set.of("bucket_created","distribution","oac","cert","instance_id","security_group_id","site_record","app_record","validation_record").contains(k));
+        if(possibleWrite)down();
+    }
     synchronized Map<String,String> down() {
         try(AutoCloseable scope=cost.cleanupScope()){return downInternal();}
         catch(RuntimeException e){throw e;}catch(Exception e){throw new IllegalStateException("web cleanup failed",e);}

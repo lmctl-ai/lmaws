@@ -213,7 +213,7 @@ savedsl(p, "{cap_bytecode.as_posix()}");
             if capped.returncode == 0 or "cost" not in (capped.stdout + capped.stderr).lower():
                 raise AssertionError("zero cost cap did not refuse creation")
             if AwsFixture.requests:
-                raise AssertionError("zero cost cap reached the AWS fixture")
+                raise AssertionError(("zero cost cap reached the AWS fixture",AwsFixture.requests))
             print("PASS native zero-cost cap refused creation before SDK dispatch")
     finally:
         server.shutdown()
