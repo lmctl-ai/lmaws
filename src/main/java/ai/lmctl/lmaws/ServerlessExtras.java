@@ -48,7 +48,7 @@ final class ServerlessExtras {
             new LambdaFunction(name,role,runtime,handler,code,memory,timeout,run.run);
             s.put("worker_name",name);s.put("worker_logs",log);run.persist();
             String arn=b.isDemo()?"arn:aws:lambda:local:000000000000:function:"+name:b.createLambda(name,role,runtime,handler,code,memory,timeout,run.run,log).get("arn");
-            s.put("worker_arn",arn);run.persist();if(!b.isDemo())b.waitLambdaActive(arn,run.run,120);
+            s.put("worker_arn",arn);s.put("worker_name_receipt",name);s.put("worker_log_receipt",log);run.persist();if(!b.isDemo())b.waitLambdaActive(arn,run.run,120);
             var mapping=b.createEventSourceMapping(s.get("queue"),arn,1,run.run);
             s.put("mapping",mapping.status().get("id"));run.persist();
         }
@@ -69,8 +69,7 @@ final class ServerlessExtras {
         cleanup(run,"mapping",()->run.backend.deleteEventSourceMapping(run.state.get("mapping"),run.run),errors);
         // Keep dependent queues/functions if mapping removal fails.
         if(run.state.containsKey("mapping"))return;
-        cleanup(run,"worker_name",()->{run.backend.deleteOwnedWorker(run.state.get("worker_name"),run.run);run.state.remove("worker_arn");},errors);
-        cleanup(run,"worker_logs",()->run.backend.deleteLambdaLogGroup(run.state.get("worker_logs"),run.run),errors);
+        cleanup(run,"worker_name",()->{run.backend.deleteOwnedWorker(run.state.get("worker_name"),run.run);run.state.put("worker_deleted_at",java.time.Instant.now().toString());run.state.remove("worker_arn");run.persist();},errors);
         for(String key:List.of("queue","dlq"))cleanup(run,key,()->{
             String id=run.state.get(key);
             if(run.backend.exists("queue",id)) {
@@ -78,6 +77,20 @@ final class ServerlessExtras {
                 if(key.equals("queue"))run.backend.clearSqsRedrive(id,run.run);
                 run.backend.delete("queue",id);
             }
+        },errors);
+    }
+    static void cleanupLogs(ServerlessRun run,List<RuntimeException> errors) {
+        // The shared drain guard requires the API function to be absent too.
+        if(run.state.containsKey("mapping")||run.state.containsKey("worker_name")||run.state.containsKey("lambda_name"))return;
+        String expectedName="lmaws_"+run.run+"_worker",expectedLog="lmaws_s07_worker_logs_"+run.run;
+        boolean anyReceipt=run.state.containsKey("worker_name_receipt")||run.state.containsKey("worker_log_receipt");
+        boolean receipt=expectedName.equals(run.state.get("worker_name_receipt"))&&expectedLog.equals(run.state.get("worker_log_receipt"));
+        if(anyReceipt&&!receipt)throw new SecurityException("worker creation receipt mismatch");
+        if(receipt&&run.state.containsKey("worker_logs")&&!expectedLog.equals(run.state.get("worker_logs")))throw new SecurityException("worker log differs from creation receipt");
+        if(receipt&&run.state.containsKey("finished_at")&&!run.state.containsKey("worker_logs")){run.state.put("worker_logs",expectedLog);run.persist();}
+        cleanup(run,"worker_logs",()->{
+            if(receipt&&!run.backend.isDemo())run.backend.reconcileRuntimeLogGroup(expectedLog,run.run,java.time.Instant.parse(run.state.get("started_at")),java.time.Instant.parse(run.state.getOrDefault("worker_deleted_at",run.state.getOrDefault("finished_at",java.time.Instant.now().toString()))),true,stage->{run.state.put("worker_log_reconciliation_stage",stage);run.persist();});
+            else run.backend.deleteLambdaLogGroup(run.state.get("worker_logs"),run.run);
         },errors);
     }
     private static void cleanup(ServerlessRun run,String key,Runnable action,List<RuntimeException> errors) {

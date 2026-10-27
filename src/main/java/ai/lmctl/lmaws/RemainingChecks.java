@@ -14,11 +14,17 @@ public final class RemainingChecks {
     String code=ServerlessExtras.workerSource(run,source);
     if(!code.contains("os.environ['RUN_ID']=\"cafe07\"")||!code.contains("os.environ['TABLE_NAME']=\"lmaws_cafe07_table\""))throw new AssertionError("worker source lost its run/table environment");
     run.step("queues","{}");run.step("lambda",config);run.step("worker",config);
+    var pendingErrors=new java.util.ArrayList<RuntimeException>();ServerlessExtras.cleanupLogs(run,pendingErrors);
+    if(!run.state.containsKey("worker_logs")||!pendingErrors.isEmpty())throw new AssertionError("worker logs drained while functions remained active");
     if(run.leftovers().size()!=8)throw new AssertionError("expected table, queues, two functions/logs and mapping receipts: "+run.leftovers());
    }
    try(var run=new ServerlessRun(backend,cost,"cafe07","example.com",state.toString())) {
     if(!run.summary().get("mapping").contains("event-source-mapping"))throw new AssertionError("mapping was not durable");
-    run.down();run.down();if(!run.leftovers().isEmpty())throw new AssertionError("queue cleanup incomplete");
+    run.down();run.down();
+    String receipt=run.state.get("worker_log_receipt");run.state.put("worker_log_receipt","lmaws_foreign_logs_cafe07");boolean refused=false;
+    try{ServerlessExtras.cleanupLogs(run,new java.util.ArrayList<>());}catch(SecurityException expected){refused=true;}finally{run.state.put("worker_log_receipt",receipt);}
+    if(!refused)throw new AssertionError("forged worker log receipt accepted");
+    if(!run.leftovers().isEmpty())throw new AssertionError("queue cleanup incomplete");
    }
    try(var web=new WebRun(backend,cost,"cafe12","example.com",dir.resolve("web.json").toString())) {
     web.step("bucket","{}");web.step("distribution","{}");web.step("cache","{\"default_ttl\":30,\"max_ttl\":60}");web.down();

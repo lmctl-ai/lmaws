@@ -6,7 +6,8 @@ the nano/static weighted-DNS engine for a 0/100 → 100/0 → 0/100 manual cutov
 
 `ServerlessExtras` extends the durable `ServerlessRun` journal. Teardown removes
 mappings before workers and queues; worker recovery uses exact names and run tags.
-All Lambda logs use `lmaws_<slug>_logs_<run>`. Queue worker execution and SQS/log
+Worker logs reuse the receipt-proven final-delivery reconciliation after both
+functions and the mapping are removed. All Lambda logs use `lmaws_<slug>_logs_<run>`. Queue worker execution and SQS/log
 bounds join the whole-run estimate. Static cache TTLs are bounded; API cache TTLs
 stay zero. Main currently exposes 194 host signature lines including context.
 

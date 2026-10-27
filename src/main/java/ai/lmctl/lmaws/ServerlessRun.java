@@ -134,6 +134,7 @@ final class ServerlessRun implements AutoCloseable {
                 else backend.deleteLambdaLogGroup(state.get("log_group"),run);
                 state.remove("log_group");
             },errors);
+            ServerlessExtras.cleanupLogs(this,errors);
             if(!state.containsKey("mapping"))cleanup("table",()->{if(!backend.isDemo()&&backend.exists("table",state.get("table"))){if(!backend.owned("table",state.get("table"),run))throw new SecurityException("table tag mismatch");backend.delete("table",state.get("table"));}},errors);
             cleanup("bucket",()->{if(!backend.isDemo()&&backend.exists("bucket",state.get("bucket"))){if(!backend.owned("bucket",state.get("bucket"),run))throw new SecurityException("bucket tag mismatch");backend.emptyServerlessBucket(state.get("bucket"),run);backend.delete("bucket",state.get("bucket"));}},errors);
             if(!errors.isEmpty()){state.put("status","cleanup_failed");state.put("cleanup_errors",Jsons.encodeRaw(errors.stream().map(this::privateError).toList()));persist();var error=new IllegalStateException("serverless cleanup incomplete");errors.forEach(error::addSuppressed);throw error;}
