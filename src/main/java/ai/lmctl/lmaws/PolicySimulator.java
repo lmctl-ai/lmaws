@@ -265,6 +265,125 @@ public final class PolicySimulator {
         );
     }
 
+    public static final List<String> RUN_INSTANCES_SUB_RESOURCES = List.of(
+        "instance",
+        "volume",
+        "subnet",
+        "image",
+        "network-interface",
+        "spot-instances-request"
+    );
+
+    /**
+     * Expands an EC2 RunInstances launch into all six AWS IAM RunInstances sub-resource probes
+     * (instance, volume, subnet, image, network-interface, spot-instances-request) with the exact
+     * condition keys evaluated by EC2 on each sub-resource:
+     *   - instance: aws:RequestedRegion, ec2:InstanceType, and aws:RequestTag/<tagKey> (when tagValue is non-empty)
+     *   - volume: aws:RequestedRegion, ec2:VolumeSize, and aws:RequestTag/<tagKey> (when tagValue is non-empty)
+     *   - subnet: aws:RequestedRegion (referenced existing resource; no RequestTag)
+     *   - image: aws:RequestedRegion (referenced public/account AMI; no RequestTag)
+     *   - network-interface: aws:RequestedRegion (implicit launch ENI; no RequestTag required)
+     *   - spot-instances-request: aws:RequestedRegion (implicit spot request; no RequestTag required)
+     */
+    public static List<Probe> runInstancesProbes(
+            String instanceType,
+            long volumeGib,
+            String tagKey,
+            String tagValue,
+            String region) {
+        String reg = (region == null || region.isBlank()) ? "us-east-1" : region.trim();
+        String iType = (instanceType == null || instanceType.isBlank()) ? "t4g.nano" : instanceType.trim();
+        long gib = volumeGib <= 0 ? 8L : volumeGib;
+        boolean hasTag = tagKey != null && !tagKey.isBlank() && tagValue != null && !tagValue.isBlank();
+
+        Map<String, String> instanceCtx = new LinkedHashMap<>();
+        instanceCtx.put("aws:RequestedRegion", reg);
+        instanceCtx.put("ec2:InstanceType", iType);
+        if (hasTag) {
+            instanceCtx.put("aws:RequestTag/" + tagKey.trim(), tagValue.trim());
+        }
+
+        Map<String, String> volumeCtx = new LinkedHashMap<>();
+        volumeCtx.put("aws:RequestedRegion", reg);
+        volumeCtx.put("ec2:VolumeSize", String.valueOf(gib));
+        if (hasTag) {
+            volumeCtx.put("aws:RequestTag/" + tagKey.trim(), tagValue.trim());
+        }
+
+        Map<String, String> refCtx = Map.of("aws:RequestedRegion", reg);
+
+        return List.of(
+            new Probe("run_instance", "ec2:RunInstances",
+                "arn:aws:ec2:" + reg + ":000000000000:instance/i-0demo", instanceCtx, "allowed"),
+            new Probe("run_volume", "ec2:RunInstances",
+                "arn:aws:ec2:" + reg + ":000000000000:volume/vol-0demo", volumeCtx, "allowed"),
+            new Probe("run_subnet", "ec2:RunInstances",
+                "arn:aws:ec2:" + reg + ":000000000000:subnet/subnet-0demo", refCtx, "allowed"),
+            new Probe("run_image", "ec2:RunInstances",
+                "arn:aws:ec2:" + reg + "::image/ami-0demo", refCtx, "allowed"),
+            new Probe("run_network_interface", "ec2:RunInstances",
+                "arn:aws:ec2:" + reg + ":000000000000:network-interface/eni-0demo", refCtx, "allowed"),
+            new Probe("run_spot_instances_request", "ec2:RunInstances",
+                "arn:aws:ec2:" + reg + ":000000000000:spot-instances-request/sir-0demo", refCtx, "allowed")
+        );
+    }
+
+    public static String formatProbes(List<Probe> probes) {
+        List<String> specs = new ArrayList<>(probes.size());
+        for (Probe p : probes) {
+            specs.add(p.action() + "|" + p.resource() + "|" + formatContext(p.context()) + "|" + p.expected());
+        }
+        return String.join(";", specs);
+    }
+
+    public static List<Map<String, String>> simulateRunInstances(
+            String policyJson,
+            String instanceType,
+            long volumeGib,
+            String tagKey,
+            String tagValue,
+            String region,
+            String expectedLaunchDecision) {
+        List<Probe> probes = runInstancesProbes(instanceType, volumeGib, tagKey, tagValue, region);
+        List<Map<String, String>> rows = evaluateOffline(policyJson, probes);
+        boolean anyExplicitDeny = rows.stream().anyMatch(r -> "explicitDeny".equals(r.get("decision")));
+        boolean anyImplicitDeny = rows.stream().anyMatch(r -> "implicitDeny".equals(r.get("decision")));
+        String launchDecision = anyExplicitDeny
+            ? "explicitDeny"
+            : (anyImplicitDeny ? "implicitDeny" : "allowed");
+        String expectedOverall = (expectedLaunchDecision == null || expectedLaunchDecision.isBlank())
+            ? "allowed"
+            : expectedLaunchDecision.trim();
+        boolean launchPassed = expectedOverall.equalsIgnoreCase(launchDecision);
+
+        List<String> failedSubs = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) {
+            String subRes = RUN_INSTANCES_SUB_RESOURCES.get(i);
+            String dec = rows.get(i).get("decision");
+            if (!"allowed".equals(dec)) {
+                failedSubs.add(subRes + "(" + dec + ")");
+            }
+        }
+        String failedSummary = failedSubs.isEmpty() ? "none" : String.join(",", failedSubs);
+
+        for (int i = 0; i < rows.size(); i++) {
+            Map<String, String> row = rows.get(i);
+            String subRes = RUN_INSTANCES_SUB_RESOURCES.get(i);
+            row.put("sub_resource", subRes);
+            row.put("launch_decision", launchDecision);
+            row.put("launch_allowed", String.valueOf("allowed".equals(launchDecision)));
+            row.put("expected_launch_decision", expectedOverall);
+            row.put("launch_passed", String.valueOf(launchPassed));
+            row.put("failed_sub_resources", failedSummary);
+            if (!"allowed".equalsIgnoreCase(expectedOverall)) {
+                row.put("expected", expectedOverall);
+                row.put("passed", String.valueOf(launchPassed));
+                row.put("status", launchPassed ? "ok" : "mismatch");
+            }
+        }
+        return rows;
+    }
+
     /**
      * Deterministic IAM policy evaluator for offline/demo mode.
      * Evaluates explicit Deny first, then Allow, defaulting to implicitDeny.

@@ -22,6 +22,24 @@ public final class CloudHost implements AutoCloseable {
     private Session measured;
     private String failureCode="", deniedAction="";
     void noteFailure(String code,String action){failureCode=code;deniedAction=action;}
+    void noteFailure(Throwable failure,String code,String action){
+        failureCode=code;deniedAction=action;
+        for(Throwable x=failure;x!=null;x=x.getCause()) {
+            if(x instanceof software.amazon.awssdk.awscore.exception.AwsServiceException aws) {
+                int status=aws.statusCode();
+                String errCode=aws.awsErrorDetails()!=null&&aws.awsErrorDetails().errorCode()!=null?aws.awsErrorDetails().errorCode():"";
+                String errMsg=aws.awsErrorDetails()!=null&&aws.awsErrorDetails().errorMessage()!=null?aws.awsErrorDetails().errorMessage():aws.getMessage();
+                String lc=errCode.toLowerCase(Locale.ROOT),lm=errMsg==null?"":errMsg.toLowerCase(Locale.ROOT);
+                if(status==403||lc.contains("accessdenied")||lc.contains("unauthorized")||lm.contains("not authorized to perform")||lm.contains("access denied")) {
+                    if(billing!=null) {
+                        Map<String,String> patch=billing.recordAccessDenied(null,null,errCode.isEmpty()?"AccessDenied":errCode,status,errMsg);
+                        if(deniedAction.isEmpty())deniedAction=patch.getOrDefault("action","");
+                    }
+                    break;
+                }
+            }
+        }
+    }
     private record Session(AwsBackend backend,CostLedger cost) {}
     static java.math.BigDecimal costCap() {
         String raw=System.getenv().getOrDefault("LMAWS_MAX_COST_USD","0.05");
@@ -249,6 +267,8 @@ public final class CloudHost implements AutoCloseable {
             List<Map<String,String>> out=(s.asObject() instanceof Session sess)?sess.backend.policySimulatePrincipal(text(a[0]),text(a[1])):PolicySimulator.evaluateOffline(IamPolicies.sanitizedTemplatePolicyJson(),PolicySimulator.parseProbes(text(a[1])));
             return rows(out,c);
         });
+        r.method("Cloud","policy_size_report",List.of("string"),"Rows",(c,s,a)->rows(PolicyAnalyzer.sizeReport(text(a[0])),c));
+        r.method("Cloud","policy_cheat_sheet",List.of(),"Rows",(c,s,a)->rows(PolicyAnalyzer.cheatSheet(),c));
         r.method("Policy","allow",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).allow(text(a[0]),text(a[1]),text(a[2]))));
         r.method("Policy","allow_cond",List.of("string","string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).allowCond(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
         r.method("Policy","deny",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).deny(text(a[0]),text(a[1]),text(a[2]))));
@@ -282,6 +302,8 @@ public final class CloudHost implements AutoCloseable {
         r.method("Policy","static_site_stack",List.of("string","string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).staticSiteStack(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
         r.method("Policy","billing_viewer",List.of(),"Policy",(c,s,a)->policyVal(policy(s).billingViewer()));
         r.method("Policy","lambda_deployer_by_name",List.of("string"),"Policy",(c,s,a)->policyVal(policy(s).lambdaDeployerByName(text(a[0]))));
+        r.method("Policy","pass_role_to_service",List.of("string","string"),"Policy",(c,s,a)->policyVal(policy(s).passRoleToService(text(a[0]),text(a[1]))));
+        r.method("Policy","pass_role_to_service",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).passRoleToService(text(a[0]),text(a[1]),text(a[2]))));
         r.method("Policy","ci_bucket_deployer",List.of("string","string"),"Policy",(c,s,a)->policyVal(policy(s).ciBucketDeployer(text(a[0]),text(a[1]))));
         r.method("Policy","permission_boundary",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).permissionBoundary(text(a[0]),text(a[1]),text(a[2]))));
         r.method("Policy","lmaws_session_policy",List.of("string","string","string","string","string","int"),"Policy",(c,s,a)->policyVal(policy(s).lmawsSessionPolicy(text(a[0]),text(a[1]),text(a[2]),text(a[3]),text(a[4]),a[5].asInt())));
@@ -294,6 +316,11 @@ public final class CloudHost implements AutoCloseable {
         r.method("Policy","diff",List.of("string"),"Rows",(c,s,a)->rows(policy(s).diff(text(a[0])),c));
         r.method("Policy","explain",List.of(),"Rows",(c,s,a)->rows(policy(s).explain(),c));
         r.method("Policy","matrix",List.of(),"Rows",(c,s,a)->rows(policy(s).matrix(),c));
+        r.method("Policy","size_report",List.of(),"Rows",(c,s,a)->rows(policy(s).sizeReport(),c));
+        r.method("Policy","cheat_sheet",List.of(),"Rows",(c,s,a)->rows(policy(s).cheatSheet(),c));
+        r.method("Policy","simulate_run_instances",List.of("string","int","string","string","string"),"Rows",(c,s,a)->rows(policy(s).simulateRunInstances(text(a[0]),(int)a[1].asInt(),text(a[2]),text(a[3]),text(a[4])),c));
+        r.method("Policy","simulate_run_instances",List.of("string","int","string","string","string","string"),"Rows",(c,s,a)->rows(policy(s).simulateRunInstances(text(a[0]),(int)a[1].asInt(),text(a[2]),text(a[3]),text(a[4]),text(a[5])),c));
+        r.method("Policy","run_instances_probes",List.of("string","int","string","string","string"),"string",(c,s,a)->Value.ofString(policy(s).runInstancesProbes(text(a[0]),(int)a[1].asInt(),text(a[2]),text(a[3]),text(a[4]))));
         r.method("Policy","summary",List.of(),"Row",(c,s,a)->rowValue(c,policy(s).summary()));
     }
     private static String text(Value value) {
@@ -353,7 +380,7 @@ public final class CloudHost implements AutoCloseable {
         }catch(Exception e){throw new IllegalStateException("cannot finish cost verification",e);}
         List<Map<String,String>> candidates=Sandbox.leftovers(session.cost.path().toAbsolutePath().getParent(),0).stream().filter(v->Path.of(v.get("ledger")).toAbsolutePath().normalize().equals(session.cost.path().toAbsolutePath().normalize())).toList();
         leftovers=Math.max(leftovers,candidates.size());
-        Map<String,Object> report=new LinkedHashMap<>(session.cost.report(leftovers));report.put("provider_verification",verified);report.put("sweeper_leftover_count",candidates.size());report.put("profile",AwsBackend.activeProfile());report.put("ledger",session.cost.path().toString());report.put("estimated_cost_display",session.cost.displayCost());if(!failureCode.isEmpty())report.put("run_error",failureCode);if(!deniedAction.isEmpty())report.put("denied_action",deniedAction);report.put("finished_at",java.time.Instant.now().toString());
+        Map<String,Object> report=new LinkedHashMap<>(session.cost.report(leftovers));report.put("provider_verification",verified);report.put("sweeper_leftover_count",candidates.size());report.put("profile",AwsBackend.activeProfile());report.put("ledger",session.cost.path().toString());report.put("estimated_cost_display",session.cost.displayCost());if(!failureCode.isEmpty())report.put("run_error",failureCode);if(!deniedAction.isEmpty())report.put("denied_action",deniedAction);else if(report.get("access_denied_patch") instanceof Map<?,?> p && p.get("action")!=null)report.put("denied_action",p.get("action"));report.put("finished_at",java.time.Instant.now().toString());
         for(var web:webRuns)if(web.cost==session.cost){
             report.put("sdk_estimated_usd",report.get("total_estimated_usd"));
             var total=new java.math.BigDecimal(web.state.getOrDefault("total_estimated_usd","0"));

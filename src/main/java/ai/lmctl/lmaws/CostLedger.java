@@ -31,7 +31,8 @@ public final class CostLedger {
     private final Map<String,Resource> resources=new LinkedHashMap<>();
     private final Map<String,Charge> requests=new LinkedHashMap<>();
     private final List<Map<String,Object>> failedCreates=new ArrayList<>();
-    private BigDecimal requestTotal=BigDecimal.ZERO; private Resource current,pending; private String lastOperation=""; private int cleanupDepth; private int refusals; private long lastCeDispatch;
+    private final List<Map<String,String>> accessDeniedPatches=new ArrayList<>();
+    private BigDecimal requestTotal=BigDecimal.ZERO; private Resource current,pending; private String lastService="",lastOperation=""; private int cleanupDepth; private int refusals; private long lastCeDispatch;
     private static final class Charge { long requests,units; BigDecimal cost=BigDecimal.ZERO,unit=BigDecimal.ZERO;
         Map<String,Object> report(){return Map.of("requests",requests,"billing_units",units,"unit_price_usd",unit,"estimated_usd",cost);} }
     private static final class Resource {
@@ -78,7 +79,7 @@ public final class CostLedger {
             if(wait>0)try{Thread.sleep(wait/1_000_000L,(int)(wait%1_000_000L));}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException("spend request interrupted");}
             lastCeDispatch=System.nanoTime();
         }
-        lastOperation=operation;requestTotal=requestTotal.add(charge);String key=svc+"."+operation;
+        lastService=svc;lastOperation=operation;requestTotal=requestTotal.add(charge);String key=svc+"."+operation;
         add(requests,key,units,unit,charge);Resource owner=current==null?pending:current;
         if(owner!=null)add(owner.requests,key,units,unit,charge);
         write(Map.of("event","cost_request","service",svc,"operation",operation,"billing_units",units,"unit_price_usd",unit,"estimated_usd",charge));
@@ -93,9 +94,62 @@ public final class CostLedger {
     public synchronized String lastOperation(){return lastOperation;}
     public synchronized boolean creationWasTransmitted(String operation){return pending!=null && pending.requests.keySet().stream().anyMatch(k->k.endsWith("."+operation));}
     public synchronized void creationRejected(String kind,String name,String code,int status){
-        failedCreates.add(Map.of("kind",kind,"name",name,"error_code",code,"http_status",status,"confirmed_created",false));
+        Map<String,Object> entry=new LinkedHashMap<>();
+        entry.put("kind",kind);entry.put("name",name);entry.put("error_code",code);entry.put("http_status",status);entry.put("confirmed_created",false);
+        String lc=code==null?"":code.toLowerCase(Locale.ROOT);
+        if(status==403 || lc.contains("accessdenied") || lc.contains("unauthorized")) {
+            String svc=lastService.isEmpty()?kindToService(kind):lastService;
+            String op=lastOperation.isEmpty()?kindToCreateOperation(kind):lastOperation;
+            Map<String,String> patch=recordAccessDenied(svc,op,code,status,null);
+            entry.put("access_denied_patch",patch);
+        }
+        failedCreates.add(Collections.unmodifiableMap(entry));
         pending=null;current=null;write(Map.of("event","cost_creation_rejected","kind",kind,"name",name,"http_status",status));
     }
+    public synchronized Map<String,String> recordAccessDenied(String rawService,String operation,String errorCode,int httpStatus,String rawErrorMessage){
+        String svc=(rawService==null||rawService.isBlank())?lastService:service(rawService);
+        String op=(operation==null||operation.isBlank())?lastOperation:operation;
+        Map<String,String> explained=PolicyAnalyzer.explainDenial(svc,op,rawErrorMessage);
+        Map<String,String> patch=new LinkedHashMap<>();
+        patch.put("service",explained.getOrDefault("service",svc));
+        patch.put("operation",op==null?"":op);
+        patch.put("error_code",errorCode==null||errorCode.isBlank()?"AccessDenied":errorCode);
+        patch.put("http_status",String.valueOf(httpStatus));
+        patch.put("action",explained.getOrDefault("action",""));
+        patch.put("resource_arn_pattern",explained.getOrDefault("resource_arn_pattern",explained.getOrDefault("resource","*")));
+        patch.put("condition_keys",explained.getOrDefault("condition_keys","none"));
+        patch.put("denial_type",explained.getOrDefault("denial_type","identity_policy_missing_allow"));
+        patch.put("failed_condition",explained.getOrDefault("failed_condition","none"));
+        patch.put("minimal_builder_patch",explained.getOrDefault("minimal_builder_patch",explained.getOrDefault("builder_snippet","")));
+        patch.put("statement_json",explained.getOrDefault("statement_json","{}"));
+        Map<String,String> immutable=Collections.unmodifiableMap(patch);
+        if(accessDeniedPatches.isEmpty() || !sameDenialPatch(accessDeniedPatches.get(accessDeniedPatches.size()-1),immutable)){
+            accessDeniedPatches.add(immutable);
+            Map<String,Object> ev=new LinkedHashMap<>(immutable);
+            ev.put("event","cost_access_denied");
+            write(ev);
+        }
+        return immutable;
+    }
+    private static boolean sameDenialPatch(Map<String,String> a,Map<String,String> b){
+        return Objects.equals(a.get("action"),b.get("action"))
+            && Objects.equals(a.get("resource_arn_pattern"),b.get("resource_arn_pattern"))
+            && Objects.equals(a.get("condition_keys"),b.get("condition_keys"))
+            && Objects.equals(a.get("minimal_builder_patch"),b.get("minimal_builder_patch"));
+    }
+    private static String kindToService(String kind){
+        if(kind==null)return "aws";
+        return switch(kind.toLowerCase(Locale.ROOT)){
+            case "bucket"->"s3";case "queue"->"sqs";case "topic"->"sns";case "table"->"dynamodb";case "parameter"->"ssm";case "log_group"->"logs";case "instance"->"ec2";default->kind;
+        };
+    }
+    private static String kindToCreateOperation(String kind){
+        if(kind==null)return "Create";
+        return switch(kind.toLowerCase(Locale.ROOT)){
+            case "bucket"->"CreateBucket";case "queue"->"CreateQueue";case "topic"->"CreateTopic";case "table"->"CreateTable";case "parameter"->"PutParameter";case "log_group"->"CreateLogGroup";case "instance"->"RunInstances";default->"Create";
+        };
+    }
+    public synchronized List<Map<String,String>> accessDeniedPatches(){return List.copyOf(accessDeniedPatches);}
     public synchronized void select(String kind,String id){current=resources.get(kind+"\0"+id);}
     public synchronized void deleted(String kind,String id){Resource r=resources.get(kind+"\0"+id);if(r==null)return;r.end=clock.getAsLong();write(Map.of("event","cost_resource","state","deleted","kind",kind,"id",id,"minutes_alive",minutes(r)));current=null;}
     public synchronized void put(String kind,String id,int bytes){put(kind,id,bytes,0);}
@@ -104,7 +158,7 @@ public final class CostLedger {
     private BigDecimal storage(Resource r){if(r.bytes==0)return BigDecimal.ZERO;String key=r.kind.equals("bucket")?"s3.storage_gb_month":"dynamodb.storage_gb_month";return PRICES.get(key).multiply(BigDecimal.valueOf(r.bytes)).multiply(minutes(r)).divide(GIB.multiply(MONTH_MINUTES),24,RoundingMode.HALF_UP);}
     public synchronized BigDecimal total(){return requestTotal.add(resources.values().stream().map(this::storage).reduce(BigDecimal.ZERO,BigDecimal::add));}
     private static Map<String,Object> charges(Map<String,Charge> data){Map<String,Object> out=new LinkedHashMap<>();data.forEach((k,v)->out.put(k,v.report()));return out;}
-    public synchronized Map<String,Object> report(int leftovers){List<Map<String,Object>> rr=new ArrayList<>();for(Resource r:resources.values()){Map<String,Object> row=new LinkedHashMap<>();row.put("kind",r.kind);row.put("id",r.id);row.put("name",r.name);row.put("minutes_alive",minutes(r));row.put("stored_bytes_upper_bound",r.bytes);row.put("requests",charges(r.requests));row.put("storage_unit_price_usd_gb_month",r.bytes==0?BigDecimal.ZERO:PRICES.get(r.kind.equals("bucket")?"s3.storage_gb_month":"dynamodb.storage_gb_month"));BigDecimal req=r.requests.values().stream().map(v->v.cost).reduce(BigDecimal.ZERO,BigDecimal::add);row.put("request_cost_usd",req);row.put("storage_cost_usd",storage(r));row.put("cost_subtotal_usd",req.add(storage(r)));rr.add(row);}Map<String,Object> out=new LinkedHashMap<>();out.put("schema","lmaws-cost-v2");out.put("run_id",runId);out.put("example",example);out.put("region",region);out.put("live",live);out.put("cap_usd",cap);out.put("hard_ceiling_usd",HARD_CEILING);out.put("total_estimated_usd",total());out.put("reserved_future_usd",reserved());out.put("price_table",PRICES);out.put("price_metadata",priceMetadata());out.put("resources",rr);out.put("rejected_creations",failedCreates);out.put("service_requests",charges(requests));out.put("cap_refusals",refusals);out.put("leftover_count",leftovers);return out;}
+    public synchronized Map<String,Object> report(int leftovers){List<Map<String,Object>> rr=new ArrayList<>();for(Resource r:resources.values()){Map<String,Object> row=new LinkedHashMap<>();row.put("kind",r.kind);row.put("id",r.id);row.put("name",r.name);row.put("minutes_alive",minutes(r));row.put("stored_bytes_upper_bound",r.bytes);row.put("requests",charges(r.requests));row.put("storage_unit_price_usd_gb_month",r.bytes==0?BigDecimal.ZERO:PRICES.get(r.kind.equals("bucket")?"s3.storage_gb_month":"dynamodb.storage_gb_month"));BigDecimal req=r.requests.values().stream().map(v->v.cost).reduce(BigDecimal.ZERO,BigDecimal::add);row.put("request_cost_usd",req);row.put("storage_cost_usd",storage(r));row.put("cost_subtotal_usd",req.add(storage(r)));rr.add(row);}Map<String,Object> out=new LinkedHashMap<>();out.put("schema","lmaws-cost-v2");out.put("run_id",runId);out.put("example",example);out.put("region",region);out.put("live",live);out.put("cap_usd",cap);out.put("hard_ceiling_usd",HARD_CEILING);out.put("total_estimated_usd",total());out.put("reserved_future_usd",reserved());out.put("price_table",PRICES);out.put("price_metadata",priceMetadata());out.put("resources",rr);out.put("rejected_creations",failedCreates);out.put("access_denied_count",accessDeniedPatches.size());out.put("access_denied_patches",new ArrayList<>(accessDeniedPatches));if(!accessDeniedPatches.isEmpty())out.put("access_denied_patch",accessDeniedPatches.get(accessDeniedPatches.size()-1));out.put("service_requests",charges(requests));out.put("cap_refusals",refusals);out.put("leftover_count",leftovers);return out;}
     synchronized void webSnapshot(java.math.BigDecimal total,Object prices,String status) {
         write(Map.of("event","cost_web_snapshot","total_estimated_usd",total,"sdk_estimated_usd",this.total(),"price_table",prices,"web_status",status));
     }

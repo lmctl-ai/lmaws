@@ -899,6 +899,29 @@ public final class AwsBackend implements AutoCloseable {
             String operation = attributes.getOptionalAttribute(SdkExecutionAttribute.OPERATION_NAME).orElse("request");
             ledger.request(service, operation);
         }
+        @Override public void onExecutionFailure(Context.FailedExecution context, ExecutionAttributes attributes) {
+            Throwable ex = context.exception();
+            if (ex instanceof software.amazon.awssdk.awscore.exception.AwsServiceException aws) {
+                int status = aws.statusCode();
+                String code = aws.awsErrorDetails() != null && aws.awsErrorDetails().errorCode() != null
+                    ? aws.awsErrorDetails().errorCode()
+                    : "";
+                String msg = aws.awsErrorDetails() != null && aws.awsErrorDetails().errorMessage() != null
+                    ? aws.awsErrorDetails().errorMessage()
+                    : aws.getMessage();
+                String lowerCode = code.toLowerCase(Locale.ROOT);
+                String lowerMsg = msg == null ? "" : msg.toLowerCase(Locale.ROOT);
+                if (status == 403
+                        || lowerCode.contains("accessdenied")
+                        || lowerCode.contains("unauthorized")
+                        || lowerMsg.contains("not authorized to perform")
+                        || lowerMsg.contains("access denied")) {
+                    String service = attributes.getOptionalAttribute(SdkExecutionAttribute.SERVICE_NAME).orElse("aws");
+                    String operation = attributes.getOptionalAttribute(SdkExecutionAttribute.OPERATION_NAME).orElse("request");
+                    ledger.recordAccessDenied(service, operation, code.isEmpty() ? "AccessDenied" : code, status, msg);
+                }
+            }
+        }
     }
     private <T extends AutoCloseable> T register(T c) { clients.add(c); return c; }
 

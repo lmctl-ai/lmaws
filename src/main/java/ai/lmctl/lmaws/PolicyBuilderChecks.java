@@ -73,6 +73,19 @@ public final class PolicyBuilderChecks {
         require(builtCompact.equals(IamPolicies.compactJson(PolicyAnalyzer.parseDoc(baseline))),
             "Built lmaws_session compact JSON must match baseline byte-for-byte");
 
+        // Test pass_role_to_service helper + lint rule
+        PolicyBuilder passRoleValid = new PolicyBuilder("lmaws_session")
+            .passRoleToService("lmaws", "lambda.amazonaws.com");
+        require(IamPolicies.lint(passRoleValid.json()).valid(),
+            "pass_role_to_service('lmaws', 'lambda.amazonaws.com') must pass lint");
+        IamPolicies.requirePassRolePolicyContext("lmaws_session", passRoleValid.json());
+
+        PolicyBuilder passRoleEc2 = new PolicyBuilder("lmaws_session")
+            .passRoleToService("lmaws", "ec2.amazonaws.com");
+        IamPolicies.LintResult ec2PassRoleLint = IamPolicies.lint(passRoleEc2.json());
+        require(!ec2PassRoleLint.valid() && ec2PassRoleLint.findings().toString().contains("PASS_ROLE_LAMBDA_ONLY"),
+            "pass_role_to_service to ec2.amazonaws.com must be rejected by PASS_ROLE_LAMBDA_ONLY");
+
         // If the local snapshot file exists, extract its domain dynamically and verify 100% byte-for-byte equivalence
         Path localSnapshot = Path.of(System.getProperty("user.home", ""),
             ".aws", "session-tools", "tasks", "iam-snapshots", "lmaws-managed-policy.json");
@@ -89,6 +102,8 @@ public final class PolicyBuilderChecks {
                     "Built policy must match local lmaws-managed-policy.json 23/23: " + snapDiff.summary());
                 require(fromBuilder.compactJson().equals(IamPolicies.compactJson(PolicyAnalyzer.parseDoc(rawSnapshot))),
                     "Built policy compact JSON must match local lmaws-managed-policy.json byte-for-byte");
+                require(fromBuilder.json().trim().equals(rawSnapshot.trim()),
+                    "Built policy pretty JSON must match local lmaws-managed-policy.json byte-for-byte");
             } catch (java.io.IOException ex) {
                 throw new IllegalStateException("Failed reading local snapshot", ex);
             }
@@ -144,7 +159,7 @@ public final class PolicyBuilderChecks {
 
     private static void checkExplainMatrixDenialLedgerAndImport() {
         PolicyBuilder session = new PolicyBuilder("lmaws_session")
-            .lmawsSessionPolicy("lmaws", "lmaws_test", "example.com", "us-east-1", "t4g.nano,t3.nano", 8);
+            .lmawsSessionPolicy("lmaws", "lmaws_test", "lmnature.com", "us-east-1", "t4g.nano,t3.nano", 8);
         List<Map<String, String>> explained = session.explain();
         require(explained.size() == 24, "explain returns 23 statements + 1 POLICY_POSTURE summary");
         Map<String, String> posture = explained.get(explained.size() - 1);
@@ -154,20 +169,68 @@ public final class PolicyBuilderChecks {
         List<Map<String, String>> matrix = session.matrix();
         require(matrix.size() >= 10, "matrix returns service x action_class x scope cells");
 
+        // Statement-level size report + lint-valid compaction suggestions
+        List<Map<String, String>> sizeRows = session.sizeReport();
+        long stmtSizeCount = sizeRows.stream().filter(r -> "statement_size".equals(r.get("kind"))).count();
+        long compSuggestionCount = sizeRows.stream().filter(r -> "compaction_suggestion".equals(r.get("kind"))).count();
+        require(stmtSizeCount == 23, "sizeReport must return 23 statement_size rows, got " + stmtSizeCount);
+        require(compSuggestionCount >= 3, "sizeReport must return >= 3 compaction suggestions, got " + compSuggestionCount);
+        for (Map<String, String> r : sizeRows) {
+            if ("compaction_suggestion".equals(r.get("kind"))) {
+                require("true".equals(r.get("lint_valid")), "Compaction suggestion must be lint_valid=true: " + r);
+                require(Integer.parseInt(r.get("saved_bytes")) > 0, "Compaction suggestion must save > 0 bytes: " + r);
+            }
+        }
+        Map<String, String> sizeSummary = sizeRows.get(sizeRows.size() - 1);
+        require("size_summary".equals(sizeSummary.get("kind")), "Last sizeReport row is size_summary");
+        require("5292".equals(sizeSummary.get("compact_bytes")),
+            "lmaws_session (lmnature.com) must be 5292 compact bytes, got " + sizeSummary.get("compact_bytes"));
+
+        // IAM cheat sheet for lmaws
+        List<Map<String, String>> cheatRows = session.cheatSheet();
+        require(cheatRows.size() == 6, "cheatSheet returns 6 capability rows");
+        int totalCheatStmts = 0;
+        for (Map<String, String> cr : cheatRows) {
+            totalCheatStmts += Integer.parseInt(cr.get("statement_count"));
+            require(!cr.get("statements").isBlank() && !cr.get("why_scoped").isBlank()
+                    && !cr.get("missing_failure").isBlank() && !cr.get("minimal_builder_patch").isBlank(),
+                "Cheat sheet row must populate all fields: " + cr);
+        }
+        require(totalCheatStmts == 23, "Cheat sheet rows must cover all 23 statements, got " + totalCheatStmts);
+
         Map<String, String> denial1 = PolicyAnalyzer.explainDenial(
             "User: arn:aws:sts::123456789012:federated-user/awsspot-local-lmaws is not authorized to perform: "
-                + "ec2:RunInstances on resource: arn:aws:ec2:us-east-1:123456789012:instance/i-abc "
+                + "ec2:RunInstances on resource: arn:aws:ec2:us-east-1:123456789012:instance/i-0abc123def456 "
                 + "with an explicit deny in an identity-based policy");
-        require(!denial1.toString().contains("123456789012"), "explainDenial masks 12-digit account IDs");
+        require(!denial1.toString().contains("123456789012") && !denial1.toString().contains("i-0abc123def456"),
+            "explainDenial redacts 12-digit account IDs and concrete instance IDs");
         require("ec2:RunInstances".equals(denial1.get("action")), "explainDenial extracts action");
-        require(denial1.get("builder_snippet").contains("spot_nano_sandbox"), "explainDenial suggests spot_nano_sandbox");
+        require("arn:aws:ec2:*:*:instance/*".equals(denial1.get("resource_arn_pattern")),
+            "explainDenial generalizes resource_arn_pattern");
+        require(denial1.get("condition_keys").contains("ec2:InstanceType"), "explainDenial includes condition_keys");
+        require(denial1.get("minimal_builder_patch").contains("spot_nano_sandbox"), "explainDenial suggests spot_nano_sandbox");
 
         Map<String, String> denial2 = PolicyAnalyzer.explainDenial(
             "User: arn:aws:sts::123456789012:federated-user/awsspot-local-lmaws is not authorized to perform: "
-                + "s3:PutObject on resource: arn:aws:s3:::lmaws-demo/file.txt "
+                + "s3:PutObject on resource: arn:aws:s3:::lmaws-r9999-demo/file.txt "
                 + "because no identity-based policy allows the s3:PutObject action");
         require("s3:PutObject".equals(denial2.get("action")), "explainDenial extracts s3:PutObject");
+        require("arn:aws:s3:::lmaws-*/*".equals(denial2.get("resource_arn_pattern"))
+                && !denial2.toString().contains("r9999"),
+            "explainDenial generalizes s3 object ARN pattern without run ID");
         require(denial2.get("builder_snippet").contains("allow_cond"), "explainDenial suggests scoped allow_cond");
+
+        Map<String, String> denial3 = PolicyAnalyzer.explainDenial(
+            "User: arn:aws:sts::123456789012:federated-user/awsspot-local-lmaws is not authorized to perform: "
+                + "iam:PassRole on resource: arn:aws:iam::123456789012:role/lmaws_r123_exec "
+                + "because no session policy allows the iam:PassRole action");
+        require("iam:PassRole".equals(denial3.get("action")), "explainDenial extracts iam:PassRole");
+        require("arn:aws:iam::*:role/lmaws_*".equals(denial3.get("resource_arn_pattern")),
+            "explainDenial generalizes IAM role ARN");
+        require(denial3.get("condition_keys").contains("iam:PassedToService"),
+            "explainDenial includes iam:PassedToService condition key");
+        require(denial3.get("minimal_builder_patch").contains("pass_role_to_service"),
+            "explainDenial suggests pass_role_to_service");
 
         try {
             Path tempLedger = Files.createTempFile("lmaws-ledger-check-", ".jsonl");
@@ -197,6 +260,7 @@ public final class PolicyBuilderChecks {
         require("23".equals(imported.get("statement_count")), "importJson parses all 23 statements");
         require(imported.get("builder_program").contains(".require_tag_on_create("), "importJson recognizes require_tag_on_create");
         require(imported.get("builder_program").contains(".only_tagged("), "importJson recognizes only_tagged");
+        require(imported.get("builder_program").contains(".pass_role_to_service("), "importJson recognizes pass_role_to_service");
     }
 
     private static void checkSimulatorOfflineAndLoopbackSdk() {
@@ -207,6 +271,41 @@ public final class PolicyBuilderChecks {
         for (Map<String, String> row : offline) {
             require("true".equals(row.get("passed")), "Default probe must pass against lmaws_session: " + row);
         }
+
+        // Test simulate_run_instances across all 6 sub-resources
+        List<Map<String, String>> launchAllowed = session.simulateRunInstances(
+            "t4g.nano", 8, "lmaws_test", "r1", "us-east-1", "allowed");
+        require(launchAllowed.size() == 6, "simulateRunInstances expands into 6 sub-resource probes");
+        for (Map<String, String> row : launchAllowed) {
+            require("true".equals(row.get("passed")) && "true".equals(row.get("launch_passed")),
+                "All 6 sub-resources must pass for tagged t4g.nano <=8GiB launch: " + row);
+        }
+
+        List<Map<String, String>> launchLarge = session.simulateRunInstances(
+            "t4g.large", 8, "lmaws_test", "r1", "us-east-1", "explicitDeny");
+        require("explicitDeny".equals(launchLarge.get(0).get("decision"))
+                && "true".equals(launchLarge.get(0).get("launch_passed")),
+            "t4g.large launch is explicitly denied on instance by NanoOnly: " + launchLarge.get(0));
+
+        List<Map<String, String>> launchBigDisk = session.simulateRunInstances(
+            "t4g.nano", 20, "lmaws_test", "r1", "us-east-1", "explicitDeny");
+        require("explicitDeny".equals(launchBigDisk.get(1).get("decision"))
+                && "true".equals(launchBigDisk.get(1).get("launch_passed")),
+            "20GiB volume launch is explicitly denied on volume by SmallDisks: " + launchBigDisk.get(1));
+
+        List<Map<String, String>> launchUntagged = session.simulateRunInstances(
+            "t4g.nano", 8, "", "", "us-east-1", "implicitDeny");
+        require("implicitDeny".equals(launchUntagged.get(0).get("decision"))
+                && "true".equals(launchUntagged.get(0).get("launch_passed")),
+            "Untagged launch is implicitly denied on instance/volume by RunTagged: " + launchUntagged.get(0));
+
+        // Verify a policy missing network-interface/* in RunRefs is caught by simulateRunInstances
+        String missingEniJson = session.json().replace("\"arn:aws:ec2:*:*:network-interface/*\",", "");
+        List<Map<String, String>> missingEniRes = PolicySimulator.simulateRunInstances(
+            missingEniJson, "t4g.nano", 8, "lmaws_test", "r1", "us-east-1", "allowed");
+        require("false".equals(missingEniRes.get(0).get("launch_passed"))
+                && missingEniRes.get(0).get("failed_sub_resources").contains("network-interface"),
+            "simulateRunInstances must catch missing network-interface/* sub-resource: " + missingEniRes);
 
         // Loopback HTTP fake test for AWS SDK IamClient.simulateCustomPolicy and simulatePrincipalPolicy
         try {

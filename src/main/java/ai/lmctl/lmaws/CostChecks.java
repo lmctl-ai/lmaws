@@ -63,6 +63,29 @@ public final class CostChecks {
         rejected.reserveCreate("queue");rejected.request("sqs","CreateQueue");
         rejected.creationRejected("queue","lmaws_reject01_queue","AccessDenied",403);
         check(rejected.displayCost().equals("$0.00000040"),"rejected creation still displays charged request estimate");
+        Map<String,Object> rejReport=rejected.report(0);
+        check(((Number)rejReport.get("access_denied_count")).intValue()==1,"rejected 403 creation records access_denied_count=1");
+        @SuppressWarnings("unchecked")
+        Map<String,String> sqsPatch=(Map<String,String>)rejReport.get("access_denied_patch");
+        check(sqsPatch!=null && "sqs:CreateQueue".equals(sqsPatch.get("action")),"sqs AccessDenied patch action");
+        check("arn:aws:sqs:*:*:lmaws_*".equals(sqsPatch.get("resource_arn_pattern")),"sqs AccessDenied generalized ARN pattern");
+        check("aws:ResourceAccount".equals(sqsPatch.get("condition_keys")),"sqs AccessDenied condition_keys");
+        check(sqsPatch.get("minimal_builder_patch").contains("allow_cond"),"sqs AccessDenied minimal_builder_patch");
+
+        rejected.recordAccessDenied("ec2","RunInstances","UnauthorizedOperation",403,
+            "User: arn:aws:sts::123456789012:federated-user/awsspot-local-lmaws is not authorized to perform: "
+            + "ec2:RunInstances on resource: arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0 "
+            + "because no session policy allows the ec2:RunInstances action (aws:RequestTag/lmaws_test)");
+        String encodedRej=Jsons.encode(rejected.report(0));
+        check(!encodedRej.contains("123456789012") && !encodedRej.contains("i-0123456789abcdef0"),
+            "AccessDenied evidence never leaks account IDs or concrete instance IDs");
+        @SuppressWarnings("unchecked")
+        Map<String,String> ec2Patch=(Map<String,String>)rejected.report(0).get("access_denied_patch");
+        check("ec2:RunInstances".equals(ec2Patch.get("action")),"ec2 RunInstances patch action");
+        check("arn:aws:ec2:*:*:instance/*".equals(ec2Patch.get("resource_arn_pattern")),"ec2 generalized resource_arn_pattern");
+        check(ec2Patch.get("condition_keys").contains("aws:RequestTag/lmaws_test"),"ec2 parsed condition_keys");
+        check(ec2Patch.get("minimal_builder_patch").contains("require_tag_on_create") && ec2Patch.get("minimal_builder_patch").contains("RunRefs"),
+            "ec2 minimal_builder_patch includes RunTagged and RunRefs");
         try(AutoCloseable ignored=micro.cleanupScope()){micro.request("Amazon SQS","DeleteQueue");}
         check(micro.total().compareTo(micro.cap())>0,"cleanup may use reserved safety headroom");
         System.out.println("PASS cost caps, exact request units, fractional storage, durable prices and unrestricted teardown");

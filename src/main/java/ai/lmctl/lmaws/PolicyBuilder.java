@@ -475,6 +475,39 @@ public final class PolicyBuilder {
         return this;
     }
 
+    /**
+     * Adds an iam:PassRole statement scoped to roles matching {@code rolePrefix} and the
+     * target AWS service principal via {@code StringEquals: {"iam:PassedToService": service}}.
+     * Note: {@link IamPolicies#lint} and {@link IamPolicies#requirePassRolePolicyContext}
+     * enforce the exact lmaws_session Lambda exception (arn:aws:iam::*:role/lmaws_* to lambda.amazonaws.com).
+     */
+    public PolicyBuilder passRoleToService(String rolePrefix, String service) {
+        return passRoleToService("LambdaPassRole", rolePrefix, service);
+    }
+
+    public PolicyBuilder passRoleToService(String sid, String rolePrefix, String service) {
+        String rawPrefix = rolePrefix == null ? "" : rolePrefix.trim();
+        if (rawPrefix.isEmpty()) {
+            throw new IllegalArgumentException("Role prefix must not be empty");
+        }
+        String svc = service == null ? "" : service.trim();
+        if (svc.isEmpty()) {
+            throw new IllegalArgumentException("Service principal must not be empty");
+        }
+        String rolePattern;
+        if (rawPrefix.startsWith("arn:aws:iam::")) {
+            rolePattern = rawPrefix;
+        } else if (rawPrefix.endsWith("_*") || rawPrefix.endsWith("-*") || rawPrefix.endsWith("*")) {
+            rolePattern = "arn:aws:iam::*:role/" + rawPrefix;
+        } else {
+            requirePrefix(rawPrefix);
+            rolePattern = "arn:aws:iam::*:role/" + rawPrefix + "_*";
+        }
+        Map<String, Object> cond = new LinkedHashMap<>();
+        cond.put("StringEquals", Map.of("iam:PassedToService", svc));
+        return addStatementMap(sid, "Allow", false, List.of("iam:PassRole"), List.of(rolePattern), cond);
+    }
+
     public PolicyBuilder ciBucketDeployer(String bucketName, String distributionId) {
         String bucket = (bucketName == null || bucketName.isBlank()) ? "lmaws-site-assets" : bucketName.trim();
         String dist = (distributionId == null || distributionId.isBlank()) ? "*" : distributionId.trim();
@@ -498,7 +531,7 @@ public final class PolicyBuilder {
     }
 
     /**
-     * Composes the complete 20-statement lmaws_session customer-managed policy from the
+     * Composes the complete 23-statement lmaws_session customer-managed policy from the
      * reusable building blocks in exact statement order.
      */
     public PolicyBuilder lmawsSessionPolicy(
@@ -518,8 +551,7 @@ public final class PolicyBuilder {
         spotNanoDenyBlock(tagKey, typesCsv, maxGib);
         regionLock("OnlyUsEast1", region, "sts:GetCallerIdentity,cloudfront:*,route53:*");
         lambdaDeployerByName(prefix);
-        allowCond("LambdaPassRole", "iam:PassRole", "arn:aws:iam::*:role/" + prefix + "_*",
-            "{\"StringEquals\":{\"iam:PassedToService\":\"lambda.amazonaws.com\"}}");
+        passRoleToService("LambdaPassRole", prefix, "lambda.amazonaws.com");
         return this;
     }
 
@@ -580,6 +612,42 @@ public final class PolicyBuilder {
 
     public List<Map<String, String>> matrix() {
         return PolicyAnalyzer.matrix(json());
+    }
+
+    public List<Map<String, String>> sizeReport() {
+        return PolicyAnalyzer.sizeReport(json());
+    }
+
+    public List<Map<String, String>> cheatSheet() {
+        return PolicyAnalyzer.cheatSheet();
+    }
+
+    public List<Map<String, String>> simulateRunInstances(
+            String instanceType,
+            long volumeGib,
+            String tagKey,
+            String tagValue,
+            String region) {
+        return PolicySimulator.simulateRunInstances(json(), instanceType, volumeGib, tagKey, tagValue, region, "allowed");
+    }
+
+    public List<Map<String, String>> simulateRunInstances(
+            String instanceType,
+            long volumeGib,
+            String tagKey,
+            String tagValue,
+            String region,
+            String expectedDecision) {
+        return PolicySimulator.simulateRunInstances(json(), instanceType, volumeGib, tagKey, tagValue, region, expectedDecision);
+    }
+
+    public String runInstancesProbes(
+            String instanceType,
+            long volumeGib,
+            String tagKey,
+            String tagValue,
+            String region) {
+        return PolicySimulator.formatProbes(PolicySimulator.runInstancesProbes(instanceType, volumeGib, tagKey, tagValue, region));
     }
 
     public Map<String, String> summary() {

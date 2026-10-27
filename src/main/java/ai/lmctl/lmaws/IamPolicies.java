@@ -21,61 +21,91 @@ public final class IamPolicies {
 
     private static final Pattern POLICY_NAME_PATTERN = Pattern.compile("^lmaws_[a-z0-9_-]{1,64}$");
 
-    private static final Set<String> READ_INVENTORY_ALLOWLIST = Set.of(
-        "sts:getcalleridentity",
-        "s3:listallmybuckets",
-        "s3:getbucketlocation",
-        "s3:getbuckettagging",
-        "ec2:describe*",
-        "ec2:describeinstances",
-        "ec2:describevolumes",
-        "ec2:describesnapshots",
-        "ec2:describeaddresses",
-        "ec2:describetags",
-        "sqs:listqueues",
-        "sns:listtopics",
-        "sns:listsubscriptions",
-        "dynamodb:listtables",
-        "dynamodb:describelimits",
-        "logs:describeloggroups",
-        "logs:describelogstreams",
-        "ssm:describeparameters",
-        "ssm:getparameters",
-        "ssm:getparametersbypath",
-        "route53:list*",
-        "route53:gethostedzone",
-        "route53:getchange",
-        "cloudfront:list*",
-        "cloudfront:get*",
-        "acm:listcertificates",
-        "acm:describecertificate",
-        "acm:listtagsforcertificate",
-        "ecs:listclusters",
-        "ecs:describeclusters",
-        "lambda:listfunctions",
-        "cloudwatch:describealarms",
-        "cloudwatch:getmetricdata",
-        "cloudwatch:getmetricstatistics",
-        "cloudwatch:listmetrics",
-        "tag:getresources",
-        "tag:gettagkeys",
-        "tag:gettagvalues",
-        "ce:get*",
-        "ce:getcostandusage",
-        "ce:getdimensionvalues",
-        "ce:gettags",
-        "ce:getreservationutilization",
-        "ce:getreservationcoverage",
-        "ce:getsavingsplansutilization",
-        "ce:getsavingsplanscoverage",
-        "savingsplans:describe*",
-        "savingsplans:describesavingsplans",
-        "savingsplans:describesavingsplansofferingrates",
-        "savingsplans:describesavingsplansofferings",
-        "pricing:describeservices",
-        "pricing:getattributevalues",
-        "pricing:getproducts"
+    public static final String ALLOWLIST_STAR_READ = "STAR_READ_ALLOWLIST";
+    public static final String RULE_STAR_READ = ALLOWLIST_STAR_READ;
+    public static final String ALLOWLIST_SSM_PUBLIC_READ = "SSM_PUBLIC_PARAM_ALLOWLIST";
+    public static final String ALLOWLIST_IAM_SCOPED_ROLE_READ = "IAM_SCOPED_ROLE_READ_ALLOWLIST";
+    public static final String ALLOWLIST_IAM_SCOPED_POLICY_READ = "IAM_SCOPED_POLICY_READ_ALLOWLIST";
+    public static final String RULE_TAG_SCOPED_SENSITIVE_READ = "TAG_SCOPED_SENSITIVE_READ";
+    public static final String RULE_PASS_ROLE_LAMBDA_ONLY = "PASS_ROLE_LAMBDA_ONLY";
+    public static final String RULE_FORBIDDEN_BARE_WILDCARD = "FORBIDDEN_BARE_WILDCARD";
+    public static final String RULE_FORBIDDEN_STS_WILDCARD = "FORBIDDEN_STS_WILDCARD";
+    public static final String RULE_FORBIDDEN_ACTION_PREFIX = "FORBIDDEN_ACTION_PREFIX";
+    public static final String RULE_SCOPED_WRITE_REQUIRED = "SCOPED_WRITE_REQUIRED";
+
+    /**
+     * Reviewable one-line-per-entry data table of read/inventory actions and their required scope.
+     * Adding a new safe read is a one-line change here. Sensitive reads such as acm:GetCertificate
+     * are explicitly listed under TAG_SCOPED_SENSITIVE_READ so they are never allowed on '*'.
+     */
+    public record ReadRuleEntry(String pattern, String allowlistId, String requiredScope, String rationale) {
+        public String ruleId() {
+            return allowlistId;
+        }
+        public boolean matches(String actionLower) {
+            if (actionLower == null) return false;
+            if (pattern.endsWith("*")) {
+                return actionLower.startsWith(pattern.substring(0, pattern.length() - 1));
+            }
+            return pattern.equals(actionLower);
+        }
+    }
+
+    private static final List<ReadRuleEntry> READ_ALLOWLIST_TABLE = List.of(
+        // --- Safe inventory / metadata reads allowed on Resource: "*" (STAR_READ_ALLOWLIST) ---
+        new ReadRuleEntry("sts:getcalleridentity", ALLOWLIST_STAR_READ, "*", "Caller identity ARN/account lookup"),
+        new ReadRuleEntry("s3:listallmybuckets", ALLOWLIST_STAR_READ, "*", "Bucket inventory listing"),
+        new ReadRuleEntry("s3:getbucketlocation", ALLOWLIST_STAR_READ, "*", "Bucket region discovery"),
+        new ReadRuleEntry("s3:getbuckettagging", ALLOWLIST_STAR_READ, "*", "Bucket ownership tag inspection"),
+        new ReadRuleEntry("ec2:describe*", ALLOWLIST_STAR_READ, "*", "EC2 read-only fleet/network/volume/price metadata"),
+        new ReadRuleEntry("sqs:listqueues", ALLOWLIST_STAR_READ, "*", "SQS queue URL inventory"),
+        new ReadRuleEntry("sns:listtopics", ALLOWLIST_STAR_READ, "*", "SNS topic ARN inventory"),
+        new ReadRuleEntry("sns:listsubscriptions", ALLOWLIST_STAR_READ, "*", "SNS subscription metadata inventory"),
+        new ReadRuleEntry("dynamodb:listtables", ALLOWLIST_STAR_READ, "*", "DynamoDB table name inventory"),
+        new ReadRuleEntry("dynamodb:describelimits", ALLOWLIST_STAR_READ, "*", "DynamoDB account capacity limits"),
+        new ReadRuleEntry("logs:describeloggroups", ALLOWLIST_STAR_READ, "*", "CloudWatch log group metadata inventory"),
+        new ReadRuleEntry("logs:describelogstreams", ALLOWLIST_STAR_READ, "*", "CloudWatch log stream metadata inventory"),
+        new ReadRuleEntry("ssm:describeparameters", ALLOWLIST_STAR_READ, "*", "SSM parameter metadata listing (no values)"),
+        new ReadRuleEntry("ssm:getparameters", ALLOWLIST_STAR_READ, "*", "SSM batch parameter metadata"),
+        new ReadRuleEntry("ssm:getparametersbypath", ALLOWLIST_STAR_READ, "*", "SSM path parameter hierarchy"),
+        new ReadRuleEntry("route53:list*", ALLOWLIST_STAR_READ, "*", "Route53 hosted zone and record listing"),
+        new ReadRuleEntry("route53:get*", ALLOWLIST_STAR_READ, "*", "Route53 hosted zone and change status readback"),
+        new ReadRuleEntry("cloudfront:list*", ALLOWLIST_STAR_READ, "*", "CloudFront distribution and OAC listing"),
+        new ReadRuleEntry("cloudfront:get*", ALLOWLIST_STAR_READ, "*", "CloudFront distribution and OAC config readback"),
+        new ReadRuleEntry("acm:list*", ALLOWLIST_STAR_READ, "*", "ACM certificate and tag metadata listing"),
+        new ReadRuleEntry("acm:describe*", ALLOWLIST_STAR_READ, "*", "ACM certificate metadata description (not PEM body)"),
+        new ReadRuleEntry("ecs:listclusters", ALLOWLIST_STAR_READ, "*", "ECS cluster ARN inventory"),
+        new ReadRuleEntry("ecs:describeclusters", ALLOWLIST_STAR_READ, "*", "ECS cluster metadata inspection"),
+        new ReadRuleEntry("lambda:list*", ALLOWLIST_STAR_READ, "*", "Lambda function and version inventory"),
+        new ReadRuleEntry("events:list*", ALLOWLIST_STAR_READ, "*", "EventBridge rule and target inventory"),
+        new ReadRuleEntry("cloudwatch:describealarms", ALLOWLIST_STAR_READ, "*", "CloudWatch alarm state inventory"),
+        new ReadRuleEntry("cloudwatch:getmetricdata", ALLOWLIST_STAR_READ, "*", "CloudWatch metric time-series read"),
+        new ReadRuleEntry("cloudwatch:getmetricstatistics", ALLOWLIST_STAR_READ, "*", "CloudWatch metric statistics read"),
+        new ReadRuleEntry("cloudwatch:listmetrics", ALLOWLIST_STAR_READ, "*", "CloudWatch metric dimension listing"),
+        new ReadRuleEntry("tag:getresources", ALLOWLIST_STAR_READ, "*", "Resource Groups Tagging API search"),
+        new ReadRuleEntry("tag:gettagkeys", ALLOWLIST_STAR_READ, "*", "Resource Groups Tagging API key listing"),
+        new ReadRuleEntry("tag:gettagvalues", ALLOWLIST_STAR_READ, "*", "Resource Groups Tagging API value listing"),
+        new ReadRuleEntry("ce:get*", ALLOWLIST_STAR_READ, "*", "Cost Explorer read-only billing reports"),
+        new ReadRuleEntry("savingsplans:describe*", ALLOWLIST_STAR_READ, "*", "Savings Plans utilization and rates read"),
+        new ReadRuleEntry("pricing:describeservices", ALLOWLIST_STAR_READ, "*", "AWS Price List service catalog"),
+        new ReadRuleEntry("pricing:getattributevalues", ALLOWLIST_STAR_READ, "*", "AWS Price List attribute catalog"),
+        new ReadRuleEntry("pricing:getproducts", ALLOWLIST_STAR_READ, "*", "AWS Price List SKU pricing lookup"),
+
+        // --- Sensitive reads explicitly excluded from '*' (TAG_SCOPED_SENSITIVE_READ) ---
+        new ReadRuleEntry("acm:getcertificate", RULE_TAG_SCOPED_SENSITIVE_READ, "arn:aws:acm:us-east-1:*:certificate/* with Condition Null aws:ResourceTag/lmaws_test=false", "acm:GetCertificate exports certificate/chain PEM material and must stay tag-scoped in AcmOwn, never on '*'"),
+
+        // --- Scoped public SSM parameter reads (SSM_PUBLIC_PARAM_ALLOWLIST) ---
+        new ReadRuleEntry("ssm:getparameter", ALLOWLIST_SSM_PUBLIC_READ, "arn:aws:ssm:*::parameter/aws/service/* or :parameter/lmaws*", "Single parameter value read must be scoped to public /aws/service/* AMIs or lmaws* parameters"),
+
+        // --- Scoped IAM role / policy metadata reads (IAM_SCOPED_*_READ_ALLOWLIST) ---
+        new ReadRuleEntry("iam:getrole", ALLOWLIST_IAM_SCOPED_ROLE_READ, "arn:aws:iam::<account|*>:role/lmaws_*", "IAM role read must be scoped to lmaws_* roles"),
+        new ReadRuleEntry("iam:listattachedrolepolicies", ALLOWLIST_IAM_SCOPED_ROLE_READ, "arn:aws:iam::<account|*>:role/lmaws_*", "IAM attached role policy listing must be scoped to lmaws_* roles"),
+        new ReadRuleEntry("iam:getpolicy", ALLOWLIST_IAM_SCOPED_POLICY_READ, "arn:aws:iam::<account|*>:policy/lmaws_*", "IAM policy read must be scoped to lmaws_* policies")
     );
+
+    public static List<ReadRuleEntry> readAllowlistTable() {
+        return READ_ALLOWLIST_TABLE;
+    }
 
     private static final Set<String> FORBIDDEN_ACTION_PREFIXES = Set.of(
         "iam:",
@@ -478,11 +508,11 @@ public final class IamPolicies {
             for (String action : actions) {
                 String lower = action.trim().toLowerCase(Locale.ROOT);
                 if (lower.equals("*") || lower.equals("*:*")) {
-                    stmtFindings.add("statement " + sid + ": refuses bare wildcard action '" + action + "'");
+                    stmtFindings.add("statement " + sid + " [rule=" + RULE_FORBIDDEN_BARE_WILDCARD + "]: refuses bare wildcard action '" + action + "'");
                     continue;
                 }
                 if (lower.equals("sts:*")) {
-                    stmtFindings.add("statement " + sid + ": refuses wildcard STS action '" + action + "'");
+                    stmtFindings.add("statement " + sid + " [rule=" + RULE_FORBIDDEN_STS_WILDCARD + "]: refuses wildcard STS action '" + action + "'");
                     continue;
                 }
                 // Exactly one IAM action is safe for the session policy: passing
@@ -493,9 +523,20 @@ public final class IamPolicies {
                         || (lower.startsWith("iam:") && scopedIamRead)) {
                     continue;
                 }
+                if (LAMBDA_PASS_ROLE.equals(lower)) {
+                    stmtFindings.add("statement " + sid + " [rule=" + RULE_PASS_ROLE_LAMBDA_ONLY
+                        + "]: refuses forbidden action '" + action
+                        + "' (iam:PassRole is only allowed as the exact lmaws_session Lambda exception on arn:aws:iam::*:role/lmaws_* with StringEquals iam:PassedToService=lambda.amazonaws.com)");
+                    continue;
+                }
                 for (String forbiddenPrefix : FORBIDDEN_ACTION_PREFIXES) {
                     if (lower.startsWith(forbiddenPrefix)) {
-                        stmtFindings.add("statement " + sid + ": refuses forbidden action '" + action + "'");
+                        ReadRuleEntry scopedEntry = matchReadRule(lower);
+                        String ruleTag = scopedEntry != null
+                            ? "rule=" + RULE_FORBIDDEN_ACTION_PREFIX + ", allowlist=" + scopedEntry.allowlistId()
+                            : "rule=" + RULE_FORBIDDEN_ACTION_PREFIX + " (" + forbiddenPrefix + ")";
+                        stmtFindings.add("statement " + sid + " [" + ruleTag + "]: refuses forbidden action '" + action + "'"
+                            + (scopedEntry != null ? " (" + scopedEntry.rationale() + "; required scope: " + scopedEntry.requiredScope() + ")" : ""));
                         break;
                     }
                 }
@@ -515,14 +556,14 @@ public final class IamPolicies {
             if (hasStarResource) {
                 if (!allInReadAllowlist) {
                     for (String action : actions) {
-                        if (!READ_INVENTORY_ALLOWLIST.contains(action.trim().toLowerCase(Locale.ROOT))) {
-                            stmtFindings.add("statement " + sid + ": Resource '*' is not allowed with non-inventory/write action '" + action + "'");
+                        if (!isInventoryReadAction(action)) {
+                            stmtFindings.add(explainStarReadRejection(sid, action));
                         }
                     }
                 }
                 if (stmtFindings.isEmpty()) {
                     allowRead++;
-                    statementChecks.add(new StatementCheck(sid, effect, "allow_read", actions.size(), resources.size(), true, "inventory/read allow-list on *"));
+                    statementChecks.add(new StatementCheck(sid, effect, "allow_read", actions.size(), resources.size(), true, "inventory/read allow-list on * (" + ALLOWLIST_STAR_READ + ")"));
                 } else {
                     findings.addAll(stmtFindings);
                     statementChecks.add(new StatementCheck(sid, effect, "violation", actions.size(), resources.size(), false, String.join("; ", stmtFindings)));
@@ -545,7 +586,7 @@ public final class IamPolicies {
             String scopeReason = checkWriteScope(sid, actions, resources, stmtMap.get("Condition"),
                 hasRunTaggedAllow && hasNanoOnlyDeny, hasSgMustBeTaggedDeny);
             if (scopeReason == null) {
-                stmtFindings.add("statement " + sid + ": write action(s) " + actions
+                stmtFindings.add("statement " + sid + " [rule=" + RULE_SCOPED_WRITE_REQUIRED + "]: write action(s) " + actions
                     + " on resource(s) " + resources
                     + " must be scoped by lmaws-*/lmaws_* resource name, lmaws_test tag condition, or bounded guardrail condition");
             }
@@ -642,21 +683,46 @@ public final class IamPolicies {
         return null;
     }
 
-    private static boolean isInventoryReadAction(String action) {
+    public static ReadRuleEntry matchReadRule(String action) {
         String a = action == null ? "" : action.trim().toLowerCase(Locale.ROOT);
-        if (READ_INVENTORY_ALLOWLIST.contains(a)) return true;
-        return a.startsWith("events:list") || a.startsWith("lambda:list")
-            || a.startsWith("acm:list") || a.startsWith("acm:describe")
-            || a.startsWith("route53:get");
+        // Check explicit exact rules (such as TAG_SCOPED_SENSITIVE_READ for acm:getcertificate) before wildcard prefix rules
+        for (ReadRuleEntry entry : READ_ALLOWLIST_TABLE) {
+            if (!entry.pattern().endsWith("*") && entry.matches(a)) {
+                return entry;
+            }
+        }
+        for (ReadRuleEntry entry : READ_ALLOWLIST_TABLE) {
+            if (entry.pattern().endsWith("*") && entry.matches(a)) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    private static boolean isInventoryReadAction(String action) {
+        ReadRuleEntry matched = matchReadRule(action);
+        return matched != null && ALLOWLIST_STAR_READ.equals(matched.allowlistId());
+    }
+
+    private static String explainStarReadRejection(String sid, String action) {
+        ReadRuleEntry matched = matchReadRule(action);
+        if (matched != null) {
+            return "statement " + sid + " [rule=" + matched.allowlistId() + ", rejected_by=" + ALLOWLIST_STAR_READ
+                + "]: Resource '*' is not allowed with action '" + action + "' (" + matched.rationale()
+                + "; required scope: " + matched.requiredScope() + ")";
+        }
+        return "statement " + sid + " [rule=" + ALLOWLIST_STAR_READ + "]: Resource '*' is not allowed with non-inventory/write action '"
+            + action + "' (rejected by " + ALLOWLIST_STAR_READ + ")";
     }
 
     private static boolean isScopedIamRead(List<String> actions, List<String> resources) {
         if (actions.isEmpty() || resources.isEmpty()) return false;
         Set<String> kinds = new LinkedHashSet<>();
         for (String action : actions) {
-            String kind = switch (action.trim().toLowerCase(Locale.ROOT)) {
-                case "iam:getrole", "iam:listattachedrolepolicies" -> "role";
-                case "iam:getpolicy" -> "policy";
+            ReadRuleEntry matched = matchReadRule(action);
+            String kind = matched == null ? null : switch (matched.allowlistId()) {
+                case ALLOWLIST_IAM_SCOPED_ROLE_READ -> "role";
+                case ALLOWLIST_IAM_SCOPED_POLICY_READ -> "policy";
                 default -> null;
             };
             if (kind == null) return false;

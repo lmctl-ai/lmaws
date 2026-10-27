@@ -11,6 +11,7 @@ public final class IamPolicyChecks {
         checkPolicyNamePrefix();
         checkLinterAcceptsValidPolicies();
         checkLinterRefusesForbiddenAndUnscopedPolicies();
+        checkReadAllowlistTableAndRuleDiagnostics();
         checkLambdaPassRoleAndScopedReads();
         checkPassRolePolicyContext();
         checkStatementLevelDiffAndDecoding();
@@ -204,6 +205,81 @@ public final class IamPolicyChecks {
             }
             """);
         require(!unscopedWrite.valid(), "Unscoped write action must be refused by lint");
+        require(unscopedWrite.findings().toString().contains("SCOPED_WRITE_REQUIRED"),
+            "Unscoped write finding must name SCOPED_WRITE_REQUIRED: " + unscopedWrite.findings());
+    }
+
+    private static void checkReadAllowlistTableAndRuleDiagnostics() {
+        var table = IamPolicies.readAllowlistTable();
+        require(table.size() >= 30, "Read allow-list data table must contain >= 30 entries, got " + table.size());
+        var getCertRule = IamPolicies.matchReadRule("acm:GetCertificate");
+        require(getCertRule != null && IamPolicies.RULE_TAG_SCOPED_SENSITIVE_READ.equals(getCertRule.ruleId()),
+            "acm:GetCertificate must be classified as TAG_SCOPED_SENSITIVE_READ in data table");
+
+        // acm:GetCertificate on Resource: "*" MUST be rejected with TAG_SCOPED_SENSITIVE_READ and STAR_READ_ALLOWLIST
+        IamPolicies.LintResult acmOnStar = IamPolicies.lint("""
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "BadAcmStar",
+                  "Effect": "Allow",
+                  "Action": ["acm:ListCertificates", "acm:GetCertificate"],
+                  "Resource": "*"
+                }
+              ]
+            }
+            """);
+        require(!acmOnStar.valid(), "acm:GetCertificate on '*' must be rejected by lint");
+        String acmFinding = acmOnStar.findings().toString();
+        require(acmFinding.contains("TAG_SCOPED_SENSITIVE_READ")
+                && acmFinding.contains("STAR_READ_ALLOWLIST")
+                && acmFinding.contains("acm:GetCertificate"),
+            "Finding must name TAG_SCOPED_SENSITIVE_READ, STAR_READ_ALLOWLIST, and acm:GetCertificate: " + acmFinding);
+
+        // acm:GetCertificate tag-scoped in AcmOwn MUST pass
+        IamPolicies.LintResult acmTagScoped = IamPolicies.lint("""
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "AcmOwn",
+                  "Effect": "Allow",
+                  "Action": ["acm:DeleteCertificate", "acm:AddTagsToCertificate", "acm:GetCertificate"],
+                  "Resource": "arn:aws:acm:us-east-1:*:certificate/*",
+                  "Condition": {"Null": {"aws:ResourceTag/lmaws_test": "false"}}
+                }
+              ]
+            }
+            """);
+        require(acmTagScoped.valid(), "Tag-scoped acm:GetCertificate in AcmOwn must pass lint: " + acmTagScoped.findings());
+
+        // Write action on '*' names STAR_READ_ALLOWLIST and the rejected action
+        IamPolicies.LintResult writeOnStar = IamPolicies.lint("""
+            {"Version":"2012-10-17","Statement":[{"Sid":"S","Effect":"Allow","Action":"s3:PutObject","Resource":"*"}]}
+            """);
+        require(!writeOnStar.valid()
+                && writeOnStar.findings().toString().contains("STAR_READ_ALLOWLIST")
+                && writeOnStar.findings().toString().contains("s3:PutObject"),
+            "Write on '*' finding must name STAR_READ_ALLOWLIST and s3:PutObject: " + writeOnStar.findings());
+
+        // Bad PassRole names PASS_ROLE_LAMBDA_ONLY and iam:PassRole
+        IamPolicies.LintResult badPassRole = IamPolicies.lint("""
+            {"Version":"2012-10-17","Statement":[{"Sid":"PR","Effect":"Allow","Action":"iam:PassRole","Resource":"arn:aws:iam::*:role/lmaws_*","Condition":{"StringEquals":{"iam:PassedToService":"ec2.amazonaws.com"}}}]}
+            """);
+        require(!badPassRole.valid()
+                && badPassRole.findings().toString().contains("PASS_ROLE_LAMBDA_ONLY")
+                && badPassRole.findings().toString().contains("iam:PassRole"),
+            "Bad PassRole finding must name PASS_ROLE_LAMBDA_ONLY and iam:PassRole: " + badPassRole.findings());
+
+        // Forbidden prefix names FORBIDDEN_ACTION_PREFIX and the rejected action
+        IamPolicies.LintResult forbiddenIam = IamPolicies.lint("""
+            {"Version":"2012-10-17","Statement":[{"Sid":"Bad","Effect":"Allow","Action":"iam:CreateUser","Resource":"arn:aws:iam::*:user/lmaws_*"}]}
+            """);
+        require(!forbiddenIam.valid()
+                && forbiddenIam.findings().toString().contains("FORBIDDEN_ACTION_PREFIX")
+                && forbiddenIam.findings().toString().contains("iam:CreateUser"),
+            "Forbidden IAM finding must name FORBIDDEN_ACTION_PREFIX and iam:CreateUser: " + forbiddenIam.findings());
     }
 
     private static void checkLambdaPassRoleAndScopedReads() {
