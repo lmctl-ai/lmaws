@@ -546,7 +546,7 @@ public final class AwsBackend implements AutoCloseable {
         requireScenarioWrite();requireOwnedLambda(arn,runId);var cfg=lambda().getFunctionUrlConfig(x->x.functionName(arn));return row("kind","function_url","id",arn,"url",cfg.functionUrl(),"auth",cfg.authTypeAsString(),"run_id",runId);
     }
     void deleteLambdaFunctionUrl(String arn,String runId) {
-        requireScenarioWrite();requireOwnedLambda(arn,runId);try{lambda().deleteFunctionUrlConfig(x->x.functionName(arn));}catch(software.amazon.awssdk.services.lambda.model.ResourceNotFoundException ignored){}
+        requireScenarioWrite();if(demo)return;try{requireOwnedLambda(arn,runId);lambda().deleteFunctionUrlConfig(x->x.functionName(arn));}catch(software.amazon.awssdk.services.lambda.model.ResourceNotFoundException ignored){}
     }
     private String requireOwnedEvent(String name,String runId) {
         requireRunId(runId);requireName(name);
@@ -591,11 +591,34 @@ public final class AwsBackend implements AutoCloseable {
             if(!runId.equals(tags.get("lmaws_test"))) throw new SecurityException("Lambda log group race has foreign ownership");
         }
     }
+    /** Repairs only an empty-tag group recreated by final Lambda log delivery after our acknowledged teardown. */
+    void reconcileRuntimeLogGroup(String logGroup,String runId,Instant earliest,Instant latest,boolean creationReceipt){
+        reconcileRuntimeLogGroup(logGroup,runId,earliest,latest,creationReceipt,stage->{});
+    }
+    void reconcileRuntimeLogGroup(String logGroup,String runId,Instant earliest,Instant latest,boolean creationReceipt,java.util.function.Consumer<String> checkpoint){
+        requireScenarioWrite();requireLogGroupName(logGroup,runId);requireRunId(runId);
+        if(demo)return;
+        if(endpoint==null)try{Thread.sleep(12000);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IllegalStateException("log drain interrupted");}
+        String fn="lmaws_"+runId+"_fn";
+        try{lambda().getFunction(x->x.functionName(fn));throw new SecurityException("log drain requires an absent run function");}catch(software.amazon.awssdk.services.lambda.model.ResourceNotFoundException absent){}
+        checkpoint.accept("function_absent_and_drain_complete");
+        var groups=logs().describeLogGroups(x->x.logGroupNamePrefix(logGroup)).logGroups();
+        var found=groups.stream().filter(g->logGroup.equals(g.logGroupName())).findFirst();if(found.isEmpty()){checkpoint.accept("already_absent");return;}
+        Map<String,String> tags;
+        try{tags=logs().listTagsLogGroup(x->x.logGroupName(logGroup)).tags();}catch(software.amazon.awssdk.services.cloudwatchlogs.model.ResourceNotFoundException absent){return;}
+        if(!runId.equals(tags.get("lmaws_test"))){
+            long created=found.get().creationTime()==null?0:found.get().creationTime();
+            if(!creationReceipt||!tags.isEmpty()||earliest==null||latest==null||created<earliest.toEpochMilli()||created>latest.plusSeconds(120).toEpochMilli())throw new SecurityException("untagged log group lacks a matching creation/deletion receipt");
+            checkpoint.accept("empty_tags_match_private_creation_receipt");
+            logs().tagLogGroup(x->x.logGroupName(logGroup).tags(Map.of("lmaws_test",runId)));checkpoint.accept("run_tag_restored");
+        }
+        deleteLambdaLogGroup(logGroup,runId);checkpoint.accept("deleted");
+    }
     void deleteLambdaLogGroup(String logGroup,String runId) {
         if(logGroup==null||logGroup.isBlank())return;
         requireLogGroupName(logGroup,runId);
         if(demo)return;
-        var tags=logs().listTagsLogGroup(x->x.logGroupName(logGroup)).tags();
+        Map<String,String> tags;try{tags=logs().listTagsLogGroup(x->x.logGroupName(logGroup)).tags();}catch(software.amazon.awssdk.services.cloudwatchlogs.model.ResourceNotFoundException absent){return;}
         if(!runId.equals(tags.get("lmaws_test"))) throw new SecurityException("refusing foreign Lambda log group");
         try{logs().deleteLogGroup(x->x.logGroupName(logGroup));}catch(software.amazon.awssdk.services.cloudwatchlogs.model.ResourceNotFoundException ignored){}
     }
@@ -738,7 +761,7 @@ public final class AwsBackend implements AutoCloseable {
         catch(ResourceNotFoundException absent){}
     }
     Map<String,String> deleteLambda(String arn,String runId) {
-        requireScenarioWrite();if(!demo){requireOwnedLambda(arn,runId);lambda().deleteFunction(x->x.functionName(arn));lambdaRuns.remove(arn);}
+        requireScenarioWrite();if(!demo){try{requireOwnedLambda(arn,runId);lambda().deleteFunction(x->x.functionName(arn));}catch(software.amazon.awssdk.services.lambda.model.ResourceNotFoundException absent){}lambdaRuns.remove(arn);}
         return row("kind","lambda","id",arn,"state","deleted","run_id",runId);
     }
     Map<String,String> tableTtl(String table,String attribute,String runId) {

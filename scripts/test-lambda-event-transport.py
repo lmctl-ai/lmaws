@@ -28,3 +28,8 @@ with tempfile.TemporaryDirectory(prefix='lmaws-serverless-error-') as directory:
 print('PASS serverless VM-error cleanup through the compiled CLI')
 
 subprocess.run(["java","-cp",cp,"ai.lmctl.lmaws.ServerlessAccountingChecks"],cwd=root,env=env,check=True,timeout=60)
+
+with socket.socket() as reservation:
+    reservation.bind(('127.0.0.1',0));log_port=reservation.getsockname()[1]
+log_env=dict(env,LMAWS_ENDPOINT=f'http://127.0.0.1:{log_port}',LMAWS_TEST_PORT=str(log_port))
+subprocess.run(['java','-cp',cp,'ai.lmctl.lmaws.RuntimeLogGroupChecks'],cwd=root,env=log_env,check=True,timeout=60)

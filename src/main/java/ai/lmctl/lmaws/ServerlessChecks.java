@@ -16,6 +16,7 @@ public final class ServerlessChecks {
                 var report=run.step("report","{}");if(!report.get("latest_json_body").contains("ok")||!"2".equals(report.get("table_items")))throw new AssertionError("report readback");
                 run.step("reserve_http","{\"requests\":10,\"bytes\":1024}");run.step("record_http","{\"requests\":2,\"bytes\":100}");
                 if(run.leftovers().size()!=5)throw new AssertionError("expected five simulated resource receipts including custom logs");
+                String actualGroup=run.state.get("log_group");run.state.put("log_group","lmaws_foreign_logs_cafe03");refused(run::down);run.state.put("log_group",actualGroup);
             }
             try(var run=new ServerlessRun(backend,cost,"cafe03","example.com",state.toString())){
                 if(!"up".equals(run.summary().get("status"))||run.leftovers().size()!=5)throw new AssertionError("close discarded up state");

@@ -77,7 +77,7 @@ final class ServerlessRun implements AutoCloseable {
                     String source=prefix+ServerlessExtras.environment(this,args)+Files.readString(sourcePath);new LambdaFunction(name,role,runtime,handler,source,memory,timeout,run);
                     state.put("log_group",logGroup);persist();
                     String arn=backend.isDemo()?"arn:aws:lambda:local:000000000000:function:"+name:backend.createLambda(name,role,runtime,handler,source,memory,timeout,run,logGroup).get("arn");
-                    state.put("lambda_name",name);state.put("lambda_arn",arn);persist();
+                    state.put("lambda_name",name);state.put("lambda_name_receipt",name);state.put("log_group_receipt",logGroup);state.put("lambda_arn",arn);persist();
                     if(!backend.isDemo())backend.waitLambdaActive(arn,run,120);
                     String reason=arg(args,"url_reason","ephemeral scenario API with no secrets; bounded requests and explicit teardown");
                     state.put("lambda_url",backend.isDemo()?"https://"+name+".lambda-url.local/":backend.lambdaUrl(arn,reason));persist();
@@ -114,9 +114,26 @@ final class ServerlessRun implements AutoCloseable {
         try(var ignored=cost.cleanupScope()){
             var errors=new ArrayList<RuntimeException>();
             ServerlessExtras.down(this,errors);
+            var creationSettings=Json.object(Json.parse(state.getOrDefault("args_lambda","{}")));String receiptSlug=String.valueOf(creationSettings.getOrDefault("slug",run));
+            boolean receiptConfig=receiptSlug.matches("[a-z0-9_-]{1,24}")&&"lmaws_lambda_exec".equals(String.valueOf(creationSettings.getOrDefault("role","lmaws_lambda_exec")));
+            boolean explicitReceipt=state.containsKey("lambda_name_receipt")||state.containsKey("log_group_receipt");
+            boolean recordedLambda="lmaws_".concat(run).concat("_fn").equals(state.get("lambda_name_receipt"))&&("lmaws_"+receiptSlug+"_logs_"+run).equals(state.get("log_group_receipt"));
+            if(explicitReceipt&&(!receiptConfig||!recordedLambda))throw new SecurityException("creation receipt does not match this run");
+            boolean completedLambda=receiptConfig&&(recordedLambda||"done".equals(state.get("step_lambda")));
+            if(completedLambda&&state.containsKey("log_group")&&!("lmaws_"+receiptSlug+"_logs_"+run).equals(state.get("log_group")))throw new SecurityException("active log group differs from creation receipt");
+            if(completedLambda&&!state.containsKey("lambda_name")&&state.containsKey("finished_at"))state.putIfAbsent("lambda_deleted_at",state.get("finished_at"));
+            if(completedLambda&&!state.containsKey("log_group")&&state.containsKey("finished_at")){
+                var settings=Json.object(Json.parse(state.getOrDefault("args_lambda","{}")));String slug=String.valueOf(settings.getOrDefault("slug",run));
+                if(!slug.matches("[a-z0-9_-]{1,24}")||!"lmaws_lambda_exec".equals(String.valueOf(settings.getOrDefault("role","lmaws_lambda_exec"))))throw new SecurityException("invalid log creation receipt");
+                state.put("log_group",state.getOrDefault("log_group_receipt","lmaws_"+slug+"_logs_"+run));persist();
+            }
             cleanup("rule",()->{if(!backend.isDemo())backend.deleteEventRule(state.get("rule"),run);},errors);
-            cleanup("lambda_name",()->{if(!backend.isDemo()){backend.deleteLambdaFunctionUrl(state.get("lambda_arn"),run);backend.deleteLambda(state.get("lambda_arn"),run);}state.remove("lambda_arn");state.remove("lambda_url");},errors);
-            cleanup("log_group",()->{backend.deleteLambdaLogGroup(state.get("log_group"),run);state.remove("log_group");},errors);
+            cleanup("lambda_name",()->{if(!backend.isDemo()){backend.deleteLambdaFunctionUrl(state.get("lambda_arn"),run);backend.deleteLambda(state.get("lambda_arn"),run);state.put("lambda_deleted_at",Instant.now().toString());persist();}state.remove("lambda_arn");state.remove("lambda_url");},errors);
+            cleanup("log_group",()->{
+                if(!backend.isDemo()&&completedLambda){Instant end=Instant.parse(state.getOrDefault("lambda_deleted_at",state.getOrDefault("finished_at",Instant.now().toString())));backend.reconcileRuntimeLogGroup(state.get("log_group"),run,Instant.parse(state.get("started_at")),end,true,stage->{state.put("log_reconciliation_stage",stage);if(stage.equals("run_tag_restored"))state.put("log_tag_repaired","true");state.put("log_reconciliation_at",Instant.now().toString());persist();});}
+                else backend.deleteLambdaLogGroup(state.get("log_group"),run);
+                state.remove("log_group");
+            },errors);
             if(!state.containsKey("mapping"))cleanup("table",()->{if(!backend.isDemo()&&backend.exists("table",state.get("table"))){if(!backend.owned("table",state.get("table"),run))throw new SecurityException("table tag mismatch");backend.delete("table",state.get("table"));}},errors);
             cleanup("bucket",()->{if(!backend.isDemo()&&backend.exists("bucket",state.get("bucket"))){if(!backend.owned("bucket",state.get("bucket"),run))throw new SecurityException("bucket tag mismatch");backend.emptyServerlessBucket(state.get("bucket"),run);backend.delete("bucket",state.get("bucket"));}},errors);
             if(!errors.isEmpty()){state.put("status","cleanup_failed");state.put("cleanup_errors",Jsons.encodeRaw(errors.stream().map(this::privateError).toList()));persist();var error=new IllegalStateException("serverless cleanup incomplete");errors.forEach(error::addSuppressed);throw error;}
