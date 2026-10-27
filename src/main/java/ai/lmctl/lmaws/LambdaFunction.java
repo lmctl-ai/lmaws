@@ -15,7 +15,7 @@ import java.util.zip.ZipOutputStream;
  */
 public final class LambdaFunction {
     private static final Pattern NAME = Pattern.compile("lmaws[-_][a-z0-9_-]{1,58}");
-    private static final Pattern ROLE = Pattern.compile("(?:arn:aws:iam::[0-9]{12}:role/)?lmaws_lambda_exec");
+    private static final Pattern ROLE = Pattern.compile("lmaws_lambda_exec");
     private final String name, role, runtime, handler, code, runId;
     private String providerArn;
     private final AwsBackend backend;

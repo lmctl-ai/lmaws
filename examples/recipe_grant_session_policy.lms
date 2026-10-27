@@ -318,7 +318,7 @@ end _dsl_
 }
 
 fn recipe_grant_session_policy(options) {
-  let o = recipe_normalize(options);
+  let o = recipe_normalize(merge(options,{admin_allowed:true}));
   if (o.preview) { return recipe_preview(o, "grant_session_policy"); }
   if (o.apply) {
     assert(o.live);

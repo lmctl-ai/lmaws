@@ -21,7 +21,8 @@ public final class ScenarioTransportChecks {
             String body=new String(e.getRequestBody().readAllBytes(),StandardCharsets.UTF_8),target=e.getRequestHeaders().getFirst("X-Amz-Target");
             requests.add(method+" "+path+" "+query+" "+target+" "+body);
             String tag=foreign.get()?"different-run":RUN,out="{}";int status=200;String type="application/json";
-            if(target!=null&&target.endsWith("DescribeRule")){
+            if(body.contains("Action=GetCallerIdentity")){type="text/xml";out="<GetCallerIdentityResponse xmlns=\"https://sts.amazonaws.com/doc/2011-06-15/\"><GetCallerIdentityResult><Account>"+ACCOUNT+"</Account><Arn>arn:aws:sts::"+ACCOUNT+":federated-user/fixture</Arn><UserId>fixture</UserId></GetCallerIdentityResult></GetCallerIdentityResponse>";}
+            else if(target!=null&&target.endsWith("DescribeRule")){
                 if(ruleExists.get())out="{\"Arn\":\""+RULE_ARN+"\"}";
                 else {status=400;out="{\"__type\":\"ResourceNotFoundException\",\"message\":\"missing\"}";e.getResponseHeaders().add("x-amzn-ErrorType","ResourceNotFoundException");}
             } else if(target!=null&&target.endsWith("PutRule")){ruleExists.set(true);out="{\"RuleArn\":\""+RULE_ARN+"\"}";}
@@ -41,7 +42,7 @@ public final class ScenarioTransportChecks {
             e.sendResponseHeaders(status,status==204?-1:bytes.length);if(bytes.length>0)e.getResponseBody().write(bytes);e.close();
         });server.start();
         try(var backend=new AwsBackend("us-east-1",false)){
-            backend.createLambda(FN,"arn:aws:iam::"+ACCOUNT+":role/lmaws_lambda_exec","python3.12","app.handler","def handler(e,c): return e",128,10,RUN);
+            backend.createLambda(FN,"lmaws_lambda_exec","python3.12","app.handler","def handler(e,c): return e",128,10,RUN);
             backend.invokeLambda(ARN,"{}");backend.lambdaUrl(ARN,"public offline transport fixture");
             check(requests.stream().anyMatch(x->x.contains("InvokeFunctionUrl")&&x.contains("NONE")),"URL permission missing");
             check(requests.stream().anyMatch(x->x.contains("InvokedViaFunctionUrl")&&x.contains("lambda:InvokeFunction")),"URL-only invoke permission missing");

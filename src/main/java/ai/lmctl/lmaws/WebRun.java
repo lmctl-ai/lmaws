@@ -84,7 +84,7 @@ final class WebRun implements AutoCloseable {
         switch(op){
             case "bucket"->state.put("bucket_created","true");
             case "distribution"->{val("bucket_created");state.put("oac","fixture-oac");state.put("distribution","fixture-distribution");state.put("cf_domain","dfixture.cloudfront.net");}
-            case "lambda_distribution"->{state.put("distribution","fixture-lambda-distribution");state.put("distribution_arn","arn:aws:cloudfront::000000000000:distribution/fixture-lambda-distribution");state.put("cf_domain","dfixture.cloudfront.net");state.put("lambda_distribution","true");}
+            case "lambda_distribution"->{val("cert");String fn=arg(a,"function_name","");if(!fn.startsWith("lmaws_"+run+"_"))throw new SecurityException("Lambda name outside this run");backend.requireLambdaUrlOwned(fn,arg(a,"lambda_url",""),run);if("true".equals(arg(a,"mixed","false")))val("bucket_created");state.put("distribution","fixture-lambda-distribution");state.put("distribution_arn","arn:aws:cloudfront::000000000000:distribution/fixture-lambda-distribution");state.put("cf_domain","dfixture.cloudfront.net");state.put("lambda_distribution","true");}
             case "certificate"->{state.put("cert","fixture-cert");state.put("certificate_status","ISSUED");}
             case "dns_site"->{val("cert");state.put("site_record","true");state.put("zone","fixture-zone");}
             case "compute"->{WebStack.requireHttpCidr(arg(a,"cidr","203.0.113.10/32"));state.put("instance_id","i-fixture");state.put("security_group_id","sg-fixture");state.put("public_ip","203.0.113.20");}
@@ -111,8 +111,9 @@ final class WebRun implements AutoCloseable {
                 String url=arg(a,"lambda_url",""); boolean mixed="true".equalsIgnoreCase(arg(a,"mixed","false"));
                 String fn=arg(a,"function_name",""); if(fn.isBlank()||!fn.startsWith("lmaws-")&&!fn.startsWith("lmaws_"))throw new SecurityException("function_name must be the run-owned lmaws Lambda");
                 if(!backend.isDemo())backend.requireLambdaUrlOwned(fn,url,run);
+                if(mixed&&!state.containsKey("oac")){state.put("oac",aws().createOac());persist();}
                 String alias=val("site"); String bucket=mixed?val("bucket"):""; String oac=mixed?val("oac"):""; String cert=state.get("cert");
-                var d=aws().createLambdaDistribution(bucket,alias,url,oac,cert,mixed); state.put("distribution",d.id());state.put("distribution_arn",d.arn());state.put("cf_domain",d.domainName());state.put("lambda_distribution","true");persist();aws().waitDeployed(val("distribution"),Duration.ofMinutes(20));
+                var d=aws().createLambdaDistribution(bucket,alias,url,oac,cert,mixed); state.put("distribution",d.id());state.put("distribution_arn",d.arn());state.put("cf_domain",d.domainName());state.put("lambda_distribution","true");persist();if(mixed)aws().bucketPolicy(val("bucket"),val("distribution_arn"));aws().waitDeployed(val("distribution"),Duration.ofMinutes(20));
             }
             case "certificate"->{
                 if(!state.containsKey("zone")){state.put("zone",aws().zoneId(domain));persist();}

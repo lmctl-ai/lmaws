@@ -494,6 +494,10 @@ public final class AwsBackend implements AutoCloseable {
         out.put("created", Instant.now().toString()); out.put("run_id", runId); return out;
     }
 
+    void emptyServerlessBucket(String bucket,String runId) {
+        requireScenarioWrite();if(!owned("bucket",bucket,runId))throw new SecurityException("bucket ownership mismatch");
+        for(var page:s3().listObjectsV2Paginator(x->x.bucket(bucket)))for(var object:page.contents())s3().deleteObject(x->x.bucket(bucket).key(object.key()));
+    }
     private void requireScenarioWrite() {
         requireWriteEnabled();
         if(!demo && endpoint==null && (!"lmaws".equals(activeProfile()) || !"us-east-1".equals(regionName)))

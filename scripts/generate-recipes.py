@@ -113,6 +113,8 @@ def generate(check=False):
   body+='let report='+item['function']+'(options);\nif (!options.preview) {println("report:",get(report,"output_file",options.output+".json"));println(recipe_cost_line(report));}\n'
   body=re.sub(r'\nimport \"[^\"]+\";\n', '\n', body)
   entry=header+'\n# Generated standalone entry; reusable source: '+lib+'\n'+flatten(ROOT/lib)+'\n'+body
+  if name=='grant_session_policy':
+   entry=entry.replace('  return recipe_normalize(o);','  o.admin_allowed=true;\n  return recipe_normalize(o);',1)
   target=ROOT/'recipes'/(name+'.lms')
   if check:assert target.read_text()==entry, str(target)+' is stale; run generate-recipes.py'
   else:target.write_text(entry)
