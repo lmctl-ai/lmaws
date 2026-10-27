@@ -237,6 +237,7 @@ public final class IamPolicyChecks {
             reads.replace("arn:aws:iam::*:policy/lmaws_*", "arn:aws:iam::*:policy/other_*"),
             reads.replace("iam:GetPolicy", "iam:PutRolePolicy")
         };
+        require(IamPolicies.lint("{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"iam:GetRole\",\"iam:ListAttachedRolePolicies\",\"iam:GetPolicy\"],\"Resource\":[\"arn:aws:iam::123456789012:role/lmaws_*\",\"arn:aws:iam::*:policy/lmaws_*\"]}]}").valid(), "scoped mixed role/policy reads with concrete account pass");
         for (String doc : badReads) require(!IamPolicies.lint(doc).valid(), "unsafe scoped IAM read must fail");
     }
 

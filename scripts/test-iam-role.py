@@ -8,7 +8,7 @@ TRUST={"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Servi
 SPEC={"trust_policy":TRUST,"permissions_boundary":"arn:aws:iam::123456789012:policy/lmaws_boundary","managed_policies":["arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"],"inline_policies":{"lmaws_lambda_data":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["dynamodb:GetItem"],"Resource":"arn:aws:dynamodb:*:*:table/lmaws_*"}]}}}
 
 class Fake(http.server.BaseHTTPRequestHandler):
-    calls=[];mutations=[];exists=False;foreign=False;inline=False;inline_docs={}
+    calls=[];mutations=[];exists=False;foreign=False;foreign_tags=False;inline=False;inline_docs={}
     def log_message(self,*a): pass
     def send_xml(self,body,status=200):
         data=body.encode();self.send_response(status);self.send_header("Content-Type","text/xml");self.send_header("Content-Length",str(len(data)));self.end_headers();self.wfile.write(data)
@@ -28,6 +28,7 @@ class Fake(http.server.BaseHTTPRequestHandler):
             doc=urllib.parse.quote(json.dumps(Fake.inline_docs[form["PolicyName"][0]]))
             return self.send_xml('<GetRolePolicyResponse><GetRolePolicyResult><PolicyDocument>'+doc+'</PolicyDocument></GetRolePolicyResult></GetRolePolicyResponse>')
         if action=="ListInstanceProfilesForRole":return self.send_xml('<ListInstanceProfilesForRoleResponse><ListInstanceProfilesForRoleResult><InstanceProfiles/><IsTruncated>false</IsTruncated></ListInstanceProfilesForRoleResult></ListInstanceProfilesForRoleResponse>')
+        if action=="ListRoleTags" and Fake.foreign_tags:return self.send_xml('<ListRoleTagsResponse><ListRoleTagsResult><Tags><member><Key>lmaws_test</Key><Value>foreign</Value></member></Tags><IsTruncated>false</IsTruncated></ListRoleTagsResult></ListRoleTagsResponse>')
         if action=="ListRoleTags":return self.send_xml('<ListRoleTagsResponse><ListRoleTagsResult><Tags><member><Key>lmaws_test</Key><Value>lambda_exec</Value></member><member><Key>lmaws_role</Key><Value>lambda_execution</Value></member></Tags><IsTruncated>false</IsTruncated></ListRoleTagsResult></ListRoleTagsResponse>')
         if action in {"CreateRole","AttachRolePolicy","PutRolePolicy","DetachRolePolicy","DeleteRolePolicy","DeleteRole"}:
             if action=="PutRolePolicy":Fake.inline_docs[form["PolicyName"][0]]=json.loads(form["PolicyDocument"][0])
@@ -53,7 +54,10 @@ def main(host):
         assert create["Tags.member.1.Key"]==["lmaws_test"] and create["Tags.member.1.Value"]==["lambda_exec"]
         assert any(action=="ListAttachedRolePolicies" and form.get("Marker")==["next"] for action,form in Fake.calls),"pagination lost"
         Fake.foreign=True;Fake.mutations.clear();r=run_dsl(host,work,'let c=aws.region("us-east-1"); let x=c.iam_role_delete("lmaws_lambda_exec",true);',env);assert r.returncode!=0 and not Fake.mutations,"foreign role was mutable"
-        Fake.foreign=False;Fake.mutations.clear()
+        Fake.foreign=False;Fake.foreign_tags=True;Fake.mutations.clear()
+        r=run_dsl(host,work,'let c=aws.region("us-east-1");let x=c.iam_role_put("lmaws_lambda_exec",'+json.dumps(spec)+',true);',env)
+        assert r.returncode!=0 and not Fake.mutations,"unowned role was adopted"
+        Fake.foreign_tags=False;Fake.mutations.clear()
         r=run_dsl(host,work,'let c=aws.region("us-east-1"); let x=c.iam_role_delete("lmaws_lambda_exec",true);',env)
         assert r.returncode==0,r.stderr
         assert {action for action,_ in Fake.mutations}=={"DetachRolePolicy","DeleteRolePolicy","DeleteRole"},Fake.mutations

@@ -652,15 +652,25 @@ public final class IamPolicies {
 
     private static boolean isScopedIamRead(List<String> actions, List<String> resources) {
         if (actions.isEmpty() || resources.isEmpty()) return false;
+        Set<String> kinds = new LinkedHashSet<>();
         for (String action : actions) {
-            String a = action.trim().toLowerCase(Locale.ROOT);
-            String prefix = switch (a) {
+            String kind = switch (action.trim().toLowerCase(Locale.ROOT)) {
                 case "iam:getrole", "iam:listattachedrolepolicies" -> "role";
                 case "iam:getpolicy" -> "policy";
                 default -> null;
             };
-            if (prefix == null || resources.stream().anyMatch(r -> !r.trim().matches("arn:aws:iam::(?:[0-9]{12}|\\*):"+prefix+"/lmaws_[a-z0-9_*?-]+"))) return false;
+            if (kind == null) return false;
+            kinds.add(kind);
         }
+        Set<String> covered = new LinkedHashSet<>();
+        for (String resource : resources) {
+            boolean matched = false;
+            for (String kind : kinds) if (resource.trim().matches("arn:aws:iam::(?:[0-9]{12}|\\*):" + kind + "/lmaws_[a-z0-9_*?-]+")) {
+                matched = true; covered.add(kind);
+            }
+            if (!matched) return false;
+        }
+        if (!covered.containsAll(kinds)) return false;
         return true;
     }
 
