@@ -424,12 +424,11 @@ public final class AwsBackend implements AutoCloseable {
         WebStack.requireRun(runId);
         if(demo)return List.of();
         List<Map<String,String>> rows=new ArrayList<>();
-        for(var row:prefixFunctions("lmaws_"+runId+"_"))if(runId.equals(row.get("run_id"))){rows.add(row);try{rows.add(lambdaUrlRecord(row.get("id"),runId));}catch(software.amazon.awssdk.services.lambda.model.ResourceNotFoundException ignored){}}
-        for(var row:prefixTables("lmaws_"+runId+"_"))if(runId.equals(row.get("run_id")))rows.add(row);
-        for(var row:prefixLogGroups("lmaws_"))if(row.getOrDefault("name","").endsWith("_logs_"+runId)&&runId.equals(row.get("run_id")))rows.add(row);
-        for(var row:prefixBuckets("lmaws-"+runId+"-"))if(runId.equals(row.get("run_id")))rows.add(row);
-        for(var row:prefixEc2Tags("lmaws_"+runId+"_"))if(runId.equals(row.get("run_id")))rows.add(row);
-        String ruleName="lmaws_"+runId+"_rule"; try { var rule=events().describeRule(x->x.name(ruleName)); var tags=events().listTagsForResource(x->x.resourceARN(rule.arn())).tags();boolean owned=tags.stream().anyMatch(t->"lmaws_test".equals(t.key())&&runId.equals(t.value())); if(owned){rows.add(row("kind","event_rule","id",rule.arn(),"name",rule.name(),"region",regionName,"run_id",runId));for(var target:events().listTargetsByRule(x->x.rule(rule.name())).targets())rows.add(row("kind","event_target","id",target.id(),"name",rule.name(),"target",target.arn(),"region",regionName,"run_id",runId));}} catch(software.amazon.awssdk.services.eventbridge.model.ResourceNotFoundException ignored) { }
+        for(var row:prefixFunctions("lmaws_"+runId+"_")){rows.add(row);if(runId.equals(row.get("run_id")))try{rows.add(lambdaUrlRecord(row.get("id"),runId));}catch(software.amazon.awssdk.services.lambda.model.ResourceNotFoundException ignored){}}
+        for(var row:prefixTables("lmaws_"+runId+"_"))rows.add(row);
+        for(var row:prefixLogGroups("lmaws_"))if(row.getOrDefault("name","").endsWith("_logs_"+runId))rows.add(row);
+        for(var row:prefixBuckets("lmaws-"+runId+"-"))rows.add(row);
+        String ruleName="lmaws_"+runId+"_rule"; try { var rule=events().describeRule(x->x.name(ruleName)); var tags=events().listTagsForResource(x->x.resourceARN(rule.arn())).tags();boolean owned=tags.stream().anyMatch(t->"lmaws_test".equals(t.key())&&runId.equals(t.value())); rows.add(row("kind","event_rule","id",rule.arn(),"name",rule.name(),"region",regionName,"run_id",owned?runId:""));if(owned)for(var target:events().listTargetsByRule(x->x.rule(rule.name())).targets())rows.add(row("kind","event_target","id",target.id(),"name",rule.name(),"target",target.arn(),"region",regionName,"run_id",runId));} catch(software.amazon.awssdk.services.eventbridge.model.ResourceNotFoundException ignored) { }
         return List.copyOf(rows);
     }
 

@@ -10,7 +10,7 @@ import java.util.*;
 final class ServerlessRun implements AutoCloseable {
     final AwsBackend backend; final CostLedger cost; final String run,domain; final Path path;
     final Map<String,String> state=new LinkedHashMap<>();
-    private FileChannel channel; private FileLock lock;
+    private FileChannel channel; private FileLock lock; private boolean ready,accounted;
     ServerlessRun(AwsBackend backend,CostLedger cost,String run,String domain,String file) {
         WebStack.requireRun(run);if(run.length()>24)throw new IllegalArgumentException("serverless run must be 4..24 hex digits");
         if(domain==null||!domain.matches("[a-z0-9](?:[a-z0-9.-]{0,250}[a-z0-9])?")||domain.contains(".."))throw new IllegalArgumentException("invalid domain");
@@ -31,6 +31,9 @@ final class ServerlessRun implements AutoCloseable {
             }else{
                 state.put("run_id",run);state.put("domain",domain);state.put("demo",String.valueOf(backend.isDemo()));state.put("status","new");state.put("started_at",Instant.now().toString());persist();
             }
+            state.putIfAbsent("cost_cap",cost.cap().toPlainString());state.putIfAbsent("request_cost_prior","0");
+            state.putIfAbsent("price_table",Jsons.encodeRaw(Map.of("lambda_gb_second","0.0000166667","lambda_request","0.0000002","http_request_bound","0.000001","transfer_gb","0.09","logs_gb","0.50","log_bytes_per_invoke_bound","16384","scheduled_invokes_bound","20","region","us-east-1")));
+            ready=true;persist();
         }catch(Exception error){close();throw new IllegalStateException("cannot open private serverless state",error);}
     }
     private void persist(){
@@ -70,6 +73,7 @@ final class ServerlessRun implements AutoCloseable {
                     Path sourcePath=Path.of(arg(args,"source_file",""));if(!Files.isRegularFile(sourcePath)||Files.size(sourcePath)>196608)throw new IllegalArgumentException("bounded source_file required");
                     String prefix="import os\n";
                     for(var e:Map.of("RUN_ID",run,"TABLE_NAME",state.getOrDefault("table",""),"BUCKET_NAME",state.getOrDefault("bucket",""),"TTL_SECONDS",String.valueOf(ttl)).entrySet())prefix+="os.environ["+Jsons.encodeRaw(e.getKey())+"]="+Jsons.encodeRaw(e.getValue())+"\n";
+                    state.put("memory_mb",String.valueOf(memory));state.put("timeout_s",String.valueOf(timeout));
                     String source=prefix+Files.readString(sourcePath);new LambdaFunction(name,role,runtime,handler,source,memory,timeout,run);
                     state.put("log_group",logGroup);persist();
                     String arn=backend.isDemo()?"arn:aws:lambda:local:000000000000:function:"+name:backend.createLambda(name,role,runtime,handler,source,memory,timeout,run,logGroup).get("arn");
@@ -80,6 +84,7 @@ final class ServerlessRun implements AutoCloseable {
                 }
                 case "event"->{
                     String function=state.get("lambda_arn");if(function==null)throw new IllegalStateException("Lambda prerequisite missing");String name="lmaws_"+run+"_rule",schedule=arg(args,"schedule","rate(1 minute)");new EventRule(name,schedule,run);
+                    state.put("event_execution_bound",invokeBound(20).toPlainString());
                     if(!backend.isDemo())backend.putEventRule(name,schedule,run);state.put("rule",name);persist();if(!backend.isDemo())backend.putEventTarget(name,function,run);
                 }
                 case "report"->{
@@ -88,17 +93,17 @@ final class ServerlessRun implements AutoCloseable {
                 }
                 case "reserve_http"->{
                     long requests=integer(args,"requests",0),bytes=integer(args,"bytes",0);if(requests>10000||bytes>104857600)throw new IllegalArgumentException("HTTP admission exceeds bounds");
-                    var amount=java.math.BigDecimal.valueOf(requests).multiply(new java.math.BigDecimal("0.000001")).add(java.math.BigDecimal.valueOf(bytes).multiply(new java.math.BigDecimal("0.09")).divide(new java.math.BigDecimal("1073741824"),12,java.math.RoundingMode.CEILING));
-                    var cap=new java.math.BigDecimal(state.getOrDefault("cost_cap","0.10"));if(amount.compareTo(cap)>0)throw new CostLedger.BudgetExceeded("HTTP admission exceeds scenario cap");state.put("http_reserved",amount.toPlainString());state.put("http_reserved_requests",Long.toString(requests));state.put("http_reserved_bytes",Long.toString(bytes));
+                    var amount=httpBound(requests,bytes);state.put("http_reserved",amount.toPlainString());state.put("http_reserved_requests",Long.toString(requests));state.put("http_reserved_bytes",Long.toString(bytes));
                 }
                 case "record_http"->{
-                    var amount=new java.math.BigDecimal(state.getOrDefault("http_reserved","0"));var actual=java.math.BigDecimal.valueOf(integer(args,"requests",0)).multiply(new java.math.BigDecimal("0.000001")).add(java.math.BigDecimal.valueOf(integer(args,"bytes",0)).multiply(new java.math.BigDecimal("0.09")).divide(new java.math.BigDecimal("1073741824"),12,java.math.RoundingMode.CEILING));if(actual.compareTo(amount)>0)throw new CostLedger.BudgetExceeded("HTTP usage exceeded admitted bound");state.put("http_actual",actual.toPlainString());state.remove("http_reserved");
+                    var admitted=new java.math.BigDecimal(state.getOrDefault("http_reserved","0"));var actual=httpBound(integer(args,"requests",0),integer(args,"bytes",0));
+                    if(actual.compareTo(admitted)>0)throw new CostLedger.BudgetExceeded("HTTP usage exceeded admitted bound");state.put("http_actual",new java.math.BigDecimal(state.getOrDefault("http_actual","0")).add(actual).toPlainString());state.remove("http_reserved");
                 }
             }
             state.put("step_"+op,"done");state.remove("intent");state.put("status","up");persist();return summary();
-        }catch(Exception error){try{down();}catch(Exception cleanup){error.addSuppressed(cleanup);}if(error instanceof RuntimeException runtime)throw runtime;throw new IllegalStateException("serverless step failed",error);}
+        }catch(Exception error){state.put("provider_error",privateError(error));persist();try{down();}catch(Exception cleanup){error.addSuppressed(cleanup);}if(error instanceof RuntimeException runtime)throw runtime;throw new IllegalStateException("serverless step failed",error);}
     }
-    synchronized Map<String,String> summary(){var result=new LinkedHashMap<String,String>();for(String k:List.of("run_id","status","table","bucket","lambda_name","lambda_arn","lambda_url","log_group","rule","latest_json_body","latest_html_body","table_items"))result.put(k,state.getOrDefault(k,""));result.put("estimated_cost_usd",backend.isDemo()?"0.00":cost.total().toPlainString());return result;}
+    synchronized Map<String,String> summary(){var result=new LinkedHashMap<String,String>();for(String k:List.of("run_id","status","table","bucket","lambda_name","lambda_arn","lambda_url","log_group","rule","latest_json_body","latest_html_body","table_items"))result.put(k,state.getOrDefault(k,""));result.put("estimated_cost_usd",estimate().toPlainString());return result;}
     synchronized List<Map<String,String>> leftovers(){
         var rows=new ArrayList<Map<String,String>>();
         for(String kind:List.of("table","bucket","lambda_name","log_group","rule"))if(state.containsKey(kind))rows.add(Map.of("kind",kind,"name",state.get(kind),"run_id",run));
@@ -112,18 +117,32 @@ final class ServerlessRun implements AutoCloseable {
             cleanup("log_group",()->{backend.deleteLambdaLogGroup(state.get("log_group"),run);state.remove("log_group");},errors);
             cleanup("table",()->{if(!backend.isDemo()&&backend.exists("table",state.get("table"))){if(!backend.owned("table",state.get("table"),run))throw new SecurityException("table tag mismatch");backend.delete("table",state.get("table"));}},errors);
             cleanup("bucket",()->{if(!backend.isDemo()&&backend.exists("bucket",state.get("bucket"))){if(!backend.owned("bucket",state.get("bucket"),run))throw new SecurityException("bucket tag mismatch");backend.emptyServerlessBucket(state.get("bucket"),run);backend.delete("bucket",state.get("bucket"));}},errors);
-            if(!errors.isEmpty()){state.put("status","cleanup_failed");persist();var error=new IllegalStateException("serverless cleanup incomplete");errors.forEach(error::addSuppressed);throw error;}
+            if(!errors.isEmpty()){state.put("status","cleanup_failed");state.put("cleanup_errors",Jsons.encodeRaw(errors.stream().map(this::privateError).toList()));persist();var error=new IllegalStateException("serverless cleanup incomplete");errors.forEach(error::addSuppressed);throw error;}
             state.put("status","down");state.put("finished_at",Instant.now().toString());persist();return summary();
         }catch(RuntimeException error){throw error;}catch(Exception error){throw new IllegalStateException("cleanup scope failed",error);}
     }
-    private void cleanup(String key,Runnable action,List<RuntimeException> errors){if(state.containsKey(key))try{action.run();state.remove(key);persist();}catch(RuntimeException error){errors.add(error);}}
-    private void enforceBudget(String op,Map<String,Object> args){
-        java.math.BigDecimal cap=new java.math.BigDecimal(state.getOrDefault("cost_cap",cost.cap().toPlainString()));
-        java.math.BigDecimal prior=new java.math.BigDecimal(state.getOrDefault("request_cost_prior","0"));
-        java.math.BigDecimal reserved=new java.math.BigDecimal(state.getOrDefault("http_reserved","0"));
-        java.math.BigDecimal estimate=prior.add(cost.total()).add(reserved);
-        if("reserve_http".equals(op)){long req=integer(args,"requests",0),bytes=integer(args,"bytes",0);estimate=estimate.add(java.math.BigDecimal.valueOf(req).multiply(new java.math.BigDecimal("0.000001")).add(java.math.BigDecimal.valueOf(bytes).multiply(new java.math.BigDecimal("0.09")).divide(new java.math.BigDecimal("1073741824"),12,java.math.RoundingMode.CEILING)));}
-        if(estimate.compareTo(cap)>0)throw new CostLedger.BudgetExceeded("serverless scenario cost cap exceeded before "+op);
+    private String privateError(Throwable error){
+        if(error instanceof software.amazon.awssdk.awscore.exception.AwsServiceException aws&&aws.awsErrorDetails()!=null)return aws.awsErrorDetails().errorCode()+": "+aws.awsErrorDetails().errorMessage();
+        return error.getClass().getSimpleName()+": "+error.getMessage();
     }
-    public void close(){try{state.put("request_cost_prior",cost.total().toPlainString());persist();if(lock!=null&&lock.isValid())lock.release();if(channel!=null&&channel.isOpen())channel.close();}catch(java.io.IOException e){throw new IllegalStateException("cannot release serverless state",e);}}
+    private void cleanup(String key,Runnable action,List<RuntimeException> errors){if(state.containsKey(key))try{action.run();state.remove(key);persist();}catch(RuntimeException error){errors.add(error);}}
+    private java.math.BigDecimal invokeBound(long requests){
+        var gb=new java.math.BigDecimal(state.getOrDefault("memory_mb","128")).divide(new java.math.BigDecimal("1024"));
+        return java.math.BigDecimal.valueOf(requests).multiply(gb.multiply(new java.math.BigDecimal(state.getOrDefault("timeout_s","10"))).multiply(new java.math.BigDecimal("0.0000166667")).add(new java.math.BigDecimal("0.0000002")).add(new java.math.BigDecimal("16384").multiply(new java.math.BigDecimal("0.50")).divide(new java.math.BigDecimal("1073741824"),16,java.math.RoundingMode.CEILING)));
+    }
+    private java.math.BigDecimal httpBound(long requests,long bytes){return invokeBound(requests).add(java.math.BigDecimal.valueOf(requests).multiply(new java.math.BigDecimal("0.000001"))).add(java.math.BigDecimal.valueOf(bytes).multiply(new java.math.BigDecimal("0.09")).divide(new java.math.BigDecimal("1073741824"),16,java.math.RoundingMode.CEILING));}
+    private java.math.BigDecimal estimate(){
+        if(backend.isDemo())return java.math.BigDecimal.ZERO;
+        return new java.math.BigDecimal(state.getOrDefault("request_cost_prior","0")).add(accounted?java.math.BigDecimal.ZERO:cost.total()).add(new java.math.BigDecimal(state.getOrDefault("http_actual","0"))).add(new java.math.BigDecimal(state.getOrDefault("http_reserved","0"))).add(new java.math.BigDecimal(state.getOrDefault("event_execution_bound","0")));
+    }
+    private void enforceBudget(String op,Map<String,Object> args){
+        if(backend.isDemo())return;
+        var projected=estimate();if(op.equals("reserve_http"))projected=projected.add(httpBound(integer(args,"requests",0),integer(args,"bytes",0)));
+        if(op.equals("event"))projected=projected.add(invokeBound(20));
+        if(projected.compareTo(new java.math.BigDecimal(state.getOrDefault("cost_cap",cost.cap().toPlainString())))>0)throw new CostLedger.BudgetExceeded("serverless whole-run cap exceeded before "+op);
+    }
+    public void close(){try{
+        if(ready&&!accounted){var total=estimate();state.put("request_cost_prior",new java.math.BigDecimal(state.getOrDefault("request_cost_prior","0")).add(cost.total()).toPlainString());state.put("total_estimated_usd",total.toPlainString());accounted=true;persist();cost.serverlessSnapshot(total,Json.parse(state.get("price_table")),state.getOrDefault("status","new"));}
+        if(lock!=null&&lock.isValid())lock.release();if(channel!=null&&channel.isOpen())channel.close();
+    }catch(java.io.IOException error){throw new IllegalStateException("cannot release serverless state",error);}}
 }

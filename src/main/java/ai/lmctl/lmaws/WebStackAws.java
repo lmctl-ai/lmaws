@@ -97,7 +97,9 @@ public final class WebStackAws implements AutoCloseable {
         if(apiPath!=null)cfg.cacheBehaviors(CacheBehaviors.builder().items(apiPath).quantity(1).build());
         if(certArn!=null)cfg.aliases(Aliases.builder().items(alias).quantity(1).build()).viewerCertificate(viewerCertificate(alias,certArn));
         var req=CreateDistributionWithTagsRequest.builder().distributionConfigWithTags(DistributionConfigWithTags.builder().distributionConfig(cfg.build()).tags(Tags.builder().items(software.amazon.awssdk.services.cloudfront.model.Tag.builder().key("lmaws_test").value(runId).build()).build()).build()).build();
-        return cloudfront.createDistributionWithTags(req).distribution();
+        long deadline=System.nanoTime()+Duration.ofMinutes(5).toNanos();
+        for(;;)try{return cloudfront.createDistributionWithTags(req).distribution();}
+        catch(InvalidViewerCertificateException pending){if(certArn==null||System.nanoTime()>deadline)throw pending;sleep(5000);}
     }
     private ViewerCertificate viewerCertificate(String alias,String arn) {
         if(!alias.equals("lmaws-site-"+runId+"."+domain))throw new SecurityException("certificate alias outside this run");

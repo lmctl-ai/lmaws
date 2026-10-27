@@ -26,3 +26,5 @@ with tempfile.TemporaryDirectory(prefix='lmaws-serverless-error-') as directory:
     assert result.returncode==0,(result.stdout,result.stderr)
     assert json.loads(state.read_text())['status']=='down','VM failure skipped persistent teardown'
 print('PASS serverless VM-error cleanup through the compiled CLI')
+
+subprocess.run(["java","-cp",cp,"ai.lmctl.lmaws.ServerlessAccountingChecks"],cwd=root,env=env,check=True,timeout=60)

@@ -346,6 +346,7 @@ public final class CloudHost implements AutoCloseable {
         }
         for(var run:serverlessRuns)if(run.cost==session.cost){
             report.put("serverless_status",run.state.getOrDefault("status","new"));
+            var serverlessTotal=new java.math.BigDecimal(run.state.getOrDefault("total_estimated_usd","0"));report.put("total_estimated_usd",serverlessTotal);report.put("estimated_cost_display","$"+serverlessTotal.setScale(8,java.math.RoundingMode.CEILING).toPlainString());
             report.put("serverless_active_receipt_count",run.leftovers().size());
             report.put("serverless_verified_leftover_count","down".equals(run.state.get("status"))?0:null);
         }

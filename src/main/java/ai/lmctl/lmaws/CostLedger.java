@@ -108,6 +108,7 @@ public final class CostLedger {
     synchronized void webSnapshot(java.math.BigDecimal total,Object prices,String status) {
         write(Map.of("event","cost_web_snapshot","total_estimated_usd",total,"sdk_estimated_usd",this.total(),"price_table",prices,"web_status",status));
     }
+    synchronized void serverlessSnapshot(java.math.BigDecimal total,Object prices,String status){write(Map.of("event","cost_serverless_snapshot","total_estimated_usd",total,"sdk_estimated_usd",this.total(),"price_table",prices,"serverless_status",status));}
     public synchronized String displayCost(){if(total().signum()==0)return "$0.00";return "$"+total().setScale(8,RoundingMode.CEILING).toPlainString();}
     public synchronized AutoCloseable cleanupScope(){cleanupDepth++;return ()->{synchronized(this){cleanupDepth--;}};}
     public void link(Path target){writeTo(target,Map.of("event","cost_link","cost_ledger",path.toString(),"cap_usd",cap,"price_table",PRICES));}
