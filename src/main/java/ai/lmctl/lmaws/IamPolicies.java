@@ -35,7 +35,7 @@ public final class IamPolicies {
     public static final String RULE_FORBIDDEN_ACTION_PREFIX = "FORBIDDEN_ACTION_PREFIX";
     public static final String RULE_SCOPED_WRITE_REQUIRED = "SCOPED_WRITE_REQUIRED";
 
-    // Separate lint mode rule IDs for fleet instance roles (awsspot-ops-t4g1, awsspot-ops-t4g2, awsspot-ops-boundary)
+    // Separate lint mode rule IDs for operational EC2 instance roles and boundaries
     public static final String RULE_INSTANCE_ROLE_NO_ADMIN = "INSTANCE_ROLE_NO_ADMIN_WILDCARD";
     public static final String RULE_INSTANCE_ROLE_FORBIDDEN_ESCALATION = "INSTANCE_ROLE_FORBIDDEN_ESCALATION";
     public static final String RULE_INSTANCE_ROLE_SELF_STOP_SCOPED = "INSTANCE_ROLE_SELF_STOP_SCOPED";
@@ -655,11 +655,11 @@ public final class IamPolicies {
     }
 
     /**
-     * Separate lint mode for least-privilege EC2 fleet instance roles ({@code awsspot-ops-t4g1},
-     * {@code awsspot-ops-t4g2}) and their mandatory permissions boundary ({@code awsspot-ops-boundary}).
+     * Separate lint mode for least-privilege EC2 fleet instance roles ({@code example-ops-role-1},
+     * {@code example-ops-role-2}) and their mandatory permissions boundary ({@code example-ops-boundary}).
      * Keeps {@link #lint(String)} (for {@code lmaws_session}) completely unweakened while validating
-     * legitimate operational capabilities (self-stop by instance tag/ARN, website-deploy AssumeRole,
-     * www.egtry.com S3 sync, CodeCommit sync with delete deny, SecretsManager read-only, Cognito
+     * legitimate operational capabilities (self-stop by instance tag/ARN, dedicated deploy-role AssumeRole,
+     * single-bucket S3 sync, CodeCommit sync with delete deny, SecretsManager read-only, Cognito
      * operational access with unconditional delete deny, and mandatory EC2 instance-origin + us-east-1
      * region guardrails).
      */
@@ -925,30 +925,32 @@ public final class IamPolicies {
         if (actions.size() == 1 && "ec2:stopinstances".equalsIgnoreCase(actions.get(0).trim())) {
             boolean validResource = resources.stream().allMatch(r ->
                 r.trim().matches("arn:aws:ec2:us-east-1:(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):instance/\\*"));
-            boolean hasProjectTag = condLower.contains("\"aws:resourcetag/project\":\"awsspot\"");
+            boolean hasProjectTag = condLower.contains("\"aws:resourcetag/project\":\"")
+                && !condLower.contains("\"aws:resourcetag/project\":\"\"");
             boolean hasRoleOrInstanceScope = condLower.contains("aws:resourcetag/role")
                 || condLower.contains("aws:resourcetag/name")
                 || condLower.contains("ec2:sourceinstancearn");
             boolean hasRegion = condLower.contains("\"aws:requestedregion\":\"us-east-1\"");
             if (validResource && hasProjectTag && hasRoleOrInstanceScope && hasRegion) {
-                return "SCOPED:scoped self-stop on tagged awsspot instance (" + RULE_INSTANCE_ROLE_SELF_STOP_SCOPED + ")";
+                return "SCOPED:scoped self-stop on tagged fleet instance (" + RULE_INSTANCE_ROLE_SELF_STOP_SCOPED + ")";
             }
             return "ERROR:statement " + sid + " [rule=" + RULE_INSTANCE_ROLE_SELF_STOP_SCOPED
-                + "]: ec2:StopInstances must be scoped to arn:aws:ec2:us-east-1:${aws:PrincipalAccount}:instance/* with Project=awsspot, Role/Name tag, and aws:RequestedRegion=us-east-1";
+                + "]: ec2:StopInstances must be scoped to arn:aws:ec2:us-east-1:${aws:PrincipalAccount}:instance/* with aws:ResourceTag/Project, Role/Name tag, and aws:RequestedRegion=us-east-1";
         }
 
-        // 3. Website deploy role assumption: sts:AssumeRole on role/lmctl-website-deploy
+        // 3. Dedicated deploy role assumption: sts:AssumeRole on an explicit non-admin *-deploy role ARN
         if (actions.size() == 1 && "sts:assumerole".equalsIgnoreCase(actions.get(0).trim())) {
-            boolean validRoleArn = resources.size() == 1
-                && resources.get(0).trim().matches("arn:aws:iam::(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):role/lmctl-website-deploy");
+            String roleArn = resources.size() == 1 ? resources.get(0).trim() : "";
+            boolean validRoleArn = roleArn.matches("arn:aws:iam::(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):role/[a-z0-9-]+-deploy")
+                && !roleArn.toLowerCase(Locale.ROOT).contains("admin");
             if (validRoleArn) {
-                return "SCOPED:scoped sts:AssumeRole on role/lmctl-website-deploy (" + RULE_INSTANCE_ROLE_WEBSITE_ASSUME_SCOPED + ")";
+                return "SCOPED:scoped sts:AssumeRole on dedicated deploy role (" + RULE_INSTANCE_ROLE_WEBSITE_ASSUME_SCOPED + ")";
             }
             return "ERROR:statement " + sid + " [rule=" + RULE_INSTANCE_ROLE_WEBSITE_ASSUME_SCOPED
-                + "]: sts:AssumeRole in instance role is only permitted for role/lmctl-website-deploy, got " + resources;
+                + "]: sts:AssumeRole in instance role is only permitted for an explicit non-admin *-deploy role ARN, got " + resources;
         }
 
-        // 4. www.egtry.com S3 bucket & object sync
+        // 4. Single named S3 bucket & object sync (no wildcards in bucket name)
         if (actions.stream().allMatch(a -> a.trim().toLowerCase(Locale.ROOT).startsWith("s3:"))) {
             Set<String> bucketRead = Set.of("s3:listbucket", "s3:getbucketlocation");
             Set<String> objectSync = Set.of(
@@ -956,16 +958,17 @@ public final class IamPolicies {
                 "s3:putobject", "s3:putobjecttagging",
                 "s3:deleteobject", "s3:deleteobjecttagging", "s3:abortmultipartupload"
             );
+            String res = resources.size() == 1 ? resources.get(0).trim() : "";
             if (actions.stream().allMatch(a -> bucketRead.contains(a.trim().toLowerCase(Locale.ROOT)))
-                    && resources.equals(List.of("arn:aws:s3:::www.egtry.com"))) {
-                return "READ:scoped S3 bucket read on arn:aws:s3:::www.egtry.com (" + RULE_INSTANCE_ROLE_WWW_S3_SCOPED + ")";
+                    && res.matches("arn:aws:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")) {
+                return "READ:scoped S3 bucket read on explicit bucket ARN (" + RULE_INSTANCE_ROLE_WWW_S3_SCOPED + ")";
             }
             if (actions.stream().allMatch(a -> objectSync.contains(a.trim().toLowerCase(Locale.ROOT)))
-                    && resources.equals(List.of("arn:aws:s3:::www.egtry.com/*"))) {
-                return "SCOPED:scoped S3 object sync on arn:aws:s3:::www.egtry.com/* (" + RULE_INSTANCE_ROLE_WWW_S3_SCOPED + ")";
+                    && res.matches("arn:aws:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/\\*")) {
+                return "SCOPED:scoped S3 object sync on explicit bucket/* ARN (" + RULE_INSTANCE_ROLE_WWW_S3_SCOPED + ")";
             }
             return "ERROR:statement " + sid + " [rule=" + RULE_INSTANCE_ROLE_WWW_S3_SCOPED
-                + "]: S3 actions in instance role must be scoped strictly to arn:aws:s3:::www.egtry.com or arn:aws:s3:::www.egtry.com/*";
+                + "]: S3 actions in instance role must be scoped strictly to a single explicit bucket ARN (arn:aws:s3:::<bucket> or arn:aws:s3:::<bucket>/*)";
         }
 
         // 5. CodeCommit git pull/push and repository metadata (with companion delete deny)

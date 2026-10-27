@@ -1,5 +1,5 @@
 # Access: Write with the admin profile
-# What: Plan, lint, apply (one instance at a time) and roll back least-privilege operational IAM roles and mandatory permissions boundary for fleet instances t4g1 and t4g2
+# What: Plan, lint, apply (one instance at a time) and roll back least-privilege operational IAM roles and mandatory permissions boundary for fleet instances
 # When: Before a posture review; IAM-dependent recipes remain synthetic for federated profiles
 # Run: lmctl recipes/fleet_roles.lms
 # Preview: lmctl recipes/fleet_roles.lms --preview
@@ -167,15 +167,15 @@ end _dsl_
 
 fn fleet_ops_needs_model() {
   return [
-    {operation: "self_stop_watchdog", instances: "t4g1,t4g2", exact_actions: "ec2:StopInstances", resource_scope: "arn:aws:ec2:us-east-1:${aws:PrincipalAccount}:instance/*", condition_scope: "Project=awsspot, Role=current|m7g, Name=t4g1|t4g2, aws:RequestedRegion=us-east-1"},
-    {operation: "fleet_status_and_cpu_monitor", instances: "t4g1,t4g2", exact_actions: "sts:GetCallerIdentity,ec2:Describe*,cloudwatch:GetMetricData", resource_scope: "*", condition_scope: "StringEqualsIfExists aws:RequestedRegion=us-east-1"},
-    {operation: "ssm_public_ami_lookup_and_agent_heartbeat", instances: "t4g1,t4g2", exact_actions: "ssm:GetParameter,ssm:GetParameters,ssm:UpdateInstanceInformation,ssm:ListInstanceAssociations,ssm:ListAssociations", resource_scope: "arn:aws:ssm:us-east-1::parameter/aws/service/canonical/ubuntu/*, *", condition_scope: "StringEquals aws:RequestedRegion=us-east-1"},
-    {operation: "website_deploy_assume_role", instances: "t4g1,t4g2", exact_actions: "sts:AssumeRole", resource_scope: "arn:aws:iam::${aws:PrincipalAccount}:role/lmctl-website-deploy", condition_scope: "Target role trust policy requires explicit principal ARN"},
-    {operation: "s3_www_egtry_com_sync", instances: "t4g1,t4g2", exact_actions: "s3:ListBucket,s3:GetBucketLocation,s3:GetObject*,s3:PutObject*,s3:DeleteObject*,s3:AbortMultipartUpload", resource_scope: "arn:aws:s3:::www.egtry.com, arn:aws:s3:::www.egtry.com/*", condition_scope: "Locked to www.egtry.com; bucket deletion and policy edits denied"},
-    {operation: "codecommit_repo_sync_no_delete", instances: "t4g1", exact_actions: "codecommit:GitPull,codecommit:GitPush,codecommit:Get*,codecommit:List*", resource_scope: "arn:aws:codecommit:us-east-1:${aws:PrincipalAccount}:*", condition_scope: "aws:RequestedRegion=us-east-1 + explicit Deny on DeleteRepository,DeleteBranch"},
-    {operation: "secrets_manager_read_only", instances: "t4g1,t4g2", exact_actions: "secretsmanager:ListSecrets,secretsmanager:GetSecretValue,secretsmanager:DescribeSecret,kms:Decrypt", resource_scope: "arn:aws:secretsmanager:us-east-1:${aws:PrincipalAccount}:secret:*, arn:aws:kms:us-east-1:${aws:PrincipalAccount}:key/*", condition_scope: "aws:RequestedRegion=us-east-1 + kms:ViaService=secretsmanager.us-east-1.amazonaws.com"},
-    {operation: "cognito_user_pools_non_destructive", instances: "t4g1,t4g2", exact_actions: "cognito-idp:ListUserPools,DescribeUserPool,ListUsers,AdminGetUser,AdminCreateUser,AdminSetUserPassword", resource_scope: "*", condition_scope: "aws:RequestedRegion=us-east-1, aws:ResourceAccount=${aws:PrincipalAccount} + unconditional Deny on *Delete*,ForgetDevice"},
-    {operation: "ec2_origin_and_region_guardrails", instances: "t4g1,t4g2", exact_actions: "Deny NotAction sts:GetCallerIdentity when Null ec2:SourceInstanceArn=true; Deny NotAction sts:*,s3:*,cloudfront:* when aws:RequestedRegion!=us-east-1", resource_scope: "*", condition_scope: "Prevents off-instance credential use and non-us-east-1 access"}
+    {operation: "self_stop_watchdog", instances: "ops-node-1,ops-node-2", exact_actions: "ec2:StopInstances", resource_scope: "arn:aws:ec2:us-east-1:${aws:PrincipalAccount}:instance/*", condition_scope: "Project=example-fleet, Role=primary|secondary, Name=ops-node-1|ops-node-2, aws:RequestedRegion=us-east-1"},
+    {operation: "fleet_status_and_cpu_monitor", instances: "ops-node-1,ops-node-2", exact_actions: "sts:GetCallerIdentity,ec2:Describe*,cloudwatch:GetMetricData", resource_scope: "*", condition_scope: "StringEqualsIfExists aws:RequestedRegion=us-east-1"},
+    {operation: "ssm_public_ami_lookup_and_agent_heartbeat", instances: "ops-node-1,ops-node-2", exact_actions: "ssm:GetParameter,ssm:GetParameters,ssm:UpdateInstanceInformation,ssm:ListInstanceAssociations,ssm:ListAssociations", resource_scope: "arn:aws:ssm:us-east-1::parameter/aws/service/canonical/ubuntu/*, *", condition_scope: "StringEquals aws:RequestedRegion=us-east-1"},
+    {operation: "website_deploy_assume_role", instances: "ops-node-1,ops-node-2", exact_actions: "sts:AssumeRole", resource_scope: "arn:aws:iam::${aws:PrincipalAccount}:role/example-static-deploy", condition_scope: "Target role trust policy requires explicit principal ARN"},
+    {operation: "s3_static_assets_sync", instances: "ops-node-1,ops-node-2", exact_actions: "s3:ListBucket,s3:GetBucketLocation,s3:GetObject*,s3:PutObject*,s3:DeleteObject*,s3:AbortMultipartUpload", resource_scope: "arn:aws:s3:::example-ops-assets, arn:aws:s3:::example-ops-assets/*", condition_scope: "Locked to example-ops-assets; bucket deletion and policy edits denied"},
+    {operation: "codecommit_repo_sync_no_delete", instances: "ops-node-1", exact_actions: "codecommit:GitPull,codecommit:GitPush,codecommit:Get*,codecommit:List*", resource_scope: "arn:aws:codecommit:us-east-1:${aws:PrincipalAccount}:*", condition_scope: "aws:RequestedRegion=us-east-1 + explicit Deny on DeleteRepository,DeleteBranch"},
+    {operation: "secrets_manager_read_only", instances: "ops-node-1,ops-node-2", exact_actions: "secretsmanager:ListSecrets,secretsmanager:GetSecretValue,secretsmanager:DescribeSecret,kms:Decrypt", resource_scope: "arn:aws:secretsmanager:us-east-1:${aws:PrincipalAccount}:secret:*, arn:aws:kms:us-east-1:${aws:PrincipalAccount}:key/*", condition_scope: "aws:RequestedRegion=us-east-1 + kms:ViaService=secretsmanager.us-east-1.amazonaws.com"},
+    {operation: "cognito_user_pools_non_destructive", instances: "ops-node-1,ops-node-2", exact_actions: "cognito-idp:ListUserPools,DescribeUserPool,ListUsers,AdminGetUser,AdminCreateUser,AdminSetUserPassword", resource_scope: "*", condition_scope: "aws:RequestedRegion=us-east-1, aws:ResourceAccount=${aws:PrincipalAccount} + unconditional Deny on *Delete*,ForgetDevice"},
+    {operation: "ec2_origin_and_region_guardrails", instances: "ops-node-1,ops-node-2", exact_actions: "Deny NotAction sts:GetCallerIdentity when Null ec2:SourceInstanceArn=true; Deny NotAction sts:*,s3:*,cloudfront:* when aws:RequestedRegion!=us-east-1", resource_scope: "*", condition_scope: "Prevents off-instance credential use and non-us-east-1 access"}
   ];
 }
 
@@ -238,35 +238,38 @@ end _dsl_
   let role_plans=json_parse(str(get(plan_obj,"role_plans_json","{}")));
   let removed_caps=json_parse(str(get(plan_obj,"removed_capabilities_json","[]")));
   let workflow_impacts=json_parse(str(get(plan_obj,"workflow_impacts_json","[]")));
-  let t4g1_doc=str(get(plan_obj,"t4g1_policy_json","{}"));
-  let t4g2_doc=str(get(plan_obj,"t4g2_policy_json","{}"));
+  let node1_doc=str(get(plan_obj,"node1_policy_json","{}"));
+  let node2_doc=str(get(plan_obj,"node2_policy_json","{}"));
   let boundary_doc=str(get(plan_obj,"boundary_policy_json","{}"));
   let trust_doc=str(get(plan_obj,"trust_policy_json","{}"));
+  let node1_role=str(get(plan_obj,"node1_role","example-ops-role-1"));
+  let node2_role=str(get(plan_obj,"node2_role","example-ops-role-2"));
+  let boundary_name=str(get(plan_obj,"boundary_name","example-ops-boundary"));
 
   let rows=[];
   for(op in ops_needs) {
     push(rows,{kind:"ops_needs_scoped",name:str(get(op,"operation","")),instances:str(get(op,"instances","")),service:str(get(op,"service","")),detail:str(get(op,"resource_scope","")),count:1});
   }
-  for(st in get(json_parse(t4g1_doc),"Statement",[])) {
-    push(rows,{kind:"t4g1_policy_stmt",name:str(get(st,"Sid","")),instances:"t4g1",service:str(get(st,"Effect","")),detail:"awsspot-ops-t4g1",count:1});
+  for(st in get(json_parse(node1_doc),"Statement",[])) {
+    push(rows,{kind:"node1_policy_stmt",name:str(get(st,"Sid","")),instances:"ops-node-1",service:str(get(st,"Effect","")),detail:node1_role,count:1});
   }
-  for(st in get(json_parse(t4g2_doc),"Statement",[])) {
-    push(rows,{kind:"t4g2_policy_stmt",name:str(get(st,"Sid","")),instances:"t4g2",service:str(get(st,"Effect","")),detail:"awsspot-ops-t4g2",count:1});
+  for(st in get(json_parse(node2_doc),"Statement",[])) {
+    push(rows,{kind:"node2_policy_stmt",name:str(get(st,"Sid","")),instances:"ops-node-2",service:str(get(st,"Effect","")),detail:node2_role,count:1});
   }
   for(st in get(json_parse(boundary_doc),"Statement",[])) {
-    push(rows,{kind:"boundary_cap_stmt",name:str(get(st,"Sid","")),instances:"t4g1,t4g2",service:str(get(st,"Effect","")),detail:"awsspot-ops-boundary",count:1});
+    push(rows,{kind:"boundary_cap_stmt",name:str(get(st,"Sid","")),instances:"ops-node-1,ops-node-2",service:str(get(st,"Effect","")),detail:boundary_name,count:1});
   }
   for(rc in removed_caps) {
-    push(rows,{kind:"removed_admin_service",name:str(get(rc,"service","")),instances:"t4g1,t4g2",service:str(get(rc,"service","")),detail:str(get(rc,"risk_eliminated","")),count:1});
+    push(rows,{kind:"removed_admin_service",name:str(get(rc,"service","")),instances:"ops-node-1,ops-node-2",service:str(get(rc,"service","")),detail:str(get(rc,"risk_eliminated","")),count:1});
   }
   for(wi in workflow_impacts) {
-    push(rows,{kind:"grant_on_demand_pattern",name:str(get(wi,"workflow","")),instances:"t4g1,t4g2",service:"grant_on_demand",detail:str(get(wi,"recommended_pattern","")),count:1});
+    push(rows,{kind:"grant_on_demand_pattern",name:str(get(wi,"workflow","")),instances:"ops-node-1,ops-node-2",service:"grant_on_demand",detail:str(get(wi,"recommended_pattern","")),count:1});
   }
 
   for(inst in discovery) {
     println("Fleet instance "+str(get(inst,"instance_name",""))+" ("+str(get(inst,"instance_id",""))+", Role="+str(get(inst,"role_tag",""))+"): "+str(get(inst,"current_instance_profile",""))+" -> "+str(get(inst,"target_role_name",""))+" [boundary="+str(get(inst,"target_boundary_name",""))+"]");
   }
-  println("Instance-role lint: t4g1="+str(get(plan_obj,"t4g1_lint_valid",""))+" ("+str(get(plan_obj,"t4g1_compact_length",""))+"B), t4g2="+str(get(plan_obj,"t4g2_lint_valid",""))+" ("+str(get(plan_obj,"t4g2_compact_length",""))+"B), boundary="+str(get(plan_obj,"boundary_lint_valid",""))+" ("+str(get(plan_obj,"boundary_compact_length",""))+"B)");
+  println("Instance-role lint: node1="+str(get(plan_obj,"node1_lint_valid",""))+" ("+str(get(plan_obj,"node1_compact_length",""))+"B), node2="+str(get(plan_obj,"node2_lint_valid",""))+" ("+str(get(plan_obj,"node2_compact_length",""))+"B), boundary="+str(get(plan_obj,"boundary_lint_valid",""))+" ("+str(get(plan_obj,"boundary_compact_length",""))+"B)");
   if(apply_requested) {
     println("Fleet role action: "+str(get(action_obj,"mode",""))+" swap_order="+str(get(action_obj,"swap_order",""))+" rollback_file="+str(get(action_obj,"rollback_file",rollback_out)));
   }
@@ -275,14 +278,14 @@ end _dsl_
     kind: "fleet_roles",
     mode: str(get(plan_obj,"mode","dry_run_plan")),
     principle: "Agents must never hold or create admin; a human admin creates least-privilege roles once.",
-    t4g1_role_name: str(get(plan_obj,"t4g1_role","awsspot-ops-t4g1")),
-    t4g2_role_name: str(get(plan_obj,"t4g2_role","awsspot-ops-t4g2")),
-    boundary_name: str(get(plan_obj,"boundary_name","awsspot-ops-boundary")),
-    t4g1_lint_valid: str(get(plan_obj,"t4g1_lint_valid","false"))=="true",
-    t4g2_lint_valid: str(get(plan_obj,"t4g2_lint_valid","false"))=="true",
+    node1_role_name: node1_role,
+    node2_role_name: node2_role,
+    boundary_name: boundary_name,
+    node1_lint_valid: str(get(plan_obj,"node1_lint_valid","false"))=="true",
+    node2_lint_valid: str(get(plan_obj,"node2_lint_valid","false"))=="true",
     boundary_lint_valid: str(get(plan_obj,"boundary_lint_valid","false"))=="true",
-    t4g1_compact_bytes: num(str(get(plan_obj,"t4g1_compact_length","0"))),
-    t4g2_compact_bytes: num(str(get(plan_obj,"t4g2_compact_length","0"))),
+    node1_compact_bytes: num(str(get(plan_obj,"node1_compact_length","0"))),
+    node2_compact_bytes: num(str(get(plan_obj,"node2_compact_length","0"))),
     boundary_compact_bytes: num(str(get(plan_obj,"boundary_compact_length","0"))),
     discovery: discovery,
     role_plans: role_plans,
@@ -299,8 +302,8 @@ end _dsl_
 
   mkdir(dirname(output),true);
   write_file(output+".json",json_stringify(report,2));
-  write_file(output+".t4g1.policy.json",t4g1_doc);
-  write_file(output+".t4g2.policy.json",t4g2_doc);
+  write_file(output+".node1.policy.json",node1_doc);
+  write_file(output+".node2.policy.json",node2_doc);
   write_file(output+".boundary.policy.json",boundary_doc);
   write_file(output+".trust.policy.json",trust_doc);
   write_csv(output+".csv",report.rows);
