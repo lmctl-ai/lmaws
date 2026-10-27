@@ -72,9 +72,16 @@ public final class WebStack {
             throw new IllegalArgumentException("alias target must be a CloudFront hostname");
     }
 
+    /** Lowercase DNS name: 2..127 labels of 1..63 [a-z0-9-] without a leading or trailing hyphen, at most 253 characters. */
+    public static boolean isDomainName(String domain) {
+        return domain != null && domain.length() <= 253 && domain.matches("(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?");
+    }
+
     public static void requireHttpCidr(String cidr) {
-        if (cidr == null || !cidr.matches("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/32"))
+        if (cidr == null || !cidr.matches("(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])/32"))
             throw new SecurityException("web ingress requires one IPv4 /32");
+        if (cidr.startsWith("0.") || cidr.startsWith("255.255.255.255"))
+            throw new SecurityException("web ingress requires one routable IPv4 /32 (not 0.0.0.0/32 or a broadcast address)");
         String ip = cidr.substring(0, cidr.length()-3);
         for (String octet : ip.split("\\.")) if (Integer.parseInt(octet) > 255)
             throw new IllegalArgumentException("invalid IPv4 address");

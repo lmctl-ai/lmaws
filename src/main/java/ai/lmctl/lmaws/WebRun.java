@@ -19,7 +19,7 @@ final class WebRun implements AutoCloseable {
     private WebStackAws provider; private boolean recordedCost;
     WebRun(AwsBackend backend,CostLedger cost,String run,String domain,String file) {
         WebStack.requireRun(run);
-        if(domain==null||!domain.matches("[a-z0-9](?:[a-z0-9.-]{0,250}[a-z0-9])?")||domain.contains(".."))throw new IllegalArgumentException("invalid domain");
+        if(domain==null||!WebStack.isDomainName(domain))throw new IllegalArgumentException("invalid domain");
         this.backend=backend;this.cost=cost;this.run=run;this.domain=domain;this.path=Path.of(file).toAbsolutePath().normalize();
         if(java.util.stream.StreamSupport.stream(path.getParent().spliterator(),false).noneMatch(part->part.toString().equals(".lmweblab-local"))&&!backend.isDemo())throw new IllegalArgumentException("live web state must be in .lmweblab-local");
         try {
@@ -45,7 +45,7 @@ final class WebRun implements AutoCloseable {
     }
     static List<Map<String,String>> find(AwsBackend backend,String run,String domain) {
         WebStack.requireRun(run);
-        if(domain==null||!domain.matches("[a-z0-9](?:[a-z0-9.-]{0,250}[a-z0-9])?")||domain.contains(".."))throw new IllegalArgumentException("invalid web domain");
+        if(domain==null||!WebStack.isDomainName(domain))throw new IllegalArgumentException("invalid web domain");
         if(backend.isDemo())return List.of();
         try(var adapter=new WebStackAws(backend.webBuilder(Route53Client.builder()).region(software.amazon.awssdk.regions.Region.AWS_GLOBAL).build(),backend.webBuilder(CloudFrontClient.builder()).region(software.amazon.awssdk.regions.Region.AWS_GLOBAL).build(),backend.webBuilder(AcmClient.builder()).build(),backend.webBuilder(S3Client.builder()).build(),backend.ec2Client(),run,domain)) {
             List<Map<String,String>> result=new ArrayList<>(adapter.recoverOwned());result.addAll(new WebCompute(backend).inventory(run));return result;

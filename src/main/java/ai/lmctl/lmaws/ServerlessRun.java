@@ -13,7 +13,7 @@ final class ServerlessRun implements AutoCloseable {
     private FileChannel channel; private FileLock lock; private boolean ready,accounted;
     ServerlessRun(AwsBackend backend,CostLedger cost,String run,String domain,String file) {
         WebStack.requireRun(run);if(run.length()>24)throw new IllegalArgumentException("serverless run must be 4..24 hex digits");
-        if(domain==null||!domain.matches("[a-z0-9](?:[a-z0-9.-]{0,250}[a-z0-9])?")||domain.contains(".."))throw new IllegalArgumentException("invalid domain");
+        if(domain==null||!WebStack.isDomainName(domain))throw new IllegalArgumentException("invalid domain");
         if(!backend.isDemo() && (!"lmaws".equals(AwsBackend.activeProfile()) || !AwsBackend.isLiveEnabled() || !"us-east-1".equals(backend.region())))
             throw new SecurityException("live serverless deployment requires AWS_PROFILE=lmaws, LMAWS_LIVE=1 and us-east-1");
         this.backend=backend;this.cost=cost;this.run=run;this.domain=domain;path=Path.of(file).toAbsolutePath().normalize();
