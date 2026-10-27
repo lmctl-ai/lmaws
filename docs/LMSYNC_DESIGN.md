@@ -1,5 +1,11 @@
 # lmfiles: file lifecycle registry (proposed name)
 
+Implementation: **[lmctl-ai/lmfiles](https://github.com/lmctl-ai/lmfiles)** now exists
+under the confirmed name **lmfiles**. The Lead separately authorized milestones
+1A/1B after this design phase. The implemented JSON API, local/fake job and
+measurements are documented in that repo; the larger API/tier plan below still
+includes deferred 1C work. No real AWS/SFTP action or release was authorized.
+
 Status: **design only, brief v2 plus lifecycle/lmssh addenda and F1–F9 review revision**. This is the current registry design. It
 consolidates the useful publication examples from root `SYNC_DESIGN.md` at
 `d0f033f`, replacing its integrated sync/policy engine with the boundary below.
@@ -19,10 +25,10 @@ Contents: [boundary](#definition-and-boundary), [API](#1-core-api-and-neutral-da
 
 ## Definition and boundary
 
-Recommend **lmfiles**: a **file lifecycle registry**, not a directory sync engine.
+The confirmed product **lmfiles** is a **file lifecycle registry**, not a directory sync engine.
 Alternatives: **lmregistry** (emphasizes generic state, less obviously files) and
-**lmtrack** (emphasizes history, less obviously file operations). These are naming
-proposals, not new repositories or renamed existing products.
+**lmtrack** (emphasizes history, less obviously file operations). Those were design-stage naming alternatives; lmfiles is now confirmed. Existing
+action products keep their names.
 
 An item can start as a source URL before a local file exists, become a cleaned
 artifact, and acquire several publication aliases. A law/case ingestion script
@@ -920,7 +926,8 @@ synthetic target namespaces for fixtures and never record a dry-run's apparent
 success into production belief. The script knows whether it requested a preview;
 core does not infer provider mode or grant a report more authority.
 
-Registry calls remain proposed until lmfiles exists. Every action-host method shown
+The full registry API below remains a design superset; see lmfiles docs/API.md
+for the implemented 1A/1B subset. Every action-host method shown
 as available below is a current method. A narrowly missing call is listed once in
 “small additions needed”; the examples must disclose that blocker rather than
 pretend a proposed API already exists. These are design examples, not new runnable
@@ -1644,3 +1651,41 @@ work never becomes unchanged; scripts can implement different policies without
 changing lmfiles. No default stage order, retry, gone-source skip, cleanup, freshness, retention, invalidation, age or delete rule
 is added to the core. This document is the consolidated design; root
 `SYNC_DESIGN.md` is only a pointer.
+
+
+## Implementation qualification: milestones 1A/1B
+
+The first implementation qualifies H2 MVStore with dense positive long keys,
+interned stage IDs, co-located stage summaries, CRC32C and compressed JSON binary
+payloads using positional I/O. It does not yet implement the custom raw-digest/
+delta-event codec assumed by the lean sizing model. The measured10k-item profile
+(three explicit aliases plus identity index, five stages,60,100 events including
+100 pending updates) occupies **1,507.328 bytes/item**, above the unmeasured
+750–1,050 target. Keep that target as a 1C benchmark goal, not a claim about1A.
+
+A reopened100-entry sparse frontier examined exactly100 entries in3.711ms;
+1,000 permuted subset lookups including JSON serialization took73.083ms. These
+are one local Linux/native observations, not100M results or cold-cache statistics.
+Exact evidence, fixture contract and binary hash: lmfiles docs/MEASUREMENTS.md.
+
+Implementation choices preserve core neutrality: JSON/scalar bindings, caller-
+declared frontier predicates, explicit revision comparisons, and user-reported
+results. Namespaced IDs are DB-scoped positive 64-bit decimal strings; don't mix
+numeric IDs between registries. Optional initial aliases can be adopted atomically
+with item_upsert and recorded in its single creation event. Lease deadlines are
+persisted with a monotonic owner epoch; reopen conservatively retains the full
+original duration without scanning/loading all claims into RAM.
+
+The one-script publication job explicitly binds existing lmaws in demo mode and
+owns a persistent LOCAL fake bucket. It records success only after the mock host
+and local write report success. The fixture tests first publish, no-op, changed
+bytes, deliberately missing receipt, replay and retry; no real AWS test occurred.
+Nine actual fault points include half-written H2 pages, write failure, compaction
+boundaries and durable plan/result receipt boundaries. Managed/native assertions,
+address-space/memory checks and public URL runs are recorded in the product repo.
+
+1C remains: optional scans/hash helpers, general predicate indexes/aggregates,
+change cursors/checkpoints/archives, multi-process coordination and100M scale/
+metadata-heavy/compaction/power-loss qualification. Existing transport gaps remain
+separate. Manual lmfiles CI is permitted by the build brief; lmctlhq workflow
+dispatch, tags/releases and real cloud/SSH actions remain outside this task.
