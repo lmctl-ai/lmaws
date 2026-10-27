@@ -39,7 +39,25 @@ def main():
             groups=lambda q:[v for k,values in q.items() if "GroupId" in k for v in values]
             subnets=lambda q:[v for k,values in q.items() if k.endswith("SubnetId") for v in values]
             assert groups(runs[0][1])==groups(runs[1][1]) and subnets(runs[1][1])==["subnet-5678abcd"]
-            assert b"lmaws_test" in runs[1][2]
+            # The session policy's contract, checked field by field (not just "lmaws_test somewhere in the body").
+            def tagspecs(q):
+                out={};n=1
+                while f"TagSpecification.{n}.ResourceType" in q:
+                    tags={};m=1
+                    while f"TagSpecification.{n}.Tag.{m}.Key" in q: tags[q[f"TagSpecification.{n}.Tag.{m}.Key"][0]]=q[f"TagSpecification.{n}.Tag.{m}.Value"][0];m+=1
+                    out[q[f"TagSpecification.{n}.ResourceType"][0]]=tags;n+=1
+                return out
+            for run in runs:
+                q=run[1];specs=tagspecs(q)
+                for kind in ("instance","volume","network-interface","spot-instances-request"):
+                    assert specs.get(kind,{}).get("lmaws_test"),("RunInstances must tag "+kind+" with lmaws_test at creation",specs)
+                assert q["InstanceType"][0] in ("t4g.nano","t3.nano"),q["InstanceType"]
+                sizes=[int(v[0]) for k,v in q.items() if k.endswith("Ebs.VolumeSize")]
+                assert sizes and all(size<=8 for size in sizes),sizes
+            created=[x for x in Fake.requests if x[0]=="CreateSecurityGroup"]
+            assert created and all(tagspecs(x[1]).get("security-group",{}).get("lmaws_test") for x in created),"security group must be tagged at creation"
+            ingress=[v for x in Fake.requests if x[0]=="AuthorizeSecurityGroupIngress" for k,values in x[1].items() if k.endswith("CidrIp") for v in values]
+            assert ingress and all(c.endswith("/32") for c in ingress),("ingress must be one /32",ingress)
             print("PASS WebCompute capacity fallback and fresh-instance visibility backoff: explicit capacity retry, alternate public subnet, distinct tokens, same SG, tags and 8GiB constraints")
     finally: server.shutdown(); server.server_close()
 if __name__=="__main__": main()
