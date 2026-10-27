@@ -1,4 +1,6 @@
-# Local AWS profile test procedure (v0.1.12)
+# Local AWS profile test procedure (latest release)
+
+New here? Start with the one-command [quickstart](../README.md#quickstart), check [which profile you need](PROFILES.md) and the [troubleshooting table](TROUBLESHOOTING.md).
 
 READY FOR USER TEST. All 26 live native/lmcloud pairs completed using lmcloud
 v0.1.10 and AWS provider 5.100.0: eight comparisons match and 18 retain explicit
@@ -107,7 +109,7 @@ AWS_PROFILE=default timeout 300 lmctl https://raw.githubusercontent.com/lmctl-ai
 A repository checkout can enforce the aggregate campaign budget and skip IAM:
 
 ```sh
-# Install/download the v0.1.3 platform executable into target/lmaws, verify SHA256SUMS.
+# Install/download the latest release executable into target/lmaws, verify SHA256SUMS.
 LMAWS_LIVE=1 AWS_PROFILE=lmaws python3 scripts/test-live-examples.py --host target/lmaws --example bucket_objects
 # Reuse the successful native proof to avoid repeating its creation.
 # The six write examples can be run once with AWS_PROFILE=lmaws after re-issuing the

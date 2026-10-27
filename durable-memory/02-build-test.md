@@ -15,7 +15,7 @@ tests independent absence checking and comparison safety, then builds a JVM
 wrapper for CLI/schema/notices, SDK regressions, cost/profile/memory enforcement
 and actual SDK HTTP transport against loopback fakes. Sixteen inventories and
 six tagged lifecycles exercise paging, redaction and failure teardown. Native
-mode additionally tests `target/lmaws`, Linux linkage and all 30 gallery scripts.
+mode additionally tests `target/lmaws`, Linux linkage and every gallery example (`scripts/test-gallery.py --run`).
 JVM-only mode checks committed gallery assets and explicitly skips rendering.
 
 Native build scripts copy the shaded JAR to an immutable input and use GraalVM

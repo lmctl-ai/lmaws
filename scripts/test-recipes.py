@@ -51,6 +51,15 @@ def main() -> int:
     assert generated.returncode==0,generated.stdout+generated.stderr
     result = subprocess.run([sys.executable, str(ROOT / "scripts" / "recipe-index.py"), "--check", "--root-readme", str(ROOT/"README.md")], cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
+    # Documented counts must follow the files (several coders add recipes concurrently).
+    examples = [p for p in (ROOT / "examples").glob("*.lms") if p.stem != "render-all"]
+    words = {"seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
+    doc04 = (ROOT / "durable-memory" / "04-examples.md").read_text(encoding="utf-8")
+    m = re.search(r"There are (\d+) runnable `\.lms` examples: \w+ spend reports, (\d+) synthetic-only recipe demonstrations", doc04)
+    assert m and int(m.group(1)) == len(examples) and int(m.group(2)) == len(items), ("04-examples.md counts are stale", m and m.groups(), len(examples), len(items))
+    doc08 = (ROOT / "durable-memory" / "08-recipes.md").read_text(encoding="utf-8")
+    m = re.search(r"There are (\d+) recipe/example pairs across all (\w+) task groups", doc08)
+    assert m and int(m.group(1)) == len(items) and words.get(m.group(2)) == len(CATEGORIES), ("08-recipes.md counts are stale", m and m.groups(), len(items), len(CATEGORIES))
     print(f"PASS recipe contract: {len(items)} recipes, {len({item.category for item in items})} categories")
     return 0
 

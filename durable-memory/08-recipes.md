@@ -29,9 +29,22 @@ reported as compliant, and stopped state alone does not establish idle duration.
 
 `test.sh` checks index/header/image contracts and actual import/composition/
 preview/profile behavior without cloud credentials. The native gallery stage
-runs every recipe example. There are 75 recipe/example pairs across all nine task groups,
+runs every recipe example. There are 83 recipe/example pairs across all nine task groups,
 including the account spend detail, seven per-topic spend reports, seven EC2 compute
 recipes, three IAM/session recipes (`policy_lint`, `grant_session_policy`, and `session_doctor`),
 and 27 permission builder & IAM analysis recipes (`recipes/lib/policy_builder.lms`). The spend
 functions use the concurrent Spend API; their hosted commands require its
 spend-capable native release. Preview works without querying AWS.
+
+## Hygiene and quickstart recipes (recipes/lib/hygiene.lms)
+
+`quickstart` (one command to an account snapshot picture), `open_ports` (security groups open to
+the internet; 22/3389/database ports flagged high), `secret_age` (secrets unchanged for 90+ days;
+values never read), `which_profile`, `unattached_volumes` (size and monthly gp3/gp2 cost; never
+deletes), `public_ipv4_cost` (Elastic and auto-assigned addresses, $0.005/hour each) and
+`log_retention_audit` (never-expiring log groups). All read-only with `default`; synthetic by
+default (log groups and secrets use local fixtures because the demo host has no retention or
+change dates). Docs: [PROFILES](../docs/PROFILES.md), [TROUBLESHOOTING](../docs/TROUBLESHOOTING.md).
+Every argument check in `recipes/lib/common.lms` now fails with a message naming the flag and its
+valid range instead of a bare assertion; `test-recipes.py` fails when the example/recipe counts in
+04-examples.md and 08-recipes.md drift from the files.

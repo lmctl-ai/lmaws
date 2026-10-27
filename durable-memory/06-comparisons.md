@@ -1,6 +1,6 @@
 # Current lmcloud / OpenTofu comparisons
 
-All 30 examples have `compare/<name>/main.tf` and generated self-contained `.lms`
+The original 30 examples have `compare/<name>/main.tf` and generated self-contained `.lms`
 phases for init, validate, plan, apply, inspect and destroy. Scripts pin released
 lmcloud **v0.1.10**, verified against release SHA256SUMS, and AWS provider
 **5.100.0**. Real provider installation and single-number version handling work;
