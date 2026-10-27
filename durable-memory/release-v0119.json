@@ -1,0 +1,35 @@
+{
+  "version": "0.1.19",
+  "assets": [
+    {
+      "name": "lmaws-linux-arm64",
+      "bytes": 101255288,
+      "sha256": "b115dc65046be36b04f10dcec1f86f2653db001253e5d36106affb9be6baae6d"
+    },
+    {
+      "name": "lmaws-linux-x64",
+      "bytes": 105056520,
+      "sha256": "c26d5b0bee4216ed78307b7371a4ca5ac3b8aaf4c9c64787d90f0ce9a864c350"
+    },
+    {
+      "name": "lmaws-macos-arm64",
+      "bytes": 96397848,
+      "sha256": "09a9e561f331d88708ff96dbfc1373919b39acd1490c7d874924695d5d7a08db"
+    },
+    {
+      "name": "lmaws-macos-x64",
+      "bytes": 99428544,
+      "sha256": "f5c710f1faeebe9bc23aea38f0f6e5da6e6fe8006302dd9990dd278afff824ce"
+    },
+    {
+      "name": "lmaws-windows-x64.exe",
+      "bytes": 101781504,
+      "sha256": "06b40329551b454d5e0f116c5d18d63fe6bdfc508eb0e6390ff1b99cad29fb36"
+    }
+  ],
+  "windows_missing": false,
+  "self_test_pass_lines": 9,
+  "own_signatures": 180,
+  "run": "40443559158",
+  "fresh_cache_quickstart": "lmctl <raw main>/examples/recipe_quickstart.lms installed lmaws 0.1.19 from an empty directory and cache"
+}

@@ -1,13 +1,14 @@
 # Releases and remaining work
 
-Current verified release: **v0.1.18**, source commit
+Current verified release: **v0.1.19** ([proof](release-v0119.json): five assets, SHA256SUMS,
+linkage, released-native self-test, 180 host signatures equal to the local build; packaging run
+[40443559158](https://github.com/lmctl-ai/lmaws/actions/runs/40443559158), all five lanes green). It fixes
+the v0.1.18 self-test failure on machines whose private policy snapshot drifted, hardens the
+credential cache, tightens the CIDR/domain guards and adds the hygiene/quickstart recipes. The
+release procedure is [16-release-procedure.md](16-release-procedure.md).
+
+Previous release: **v0.1.18**, source commit
 `2aaba04653733e898469b0faa55b8534ff6bd481`.
-[Release proof](release-v0118.json) records all five native assets, verified
-SHA256SUMS, Linux linkage, released-native self-tests and exact role API signatures.
-[Packaging run 40433490733](https://github.com/lmctl-ai/lmaws/actions/runs/40433490733)
-passed all five platform jobs. The release includes guarded Lambda execution-role
-grants and the narrow Lambda-only PassRole lint exception, preserving the IAM
-builder and persistent serverless work.
 
 The managed/native local gate passed 116 gallery programs, 76 recipe contracts,
 ten recipe execution regressions, 38 role controls and SDK role transport cases.
