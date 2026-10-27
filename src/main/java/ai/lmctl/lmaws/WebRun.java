@@ -234,7 +234,7 @@ final class WebRun implements AutoCloseable {
             cleanup("cert",()->aws().deleteCertificate(val("cert")),errors);
             cleanup("validation_record",()->aws().recordCname(val("zone"),val("validation_name"),val("validation_value"),true),errors);
             if(errors.isEmpty()&&(!aws().recoverOwned().isEmpty()||!new WebCompute(backend).inventory(run).isEmpty()))errors.add(new IllegalStateException("independent web inventory still finds this run resources"));
-            if(!errors.isEmpty()){state.put("status","cleanup_failed");persist();RuntimeException e=new IllegalStateException("web cleanup incomplete: "+errors.size()+" failures; inspect private state");errors.forEach(e::addSuppressed);throw e;}
+            if(!errors.isEmpty()){state.put("status","cleanup_failed");state.put("cleanup_errors",Jsons.encodeRaw(errors.stream().map(x->x instanceof software.amazon.awssdk.awscore.exception.AwsServiceException aws&&aws.awsErrorDetails()!=null?aws.awsErrorDetails().errorCode()+": "+aws.awsErrorDetails().errorMessage():x.getClass().getSimpleName()+": "+x.getMessage()).toList()));persist();RuntimeException e=new IllegalStateException("web cleanup incomplete: "+errors.size()+" failures; inspect private state");errors.forEach(e::addSuppressed);throw e;}
         }
         state.put("status","down");state.put("finished_at",Instant.now().toString());persist();return Map.of("status","down","leftover_count","0","estimated_cost_usd",estimate().toPlainString());
     }
