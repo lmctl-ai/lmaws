@@ -39,6 +39,7 @@ timeout 180 python3 scripts/test-web-ec2.py --unsupported-zone
 timeout 180 python3 scripts/test-prefix-fake.py "$jvm"
 timeout 180 python3 scripts/test-spend-api.py "$jvm"
 timeout 300 python3 scripts/test-spend-transport.py
+timeout 180 python3 scripts/test-lambda-event-transport.py
 if [[ "${LMAWS_NATIVE:-0}" == 1 ]]; then
  exe=target/lmaws; [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]] && exe=target/lmaws.exe
  export PATH="$PWD/target:$PATH"
