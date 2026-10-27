@@ -171,6 +171,9 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","dynamodb_item_conditional",List.of("string","string","string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.tableItemConditional(text(a[0]),text(a[1]),text(a[2]),text(a[3]),text(a[4]))));
         r.method("Cloud","s3_presigned_put",List.of("string","string","int","string","int"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3PresignPut(text(a[0]),text(a[1]),a[2].asInt(),text(a[3]),Math.toIntExact(a[4].asInt()),session(s).cost.runId())));
         r.method("Cloud","s3_presigned_put",List.of("string","string","int","string","int","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3PresignPut(text(a[0]),text(a[1]),a[2].asInt(),text(a[3]),Math.toIntExact(a[4].asInt()),text(a[5]))));
+        r.method("Cloud","policy_document",List.of("string"),"string",(c,s,a)->Value.ofString(session(s).backend.managedPolicyDocument(text(a[0]))));
+        r.method("Cloud","s3_upload_cleanup",List.of("string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3UploadCleanup(text(a[0]),Path.of(text(a[1])))));
+        r.method("Cloud","s3_upload_check",List.of("string","string","bool","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3UploadCheck(text(a[0]),text(a[1]),a[2].asBool(),Path.of(text(a[3])))));
         r.method("Cloud","s3_notification",List.of("string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3Notification(text(a[0]),text(a[1]),text(a[2]),session(s).cost.runId())));
         r.method("Cloud","s3_notification",List.of("string","string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3Notification(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
         r.method("Lambda","status",List.of(),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).status()));

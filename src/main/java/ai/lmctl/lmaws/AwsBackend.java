@@ -2,6 +2,10 @@ package ai.lmctl.lmaws;
 
 import java.net.InetAddress;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -934,6 +938,98 @@ public final class AwsBackend implements AutoCloseable {
     }
 
     AwsBackend defaultReader(){return new AwsBackend(regionName,demo,cost,"default");}
+    Map<String,String> s3UploadCheck(String runId,String requestedBucket,boolean allowLeave,Path statePath){
+        requireScenarioWrite();
+        if(!runId.matches("[a-f0-9]{4,24}"))throw new IllegalArgumentException("run id must be 4..24 hexadecimal digits");
+        Path journal=uploadJournalPath(runId,statePath);
+        if(Files.exists(journal))throw new SecurityException("S3 upload journal already exists; choose a fresh run id");
+        boolean sandbox=requestedBucket==null||requestedBucket.isBlank();
+        if(!sandbox&&!allowLeave)throw new SecurityException("an explicit bucket requires --allow-leave-object");
+        String bucket=sandbox?"lmaws-s3check-"+runId:requestedBucket;
+        if(!bucket.matches("[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")||bucket.contains("..")||bucket.contains(".-")||bucket.contains("-.")||bucket.matches("[0-9]+(?:\\.[0-9]+){3}")||bucket.endsWith("--x-s3"))throw new IllegalArgumentException("a general-purpose S3 bucket name is required");
+        if(!"us-east-1".equals(regionName))throw new SecurityException("S3 upload checks require us-east-1");
+        Map<String,String> out=row("kind","s3_upload_check","run_id",runId,"bucket",bucket,"key","lmaws-s3check/"+runId+".txt","put_profile","default","cleanup_profile",sandbox?"lmaws":"none","state","planned","bucket_created","false","bucket_deleted","false","object_left","false","first_put_denied","false","leftovers","0","sandbox",String.valueOf(sandbox));
+        writeUploadJournal(journal,out,true);
+        byte[] body=new byte[]{'x'};String key=out.get("key");long started=System.nanoTime();
+        if(demo){
+            out.putAll(row("state",sandbox?"clean":"left","demo","true","head_before","absent","default_put","passed","present_verified","true","etag_match","true","etag",md5Hex(body),"size","1","bucket_created",String.valueOf(sandbox),"bucket_deleted",String.valueOf(sandbox),"head_after_delete",sandbox?"absent":"not_requested","object_left",String.valueOf(!sandbox),"leftovers",sandbox?"0":"1","cleanup_complete","true","total_ms","0","create_ms","0","head_before_ms","0","put_ms","0","verify_ms","0","cleanup_ms","0","estimated_usd","0.00"));
+            writeUploadJournal(journal,out,false);return out;
+        }
+        if(!"lmaws".equals(profileName)||!"lmaws".equals(activeProfile()))throw new SecurityException("the upload check controller requires lmaws; only its PUT uses default");
+        AwsBackend reader=defaultReader();boolean created=false,put=false,clean=false;String owner="",putEtag="";RuntimeException failure=null;String stage="identity";
+        try{
+            owner=accountId();if(!owner.matches("[0-9]{12}")||!owner.equals(reader.accountId()))throw new SecurityException("default and lmaws must belong to the same account");
+            final String expectedOwner=owner;
+            stage="bucket_head";out.put("stage",stage);writeUploadJournal(journal,out,false);
+            if(sandbox){
+                if(!uploadBucketAbsent(s3(),bucket,expectedOwner))throw new SecurityException("sandbox bucket already exists; refusing adoption");
+                cost.reserveCreate("bucket");stage="bucket_create";out.put("bucket_intent","create");writeUploadJournal(journal,out,false);long phase=System.nanoTime();
+                try{s3().createBucket(x->x.bucket(bucket));created=true;out.put("bucket_created","true");cost.created("bucket",bucket,bucket);writeUploadJournal(journal,out,false);}
+                catch(RuntimeException e){cost.creationRejected("bucket",bucket,e.getClass().getSimpleName(),e instanceof S3Exception se?se.statusCode():0);throw e;}
+                tagBucket(bucket,runId);out.put("tagged","true");out.put("create_ms",uploadMs(phase));writeUploadJournal(journal,out,false);
+            }else{reader.s3().headBucket(x->x.bucket(bucket).expectedBucketOwner(expectedOwner));out.put("create_ms","0");}
+            stage="head_before";long phase=System.nanoTime();
+            if(!uploadObjectAbsent(reader.s3(),bucket,key,expectedOwner))throw new SecurityException("object already exists; conditional upload not attempted");
+            out.put("head_before","absent");out.put("head_before_ms",uploadMs(phase));out.put("stage","put_intent");writeUploadJournal(journal,out,false);
+            if(sandbox)cost.put("bucket",bucket,body.length);else if(cost.total().add(new java.math.BigDecimal("0.00005")).compareTo(cost.cap())>0)throw new CostLedger.BudgetExceeded("insufficient upload request budget");
+            stage="default_put";phase=System.nanoTime();
+            var response=reader.s3().putObject(PutObjectRequest.builder().bucket(bucket).key(key).contentLength((long)body.length).contentType("text/plain").contentMD5(java.util.Base64.getEncoder().encodeToString(md5Bytes(body))).ifNoneMatch("*").expectedBucketOwner(expectedOwner).build(),software.amazon.awssdk.core.sync.RequestBody.fromBytes(body));
+            put=true;putEtag=response.eTag();out.put("default_put","passed");out.put("etag",putEtag==null?"":putEtag);out.put("put_ms",uploadMs(phase));writeUploadJournal(journal,out,false);
+            stage="verify";phase=System.nanoTime();var head=reader.s3().headObject(x->x.bucket(bucket).key(key).expectedBucketOwner(expectedOwner));
+            if(head.contentLength()==null||head.contentLength()!=body.length||putEtag==null||putEtag.isBlank()||!normalizeUploadEtag(putEtag).equals(normalizeUploadEtag(head.eTag())))throw new IllegalStateException("PUT/HEAD size or ETag mismatch");
+            if(sandbox&&!normalizeUploadEtag(putEtag).equals(md5Hex(body)))throw new IllegalStateException("sandbox object MD5/ETag mismatch");
+            out.put("present_verified","true");out.put("etag_match","true");out.put("size",String.valueOf(head.contentLength()));out.put("verify_ms",uploadMs(phase));
+            if(!sandbox){out.put("object_left","true");out.put("state","left");out.put("leftovers","1");}
+        }catch(RuntimeException e){failure=e;out.put("failed_stage",stage);out.put("state","failed");out.put("error_code",e instanceof software.amazon.awssdk.awscore.exception.AwsServiceException se&&se.awsErrorDetails()!=null&&se.awsErrorDetails().errorCode()!=null?se.awsErrorDetails().errorCode():e.getClass().getSimpleName());
+            if("default_put".equals(stage)){out.put("default_put","failed");if(e instanceof software.amazon.awssdk.awscore.exception.AwsServiceException se&&se.statusCode()==403){out.put("default_put","denied");out.put("first_put_denied","true");out.put("denied_action","s3:PutObject");out.put("denied_resource","arn:aws:s3:::"+bucket+"/"+key);}}
+        }finally{
+            long phase=System.nanoTime();
+            if(created){try(var scope=cost.cleanupScope()){
+                final String expectedOwner=owner;final String savedEtag=putEtag;
+                if(!bucket.equals("lmaws-s3check-"+runId)||!"true".equals(out.get("bucket_created")))throw new SecurityException("sandbox cleanup receipt mismatch");
+                if("true".equals(out.get("tagged"))&&!s3().getBucketTagging(x->x.bucket(bucket).expectedBucketOwner(expectedOwner)).tagSet().stream().anyMatch(t->"lmaws_test".equals(t.key())&&runId.equals(t.value())))throw new SecurityException("sandbox run tag changed");
+                if(put){s3().deleteObject(software.amazon.awssdk.services.s3.model.DeleteObjectRequest.builder().bucket(bucket).key(key).expectedBucketOwner(expectedOwner).ifMatch(savedEtag).build());try{if(!uploadObjectAbsent(reader.s3(),bucket,key,expectedOwner))throw new IllegalStateException("object remained after lmaws deletion");out.put("head_after_delete","absent");}catch(RuntimeException verification){out.put("head_after_delete","unverified");out.put("verification_error",verification.getClass().getSimpleName());if(failure==null){failure=verification;out.put("state","failed");out.put("failed_stage","head_after_delete");}}}
+                s3().deleteBucket(x->x.bucket(bucket).expectedBucketOwner(expectedOwner));cost.deleted("bucket",bucket);out.put("bucket_deleted","true");
+                if(!uploadBucketAbsent(s3(),bucket,expectedOwner))throw new IllegalStateException("sandbox bucket remained after deletion");
+                if(prefixBuckets(bucket).stream().anyMatch(v->bucket.equals(v.get("name"))))throw new IllegalStateException("independent bucket inventory still finds sandbox");
+                clean=true;out.put("leftovers","0");if(failure==null)out.put("state","clean");
+            }catch(Exception e){out.put("cleanup_error",e.getClass().getSimpleName());out.put("leftovers","unknown");out.put("state","cleanup_failed");}}
+            else if(sandbox){if("create".equals(out.get("bucket_intent"))&&!owner.isBlank()){try{out.put("leftovers",uploadBucketAbsent(s3(),bucket,owner)?"0":"unknown");}catch(RuntimeException uncertain){out.put("leftovers","unknown");}}else out.put("leftovers","0");}
+            out.put("cleanup_ms",uploadMs(phase));out.put("total_ms",uploadMs(started));out.put("estimated_usd",cost.total().toPlainString());out.put("cleanup_complete",String.valueOf(created?clean:"0".equals(out.get("leftovers"))||!sandbox));
+            reader.close();writeUploadJournal(journal,out,false);
+        }
+        return out;
+    }
+    private static boolean uploadObjectAbsent(S3Client client,String bucket,String key,String owner){try{client.headObject(x->x.bucket(bucket).key(key).expectedBucketOwner(owner));return false;}catch(S3Exception e){if(e.statusCode()==404)return true;throw e;}}
+    private static boolean uploadBucketAbsent(S3Client client,String bucket,String owner){try{client.headBucket(x->x.bucket(bucket).expectedBucketOwner(owner));return false;}catch(S3Exception e){if(e.statusCode()==404)return true;throw e;}}
+    private static String uploadMs(long start){return String.valueOf((System.nanoTime()-start)/1000000);}
+    private static String normalizeUploadEtag(String value){return value==null?"":value.replace("\"","").toLowerCase(Locale.ROOT);}
+    private static Path uploadJournalPath(String run,Path path){if(path==null)throw new SecurityException("upload journal is required");Path full=path.toAbsolutePath().normalize();if(java.util.stream.StreamSupport.stream(full.spliterator(),false).noneMatch(v->v.toString().equals(".lmaws-local"))||!full.getFileName().toString().equals(run+".json"))throw new SecurityException("upload journal must be .lmaws-local/.../<run>.json");return full;}
+    private static void writeUploadJournal(Path path,Map<String,String> row,boolean first){try{Files.createDirectories(path.getParent());if(first){Files.writeString(path,Jsons.encodeRaw(row),java.nio.file.StandardOpenOption.CREATE_NEW,java.nio.file.StandardOpenOption.WRITE);try{Files.setPosixFilePermissions(path,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));}catch(UnsupportedOperationException ignored){}}else{Path tmp=Files.createTempFile(path.getParent(),".upload-",".tmp");try{Files.writeString(tmp,Jsons.encodeRaw(row));try{Files.setPosixFilePermissions(tmp,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));}catch(UnsupportedOperationException ignored){}Files.move(tmp,path,java.nio.file.StandardCopyOption.ATOMIC_MOVE,java.nio.file.StandardCopyOption.REPLACE_EXISTING);}finally{Files.deleteIfExists(tmp);}}}catch(Exception e){throw new IllegalStateException("cannot write private S3 upload journal",e);}}
+    private static byte[] md5Bytes(byte[] value){try{return MessageDigest.getInstance("MD5").digest(value);}catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}}
+    private static String md5Hex(byte[] value){return HexFormat.of().formatHex(md5Bytes(value));}
+    Map<String,String> s3UploadCleanup(String runId,Path statePath){
+        requireScenarioWrite();Path path=uploadJournalPath(runId,statePath);Map<String,Object> raw=io.lmctl.lmcode.Json.object(io.lmctl.lmcode.Json.parse(readBoundedUploadJournal(path)));Map<String,String> out=new LinkedHashMap<>();raw.forEach((k,v)->out.put(k,String.valueOf(v)));
+        String bucket="lmaws-s3check-"+runId,key="lmaws-s3check/"+runId+".txt";
+        if(!runId.matches("[a-f0-9]{4,24}")||!runId.equals(out.get("run_id"))||!bucket.equals(out.get("bucket"))||!key.equals(out.get("key"))||!"true".equals(out.get("sandbox"))||!"true".equals(out.get("bucket_created")))throw new SecurityException("cleanup requires this run's acknowledged sandbox creation journal");
+        if(!"us-east-1".equals(regionName)||!demo&&(!"lmaws".equals(profileName)||!"lmaws".equals(activeProfile())))throw new SecurityException("sandbox cleanup requires lmaws in us-east-1");
+        long start=System.nanoTime();
+        try(var scope=cost.cleanupScope()){
+            if(!demo){String owner=accountId();if(!uploadBucketAbsent(s3(),bucket,owner)){
+                if("true".equals(out.get("tagged"))&&!s3().getBucketTagging(x->x.bucket(bucket).expectedBucketOwner(owner)).tagSet().stream().anyMatch(t->"lmaws_test".equals(t.key())&&runId.equals(t.value())))throw new SecurityException("sandbox ownership tag mismatch");
+                if("passed".equals(out.get("default_put"))&&!uploadObjectAbsent(s3(),bucket,key,owner)){String etag=out.get("etag");if(etag==null||etag.isBlank())throw new SecurityException("missing successful PUT ETag receipt");s3().deleteObject(software.amazon.awssdk.services.s3.model.DeleteObjectRequest.builder().bucket(bucket).key(key).expectedBucketOwner(owner).ifMatch(etag).build());}
+                s3().deleteBucket(x->x.bucket(bucket).expectedBucketOwner(owner));
+            }if(!uploadBucketAbsent(s3(),bucket,owner)||prefixBuckets(bucket).stream().anyMatch(v->bucket.equals(v.get("name"))))throw new IllegalStateException("sandbox remains in provider inventory");}
+            out.put("bucket_deleted","true");out.put("leftovers","0");out.put("cleanup_complete","true");out.put("recovery_ms",uploadMs(start));writeUploadJournal(path,out,false);return out;
+        }catch(RuntimeException e){throw e;}catch(Exception e){throw new IllegalStateException("sandbox cleanup failed",e);}
+    }
+    private static String readBoundedUploadJournal(Path path){try{if(Files.size(path)>65536)throw new SecurityException("upload journal exceeds 64 KiB");return Files.readString(path);}catch(java.io.IOException e){throw new IllegalStateException("cannot read private upload journal",e);}}
+    String managedPolicyDocument(String arn){
+        if(arn==null||!arn.matches("arn:aws:iam::(?:aws|[0-9]{12}):policy/[A-Za-z0-9+=,.@_/-]{1,512}"))throw new IllegalArgumentException("a managed policy ARN is required");
+        if(demo)throw new IllegalStateException("managed policy reads are live metadata; use a policy file for offline evaluation");
+        var policy=iam().getPolicy(x->x.policyArn(arn)).policy();String document=IamPolicies.decodeAwsDocument(iam().getPolicyVersion(x->x.policyArn(arn).versionId(policy.defaultVersionId())).policyVersion().document());
+        if(document.length()>65536)throw new IllegalStateException("managed policy document exceeds 64 KiB");return document;
+    }
     boolean sameAccount(AwsBackend other){if(demo||endpoint!=null)return true;String left=sts().getCallerIdentity().account(),right=other.sts().getCallerIdentity().account();return left!=null&&left.matches("[0-9]{12}")&&left.equals(right);}
     @Override public void close() { for (AutoCloseable c : clients) try { c.close(); } catch (Exception ignored) { } }
 
@@ -961,7 +1057,7 @@ public final class AwsBackend implements AutoCloseable {
         return iam;
     }
     private CloudFormationClient cloudformation() { return cloudformation == null ? cloudformation = register(base(CloudFormationClient.builder()).build()) : cloudformation; }
-    private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { b.region(region).overrideConfiguration(config); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))); else b.credentialsProvider(ProfileCredentialsProvider.builder().profileName(profileName).build()); return b; }
+    private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { b.region(region).overrideConfiguration(config); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))).overrideConfiguration(config.toBuilder().putHeader("X-Lmaws-Test-Profile",profileName).build()); else b.credentialsProvider(ProfileCredentialsProvider.builder().profileName(profileName).build()); return b; }
 
     <B extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> B webBuilder(B builder) { return base(builder); }
     private static final class CostInterceptor implements ExecutionInterceptor {
