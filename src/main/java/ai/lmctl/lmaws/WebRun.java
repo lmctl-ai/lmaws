@@ -131,6 +131,7 @@ final class WebRun implements AutoCloseable {
             case "dns_weighted"->{
                 String fqdn=arg(a,"name",state.getOrDefault("weighted_name","lmaws-weighted-"+run+"."+domain));
                 String target=arg(a,"static_target",val("cf_domain")); String ip=arg(a,"dynamic_ip",val("public_ip"));
+                if(!target.equals(val("cf_domain"))||!ip.equals(val("public_ip")))throw new SecurityException("weighted DNS targets must be this run's CloudFront and instance");
                 long sw=integerArg(a,"static_weight"), dw=integerArg(a,"dynamic_weight");
                 if(sw+dw!=100)throw new IllegalArgumentException("weighted DNS weights must sum to 100");
                 if(!state.containsKey("zone")){state.put("zone",aws().zoneId(domain));persist();} String zone=arg(a,"zone",val("zone")); aws().weightedSetOwned(zone,fqdn,target,ip,sw,dw,false,state.containsKey("weighted_record"),()->{state.put("weighted_name",fqdn);state.put("weighted_static_target",target);state.put("weighted_dynamic_ip",ip);state.put("weighted_static_weight",String.valueOf(sw));state.put("weighted_dynamic_weight",String.valueOf(dw));state.put("weighted_record","true");persist();});

@@ -168,8 +168,9 @@ public final class WebStackAws implements AutoCloseable {
                 String n=stripDot(record.name());String site="lmaws-site-"+runId+"."+domain,app="lmaws-app-"+runId+"."+domain;
                 if(n.equals(site)||n.equals(app)||(n.startsWith("_")&&n.endsWith("."+site))){var row=row("route53",record.typeAsString(),n,n);row.put("owned","true");out.add(row);}
                 String weighted="lmaws-weighted-"+runId+"."+domain;
-                if(n.equals(weighted)&&("static-"+runId).equals(record.setIdentifier())||n.equals(weighted)&&("dynamic-"+runId).equals(record.setIdentifier())){
-                    var row=row("route53","weighted-A",n,record.setIdentifier());row.put("owned",ownerProof==null?"unknown":"true");row.put("identifier",record.setIdentifier());row.put("weight",String.valueOf(record.weight()));out.add(row);
+                if(n.equals(weighted)){
+                    boolean expected=(record.type()==RRType.A&&(("static-"+runId).equals(record.setIdentifier())||("dynamic-"+runId).equals(record.setIdentifier())));
+                    var row=row("route53","weighted-A",n,record.setIdentifier()==null?"":record.setIdentifier());row.put("owned",expected?(ownerProof==null?"unknown":"true"):"false");row.put("identifier",record.setIdentifier()==null?"":record.setIdentifier());row.put("weight",String.valueOf(record.weight()));out.add(row);
                 }
             }
         }
