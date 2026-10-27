@@ -78,6 +78,7 @@ public final class CloudHost implements AutoCloseable {
         r.function("check",List.of("bool"),"void",(c,s,a)->{if(!a[0].asBool())throw VmException.host("check failed");return Value.none();});
         r.method("Cloud","example",List.of("string"),"Cloud",(c,s,a)->Value.object("Cloud",example(text(a[0]))));
         r.method("Cloud","find_prefix",List.of("string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.findPrefix(text(a[0])),c)));
+        r.method("Cloud","s3_publish_path",List.of("string","string","string"),"Rows",(c,s,a)->{ if(!"default".equals(AwsBackend.activeProfile())) throw VmException.host("s3_publish_path is read-only and requires AWS_PROFILE=default"); return Value.object("Rows",new Rows(session(s).backend.s3PublishPath(text(a[0]),text(a[1]),text(a[2])),c)); });
         r.method("Cloud","resource_exists",List.of("string","string"),"bool",(c,s,a)->Value.ofBool(ResourceLookup.exists(session(s).backend,text(a[0]),text(a[1]))));
         r.method("Cloud","leftovers",List.of("string","int"),"Rows",(c,s,a)->{var v=session(s);return Value.object("Rows",new Rows(LedgerCleanup.execute(v.backend,v.cost.path().toAbsolutePath().getParent(),text(a[0]),a[1].asInt(),false),c));});
         r.method("Cloud","cleanup_prefix",List.of("string","int","bool"),"Rows",(c,s,a)->{var v=session(s);return Value.object("Rows",new Rows(LedgerCleanup.execute(v.backend,v.cost.path().toAbsolutePath().getParent(),text(a[0]),a[1].asInt(),a[2].asBool()),c));});

@@ -9773,3 +9773,5 @@ lmcode-java source: https://github.com/lmctl-ai/lmcode-java/tree/v0.1.1
 Local verification may also use GraalVM Community Edition 25.4.4.1.1.
 Its corresponding source is https://github.com/oracle/graal/tree/95ce1499c8c96ab7d5a6697c5b4bf42160f3b68b
 and https://github.com/graalvm/labs-openjdk/tree/391a5a739cb60fcc35927c6afecf6d9ac00f391d .
+
+The read-only S3 path diagnostic additionally uses the AWS SDK for Java v2 kms module, version 2.57.3, under the same Apache-2.0 SDK license and notices above. It uses the existing URLConnection HTTP transport; Apache/Netty default transports remain excluded.

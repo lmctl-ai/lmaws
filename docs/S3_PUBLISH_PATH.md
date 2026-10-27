@@ -1,0 +1,21 @@
+# Read-only S3 publishing-path diagnostics
+
+`Cloud.s3_publish_path(bucket, key, inlinePolicyJson) -> Rows` examines upload authorization evidence without attempting an upload, HEADing/reading an object, creating a test object, or mutating a policy. Real calls require the `default` profile; other profiles are refused before dispatch. Demo mode returns unknown metadata, not production conclusions.
+
+The host reads STS caller identity, bucket policy, default encryption, Object Ownership and bucket Block Public Access. SSE-KMS defaults additionally use `kms:DescribeKey` and `kms:GetKeyPolicy`. It does not call IAM's live simulator, GenerateDataKey, Decrypt or CloudFront. Session-policy evaluation is local.
+
+Each row contains a `layer`, `status` and evidence fields. `allowed` is scoped to the named layer and the stated plain private PUT assumptions; it is **never proof that PUT succeeds**. An applicable, understood explicit Deny is `denied: ...`. Missing permissions, unsupported conditions and absent request context remain `unknown: needs ...`.
+
+- Caller identity is evidence of the principal, not of its permissions. Issuer identity policies, attached managed session policies, SCPs and grants are not fetched or inferred. The supplied inline document is not proof of the issued token's session policy.
+- Metadata calls use ExpectedBucketOwner when STS supplies the caller account. A successful read establishes that ownership context for the supplied inline S3 probe; STS alone does not. An expected-owner mismatch can also cause 403.
+- Bucket-policy rows list Deny/PutObject statements, principals, conditions and condition keys. Known HTTPS and PrincipalArn conditions can be evaluated; unobserved SourceVpc, request headers, tags or unsupported operators remain unknown. No live request-path context is invented.
+- SSE-S3 has no KMS prerequisite. SSE-KMS rows distinguish key-policy readability from effective authorization, and simulate inline GenerateDataKey/Decrypt with CallerAccount, regional S3 ViaService and the correct encryption context. Bucket Keys use the bucket ARN; otherwise the object ARN is used. Key IDs and account IDs are masked.
+- BucketOwnerEnforced disables ACLs; use an ACL-free PUT. Other ownership modes do not automatically require PutObjectAcl for every PUT. ACL headers, tags, sync/listing and multipart recovery can introduce PutObjectAcl, PutObjectTagging, ListBucket, ListBucketMultipartUploads, ListMultipartUploadParts and AbortMultipartUpload requirements. Bucket BPA flags alone are not a same-account private-PUT authorization verdict; account-level BPA is not inspected.
+
+Read failures name the IAM permission, which can differ from the API operation name: `s3:GetBucketPolicy`, `s3:GetEncryptionConfiguration`, `s3:GetOwnershipControls`, `s3:GetPublicAccessBlock`, `sts:GetCallerIdentity`, `kms:DescribeKey` or `kms:GetKeyPolicy`. A readable key policy still requires separate effective principal/grant evaluation. An unreadable layer is not guessed to allow or deny the upload.
+
+To diagnose an actual denial, preserve its exact action, masked resource/caller ARN, error code/message, request ID, timestamp/region and uploader options. In particular, distinguish **explicit deny** from **no session policy allows**. Never collect credentials, Authorization headers, session tokens or presigned query strings.
+
+Offline verification: `scripts/test-s3-publish-path.py` uses a loopback SDK endpoint accepting only the read operations above; `S3PathPoliciesChecks` tests policy condition/principal edge cases without clients. The regular local gate runs both. All public fixtures are synthetic. Account-specific target selection, proposals and live evidence belong in private operator scripts, not this repository.
+
+Sources: [required S3 permissions](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-with-s3-policy-actions.html), [bucket-policy reads](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicy.html), [Object Ownership](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-ownership-error-responses.html), [Bucket Keys](https://docs.aws.amazon.com/AmazonS3/latest/userguide/configuring-bucket-key.html), [KMS key policies](https://docs.aws.amazon.com/kms/latest/developerguide/key-policies.html).

@@ -45,6 +45,8 @@ timeout 180 python3 scripts/test-upload-transport.py
 timeout 30 java -cp target/lmaws-0.1.20.jar ai.lmctl.lmaws.PolicySimulationChecks
 timeout 180 python3 scripts/test-s3-upload-check.py
 timeout 300 python3 scripts/test-fleet-spec.py
+timeout 30 java -cp target/lmaws-0.1.20.jar ai.lmctl.lmaws.S3PathPoliciesChecks
+timeout 300 python3 scripts/test-s3-publish-path.py
 if [[ "${LMAWS_NATIVE:-0}" == 1 ]]; then
  exe=target/lmaws; [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]] && exe=target/lmaws.exe
  export PATH="$PWD/target:$PATH"

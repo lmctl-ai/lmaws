@@ -59,4 +59,6 @@ IAM role API. The current live Lambda campaign is recorded in lmweblab. The
 snapshot's binaries predate the new settlement fixes; inspect `--dsl-signatures`
 for later main additions.
 
-Verified current source schema: 204 host signature lines including context, 276 including 72 standard declarations. The current settlement API is newer than the v0.1.18 artifact evidence; use --dsl-signatures on the actual binary.
+Verified current source schema: 216 host signature lines including context, 288 including 72 standard declarations. The current settlement API is newer than the v0.1.18 artifact evidence; use --dsl-signatures on the actual binary.
+
+`S3PublishPath` adds the default-profile-only `Cloud.s3_publish_path` read diagnostic. `S3PathPolicies` evaluates bounded known context locally; it never invokes live IAM simulation. KMS metadata uses the pinned SDK module with the existing URLConnection transport. Unknown issuer/SCP/grant or request context stays unknown. See docs/S3_PUBLISH_PATH.md; public fixtures are synthetic and account-specific scripts/evidence stay private.

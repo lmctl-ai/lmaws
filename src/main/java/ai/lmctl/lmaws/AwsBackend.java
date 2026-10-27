@@ -75,6 +75,11 @@ import software.amazon.awssdk.services.route53.Route53Client;
 import software.amazon.awssdk.services.route53.model.ListHostedZonesRequest;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.Bucket;
+import software.amazon.awssdk.services.s3.model.GetBucketPolicyRequest;
+import software.amazon.awssdk.services.s3.model.GetBucketEncryptionRequest;
+import software.amazon.awssdk.services.s3.model.GetBucketOwnershipControlsRequest;
+import software.amazon.awssdk.services.s3.model.GetPublicAccessBlockRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.DeleteBucketRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
@@ -113,6 +118,9 @@ import software.amazon.awssdk.services.sns.model.NotFoundException;
 import software.amazon.awssdk.services.ssm.model.ParameterAlreadyExistsException;
 import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.awssdk.services.sts.model.GetCallerIdentityRequest;
+import software.amazon.awssdk.services.kms.KmsClient;
+import software.amazon.awssdk.services.kms.model.DescribeKeyRequest;
+import software.amazon.awssdk.services.kms.model.GetKeyPolicyRequest;
 
 /** Narrow, safe AWS facade used by the lmscript host. Values and credentials are never projected. */
 public final class AwsBackend implements AutoCloseable {
@@ -140,7 +148,7 @@ public final class AwsBackend implements AutoCloseable {
     private S3Client s3; private SqsClient sqs; private SnsClient sns; private SsmClient ssm; private DynamoDbClient ddb;
     private CloudWatchLogsClient logs; private CloudWatchClient cloudwatch; private Ec2Client ec2; private LambdaClient lambda;
     private EventBridgeClient events;
-    private Route53Client route53; private SecretsManagerClient secrets; private EcsClient ecs; private IamClient iam; private StsClient sts; private CloudFormationClient cloudformation;
+    private Route53Client route53; private KmsClient kms; private SecretsManagerClient secrets; private EcsClient ecs; private IamClient iam; private StsClient sts; private CloudFormationClient cloudformation;
 
     public AwsBackend(String region, boolean demo) {
         this(region, demo, null);
@@ -1034,6 +1042,10 @@ public final class AwsBackend implements AutoCloseable {
     @Override public void close() { for (AutoCloseable c : clients) try { c.close(); } catch (Exception ignored) { } }
 
     private StsClient sts() { return sts == null ? sts = register(base(StsClient.builder()).build()) : sts; }
+    List<Map<String,String>> s3PublishPath(String bucket,String key,String inlinePolicy) { if(!"default".equals(profileName)||!"default".equals(activeProfile())) throw new SecurityException("S3 publish-path reads require the default profile"); return S3PublishPath.inspect(this,bucket,key,inlinePolicy); }
+    S3Client s3Client() { return s3(); }
+    software.amazon.awssdk.services.sts.model.GetCallerIdentityResponse publishPathIdentity() { return sts().getCallerIdentity(GetCallerIdentityRequest.builder().build()); }
+    KmsClient kmsClient() { if(kms==null) kms=register(base(KmsClient.builder()).build()); return kms; }
     private S3Client s3() { if (s3 == null) { var b = S3Client.builder(); if (endpoint != null) b.forcePathStyle(true); s3 = register(base(b).build()); } return s3; }
     private S3Client regionalBucket(String selected){if(endpoint!=null||selected.equals(regionName))return s3();return regionalBuckets.computeIfAbsent(selected,r->register(base(S3Client.builder()).region(Region.of(r)).build()));}
     private SqsClient sqs() { return sqs == null ? sqs = register(base(SqsClient.builder()).build()) : sqs; }
