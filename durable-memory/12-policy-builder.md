@@ -53,7 +53,7 @@ and 12 `Cloud` helper methods.
 ## Dogfood and recipes
 
 `recipes/session_policy.lms` generates the 22-statement `lmaws_session` managed
-policy (`5,109` compact chars) byte-for-byte identically (`+0 ~0 -0 =22`,
+policy (`5,290` compact chars) byte-for-byte identically (`+0 ~0 -0 =23`,
 `byte_identical=true`) to `~/.aws/session-tools/tasks/iam-snapshots/lmaws-managed-policy.json`
 and `grant_session_policy.lms --live --profile admin` confirms `0` diff against
 the live default policy version. 27 recipes in `recipes/lib/policy_builder.lms`

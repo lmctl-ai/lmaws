@@ -62,14 +62,14 @@ public final class PolicyBuilderChecks {
         String builtCompact = session.compactJson();
         IamPolicies.LintResult lint = IamPolicies.lint(builtPretty);
         require(lint.valid(), "Built lmaws_session policy must pass lint: " + lint.findings());
-        require(lint.statementCount() == 22, "Built lmaws_session must have 22 statements, got " + lint.statementCount());
+        require(lint.statementCount() == 23, "Built lmaws_session must have 23 statements, got " + lint.statementCount());
 
         String baseline = new PolicyBuilder("lmaws_session")
             .lmawsSessionPolicy("lmaws", "lmaws_test", "example.com", "us-east-1", "t4g.nano,t3.nano", 8)
             .json();
         IamPolicies.DiffResult diff = IamPolicies.diff(baseline, builtPretty);
-        require(!diff.changed() && diff.unchangedCount() == 22,
-            "Built lmaws_session must match 22/22: " + diff.summary() + "\n" + diff.formattedLines());
+        require(!diff.changed() && diff.unchangedCount() == 23,
+            "Built lmaws_session must match 23/23: " + diff.summary() + "\n" + diff.formattedLines());
         require(builtCompact.equals(IamPolicies.compactJson(PolicyAnalyzer.parseDoc(baseline))),
             "Built lmaws_session compact JSON must match baseline byte-for-byte");
 
@@ -84,8 +84,8 @@ public final class PolicyBuilderChecks {
                 PolicyBuilder fromBuilder = new PolicyBuilder("lmaws_session")
                     .lmawsSessionPolicy("lmaws", "lmaws_test", snapshotDomain, "us-east-1", "t4g.nano,t3.nano", 8);
                 IamPolicies.DiffResult snapDiff = IamPolicies.diff(rawSnapshot, fromBuilder.json());
-                require(!snapDiff.changed() && snapDiff.unchangedCount() == 22,
-                    "Built policy must match local lmaws-managed-policy.json 22/22: " + snapDiff.summary());
+                require(!snapDiff.changed() && snapDiff.unchangedCount() == 23,
+                    "Built policy must match local lmaws-managed-policy.json 23/23: " + snapDiff.summary());
                 require(fromBuilder.compactJson().equals(IamPolicies.compactJson(PolicyAnalyzer.parseDoc(rawSnapshot))),
                     "Built policy compact JSON must match local lmaws-managed-policy.json byte-for-byte");
             } catch (java.io.IOException ex) {
@@ -145,7 +145,7 @@ public final class PolicyBuilderChecks {
         PolicyBuilder session = new PolicyBuilder("lmaws_session")
             .lmawsSessionPolicy("lmaws", "lmaws_test", "example.com", "us-east-1", "t4g.nano,t3.nano", 8);
         List<Map<String, String>> explained = session.explain();
-        require(explained.size() == 23, "explain returns 22 statements + 1 POLICY_POSTURE summary");
+        require(explained.size() == 24, "explain returns 23 statements + 1 POLICY_POSTURE summary");
         Map<String, String> posture = explained.get(explained.size() - 1);
         require("POLICY_POSTURE".equals(posture.get("sid")), "last row is POLICY_POSTURE");
         require(posture.get("plain_english").contains("region_lock=true"), "posture detects region_lock");
@@ -193,7 +193,7 @@ public final class PolicyBuilderChecks {
         }
 
         Map<String, String> imported = PolicyAnalyzer.importJson(session.json());
-        require("22".equals(imported.get("statement_count")), "importJson parses all 22 statements");
+        require("23".equals(imported.get("statement_count")), "importJson parses all 23 statements");
         require(imported.get("builder_program").contains(".require_tag_on_create("), "importJson recognizes require_tag_on_create");
         require(imported.get("builder_program").contains(".only_tagged("), "importJson recognizes only_tagged");
     }

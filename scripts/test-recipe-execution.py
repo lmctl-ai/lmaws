@@ -245,7 +245,7 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertEqual(sp_res.returncode, 0, sp_res.stdout + sp_res.stderr)
         sp_report = json.loads(sp_out.with_suffix(".json").read_text(encoding="utf-8"))
         self.assertTrue(sp_report["lint_valid"])
-        self.assertEqual(sp_report["statement_count"], 22)
+        self.assertEqual(sp_report["statement_count"], 23)
         self.assertTrue(sp_report["fits_managed"])
 
         # Compare generated policy against itself via --file -> 22 unchanged, byte_identical=True
@@ -258,7 +258,7 @@ class RecipeExecutionTests(unittest.TestCase):
         )
         self.assertEqual(sp_diff_res.returncode, 0, sp_diff_res.stdout + sp_diff_res.stderr)
         sp_diff_report = json.loads(sp_diff_out.with_suffix(".json").read_text(encoding="utf-8"))
-        self.assertEqual(sp_diff_report["snapshot_diff"]["unchanged_count"], 22)
+        self.assertEqual(sp_diff_report["snapshot_diff"]["unchanged_count"], 23)
         self.assertTrue(sp_diff_report["snapshot_diff"]["byte_identical"])
 
         fit_out = self.work / "fit_inline"

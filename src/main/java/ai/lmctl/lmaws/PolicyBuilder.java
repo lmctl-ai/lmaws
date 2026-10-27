@@ -518,6 +518,8 @@ public final class PolicyBuilder {
         spotNanoDenyBlock(tagKey, typesCsv, maxGib);
         regionLock("OnlyUsEast1", region, "sts:GetCallerIdentity,cloudfront:*,route53:*");
         lambdaDeployerByName(prefix);
+        allowCond("LambdaPassRole", "iam:PassRole", "arn:aws:iam::*:role/" + prefix + "_*",
+            "{\"StringEquals\":{\"iam:PassedToService\":\"lambda.amazonaws.com\"}}");
         return this;
     }
 
