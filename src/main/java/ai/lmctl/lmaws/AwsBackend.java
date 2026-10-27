@@ -922,6 +922,7 @@ public final class AwsBackend implements AutoCloseable {
 
     public Map<String, String> iamPolicyPut(String policyName, String documentJson, boolean apply) {
         IamPolicies.requireValidPolicyName(policyName);
+        IamPolicies.requirePassRolePolicyContext(policyName,documentJson);
         IamPolicies.LintResult lint = IamPolicies.lint(documentJson);
         System.out.println(lint.summaryLine());
         lint.requireValid();

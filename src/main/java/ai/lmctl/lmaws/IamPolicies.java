@@ -86,6 +86,8 @@ public final class IamPolicies {
         "secretsmanager:"
     );
 
+    private static final String LAMBDA_PASS_ROLE = "iam:passrole";
+
     private IamPolicies() {}
 
     public static void requireValidPolicyName(String policyName) {
@@ -143,6 +145,37 @@ public final class IamPolicies {
             return URLDecoder.decode(trimmed.replace("+", "%2B"), StandardCharsets.UTF_8);
         }
         return rawDocument;
+    }
+
+    /**
+     * PassRole is a session-policy exception, never an inline/customer role
+     * policy capability. Callers use this before linting a policy document so
+     * role-context names cannot accidentally acquire it.
+     */
+    @SuppressWarnings("unchecked")
+    public static void requirePassRolePolicyContext(String policyName, String documentJson) {
+        if (documentJson == null || documentJson.isBlank()) return;
+        final Object parsed;
+        try {
+            parsed = Json.parse(decodeAwsDocument(documentJson));
+        } catch (RuntimeException ignored) {
+            return; // lint owns malformed-document diagnostics
+        }
+        if (!(parsed instanceof Map<?, ?> doc)) return;
+        Object statements = doc.get("Statement");
+        if (!(statements instanceof List<?> list)) return;
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> raw)) continue;
+            Object actions = raw.get("Action");
+            for (String action : stringList(actions)) {
+                if (LAMBDA_PASS_ROLE.equals(action.trim().toLowerCase(Locale.ROOT))
+                        && !"lmaws_session".equals(policyName)) {
+                    throw new IllegalArgumentException(
+                        "iam:PassRole is permitted only in the lmaws_session policy; refusing policy '"
+                            + Jsons.mask(String.valueOf(policyName)) + "'");
+                }
+            }
+        }
     }
 
     public static String compactJson(Object value) {
@@ -441,6 +474,7 @@ public final class IamPolicies {
             }
 
             List<String> stmtFindings = new ArrayList<>();
+            boolean scopedIamRead = isScopedIamRead(actions, resources);
             for (String action : actions) {
                 String lower = action.trim().toLowerCase(Locale.ROOT);
                 if (lower.equals("*") || lower.equals("*:*")) {
@@ -449,6 +483,14 @@ public final class IamPolicies {
                 }
                 if (lower.equals("sts:*")) {
                     stmtFindings.add("statement " + sid + ": refuses wildcard STS action '" + action + "'");
+                    continue;
+                }
+                // Exactly one IAM action is safe for the session policy: passing
+                // the pre-built lmaws_* execution role to Lambda under the exact
+                // service condition checked below. Every other iam: action remains
+                // forbidden, including role creation and policy administration.
+                if ((LAMBDA_PASS_ROLE.equals(lower) && isExactLambdaPassRole(stmtMap, actions, resources))
+                        || (lower.startsWith("iam:") && scopedIamRead)) {
                     continue;
                 }
                 for (String forbiddenPrefix : FORBIDDEN_ACTION_PREFIXES) {
@@ -461,7 +503,8 @@ public final class IamPolicies {
 
             boolean hasStarResource = resources.stream().anyMatch(r -> "*".equals(r.trim()));
             boolean allInReadAllowlist = actions.stream()
-                .allMatch(a -> READ_INVENTORY_ALLOWLIST.contains(a.trim().toLowerCase(Locale.ROOT)));
+                .allMatch(IamPolicies::isInventoryReadAction)
+                && actions.stream().noneMatch(a -> a.trim().toLowerCase(Locale.ROOT).startsWith("iam:"));
             boolean isScopedSsmPublicRead = actions.stream()
                 .allMatch(a -> "ssm:getparameter".equalsIgnoreCase(a.trim())
                     || "ssm:getparameters".equalsIgnoreCase(a.trim())
@@ -487,7 +530,7 @@ public final class IamPolicies {
                 continue;
             }
 
-            if (allInReadAllowlist || isScopedSsmPublicRead) {
+            if (allInReadAllowlist || isScopedSsmPublicRead || scopedIamRead) {
                 if (stmtFindings.isEmpty()) {
                     allowRead++;
                     statementChecks.add(new StatementCheck(sid, effect, "allow_read", actions.size(), resources.size(), true, "scoped read/inventory"));
@@ -539,6 +582,9 @@ public final class IamPolicies {
             Object conditionObj,
             boolean hasEc2RunGuardrails,
             boolean hasEc2SgGuardrail) {
+        if (isExactLambdaPassRoleForScope(actions, resources, conditionObj)) {
+            return "scoped iam:PassRole to lmaws_* Lambda roles";
+        }
         // 1. Every resource ARN explicitly scoped to lmaws-* or lmaws_*
         boolean allResourcesNamedLmaws = !resources.isEmpty() && resources.stream().allMatch(IamPolicies::isResourceNamedLmaws);
         if (allResourcesNamedLmaws) {
@@ -594,6 +640,50 @@ public final class IamPolicies {
         }
 
         return null;
+    }
+
+    private static boolean isInventoryReadAction(String action) {
+        String a = action == null ? "" : action.trim().toLowerCase(Locale.ROOT);
+        if (READ_INVENTORY_ALLOWLIST.contains(a)) return true;
+        return a.startsWith("events:list") || a.startsWith("lambda:list")
+            || a.startsWith("acm:list") || a.startsWith("acm:describe")
+            || a.startsWith("route53:get");
+    }
+
+    private static boolean isScopedIamRead(List<String> actions, List<String> resources) {
+        if (actions.isEmpty() || resources.isEmpty()) return false;
+        for (String action : actions) {
+            String a = action.trim().toLowerCase(Locale.ROOT);
+            String prefix = switch (a) {
+                case "iam:getrole", "iam:listattachedrolepolicies" -> "role";
+                case "iam:getpolicy" -> "policy";
+                default -> null;
+            };
+            if (prefix == null || resources.stream().anyMatch(r -> !r.trim().matches("arn:aws:iam::(?:[0-9]{12}|\\*):"+prefix+"/lmaws_[a-z0-9_*?-]+"))) return false;
+        }
+        return true;
+    }
+
+    private static boolean isExactLambdaPassRole(Map<String, Object> stmt, List<String> actions, List<String> resources) {
+        return actions.size() == 1 && resources.size() == 1
+            && LAMBDA_PASS_ROLE.equals(actions.get(0).trim().toLowerCase(Locale.ROOT))
+            && isExactLambdaPassRoleCondition(stmt.get("Condition"))
+            && "arn:aws:iam::*:role/lmaws_*".equals(resources.get(0).trim());
+    }
+
+    private static boolean isExactLambdaPassRoleForScope(List<String> actions, List<String> resources, Object condition) {
+        return actions.size() == 1 && resources.size() == 1
+            && LAMBDA_PASS_ROLE.equals(actions.get(0).trim().toLowerCase(Locale.ROOT))
+            && "arn:aws:iam::*:role/lmaws_*".equals(resources.get(0).trim())
+            && isExactLambdaPassRoleCondition(condition);
+    }
+
+    private static boolean isExactLambdaPassRoleCondition(Object condition) {
+        if (!(condition instanceof Map<?, ?> operators) || operators.size() != 1) return false;
+        Object equals = operators.get("StringEquals");
+        if (!(equals instanceof Map<?, ?> values) || values.size() != 1) return false;
+        Object service = values.get("iam:PassedToService");
+        return service instanceof String s && "lambda.amazonaws.com".equals(s);
     }
 
     private static boolean isResourceNamedLmaws(String resource) {

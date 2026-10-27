@@ -11,6 +11,8 @@ public final class IamPolicyChecks {
         checkPolicyNamePrefix();
         checkLinterAcceptsValidPolicies();
         checkLinterRefusesForbiddenAndUnscopedPolicies();
+        checkLambdaPassRoleAndScopedReads();
+        checkPassRolePolicyContext();
         checkStatementLevelDiffAndDecoding();
         checkDemoBackendLifecycleAndRotation();
         System.out.println("PASS IAM managed policy lint, diff, 4-way profile/mutation guard and version rotation checks");
@@ -202,6 +204,53 @@ public final class IamPolicyChecks {
             }
             """);
         require(!unscopedWrite.valid(), "Unscoped write action must be refused by lint");
+    }
+
+    private static void checkLambdaPassRoleAndScopedReads() {
+        String passRole = """
+            {"Version":"2012-10-17","Statement":[{"Sid":"LambdaPassRole","Effect":"Allow","Action":"iam:PassRole","Resource":"arn:aws:iam::*:role/lmaws_*","Condition":{"StringEquals":{"iam:PassedToService":"lambda.amazonaws.com"}}}]}
+            """;
+        require(IamPolicies.lint(passRole).valid(), "the exact Lambda PassRole exception must pass");
+        String[] rejected = {
+            passRole.replace("lambda.amazonaws.com", "ec2.amazonaws.com"),
+            passRole.replace(",\"Condition\":{\"StringEquals\":{\"iam:PassedToService\":\"lambda.amazonaws.com\"}}", ""),
+            passRole.replace("arn:aws:iam::*:role/lmaws_*", "arn:aws:iam::*:role/*"),
+            passRole.replace("\"Action\":\"iam:PassRole\"", "\"Action\":[\"iam:PassRole\",\"iam:GetRole\"]"),
+            passRole.replace("\"StringEquals\":{\"iam:PassedToService\":\"lambda.amazonaws.com\"}", "\"StringEquals\":{\"iam:PassedToService\":[\"lambda.amazonaws.com\"]}"),
+            passRole.replace("\"Condition\":{\"StringEquals\":{\"iam:PassedToService\":\"lambda.amazonaws.com\"}}", "\"Condition\":{\"StringEquals\":{\"iam:PassedToService\":\"lambda.amazonaws.com\"},\"StringLike\":{\"aws:PrincipalArn\":\"*\"}}")
+        };
+        for (String doc : rejected) require(!IamPolicies.lint(doc).valid(), "unsafe PassRole variant must fail: " + doc);
+
+        String reads = """
+            {"Version":"2012-10-17","Statement":[
+              {"Sid":"Events","Effect":"Allow","Action":"events:ListRules","Resource":"*"},
+              {"Sid":"Lambda","Effect":"Allow","Action":"lambda:ListFunctions","Resource":"*"},
+              {"Sid":"Acm","Effect":"Allow","Action":["acm:ListCertificates","acm:DescribeCertificate"],"Resource":"*"},
+              {"Sid":"Route","Effect":"Allow","Action":"route53:GetChange","Resource":"*"},
+              {"Sid":"RoleRead","Effect":"Allow","Action":["iam:GetRole","iam:ListAttachedRolePolicies"],"Resource":"arn:aws:iam::*:role/lmaws_*"},
+              {"Sid":"PolicyRead","Effect":"Allow","Action":"iam:GetPolicy","Resource":"arn:aws:iam::*:policy/lmaws_*"}
+            ]}
+            """;
+        require(IamPolicies.lint(reads).valid(), "scoped safe inventory reads must pass");
+        String[] badReads = {
+            reads.replace("arn:aws:iam::*:role/lmaws_*", "*"),
+            reads.replace("arn:aws:iam::*:policy/lmaws_*", "arn:aws:iam::*:policy/other_*"),
+            reads.replace("iam:GetPolicy", "iam:PutRolePolicy")
+        };
+        for (String doc : badReads) require(!IamPolicies.lint(doc).valid(), "unsafe scoped IAM read must fail");
+    }
+
+    private static void checkPassRolePolicyContext() {
+        String passRole = """
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"iam:PassRole","Resource":"arn:aws:iam::*:role/lmaws_*","Condition":{"StringEquals":{"iam:PassedToService":"lambda.amazonaws.com"}}}]}
+            """;
+        IamPolicies.requirePassRolePolicyContext("lmaws_session", passRole);
+        expectThrows(IllegalArgumentException.class, "only in the lmaws_session policy",
+            () -> IamPolicies.requirePassRolePolicyContext("lmaws_lambda_policy", passRole));
+        expectThrows(IllegalArgumentException.class, "only in the lmaws_session policy",
+            () -> IamPolicies.requirePassRolePolicyContext("lmaws_lambda_exec", passRole));
+        IamPolicies.requirePassRolePolicyContext("lmaws_lambda_policy", "{\"Statement\":[{\"Action\":\"lambda:InvokeFunction\"}]}");
+        IamPolicies.requirePassRolePolicyContext("lmaws_lambda_policy", "{\"Statement\":[{\"Action\":[\"s3:GetObject\",\"lambda:InvokeFunction\"]}]}");
     }
 
     private static void checkStatementLevelDiffAndDecoding() {
