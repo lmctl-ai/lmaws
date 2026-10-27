@@ -45,7 +45,8 @@ final class ServerlessRun implements AutoCloseable {
         if(!Set.of("table","bucket","lambda","event","report","reserve_http","record_http").contains(op))throw new IllegalArgumentException("unknown serverless step");
         if("down".equals(state.get("status")))throw new IllegalStateException("run torn down; choose a new id");
         Map<String,Object> args=Json.object(Json.parse(json));String encoded=Jsons.encodeRaw(args);
-        if("done".equals(state.get("step_"+op))){if(!encoded.equals(state.get("args_"+op)))throw new IllegalArgumentException("configuration changed; choose a new run");return summary();}
+        if(!Set.of("report","reserve_http","record_http").contains(op)&&"done".equals(state.get("step_"+op))){if(!encoded.equals(state.get("args_"+op)))throw new IllegalArgumentException("configuration changed; choose a new run");return summary();}
+        enforceBudget(op,args);
         state.put("intent",op);state.put("intent_"+op,"true");state.put("args_"+op,encoded);persist();
         try {
             switch(op){
@@ -97,7 +98,7 @@ final class ServerlessRun implements AutoCloseable {
             state.put("step_"+op,"done");state.remove("intent");state.put("status","up");persist();return summary();
         }catch(Exception error){try{down();}catch(Exception cleanup){error.addSuppressed(cleanup);}if(error instanceof RuntimeException runtime)throw runtime;throw new IllegalStateException("serverless step failed",error);}
     }
-    synchronized Map<String,String> summary(){var result=new LinkedHashMap<String,String>();for(String k:List.of("run_id","status","table","bucket","lambda_name","lambda_arn","lambda_url","log_group","rule"))result.put(k,state.getOrDefault(k,""));result.put("estimated_cost_usd",backend.isDemo()?"0.00":cost.total().toPlainString());return result;}
+    synchronized Map<String,String> summary(){var result=new LinkedHashMap<String,String>();for(String k:List.of("run_id","status","table","bucket","lambda_name","lambda_arn","lambda_url","log_group","rule","latest_json_body","latest_html_body","table_items"))result.put(k,state.getOrDefault(k,""));result.put("estimated_cost_usd",backend.isDemo()?"0.00":cost.total().toPlainString());return result;}
     synchronized List<Map<String,String>> leftovers(){
         var rows=new ArrayList<Map<String,String>>();
         for(String kind:List.of("table","bucket","lambda_name","log_group","rule"))if(state.containsKey(kind))rows.add(Map.of("kind",kind,"name",state.get(kind),"run_id",run));
@@ -107,7 +108,7 @@ final class ServerlessRun implements AutoCloseable {
         try(var ignored=cost.cleanupScope()){
             var errors=new ArrayList<RuntimeException>();
             cleanup("rule",()->{if(!backend.isDemo())backend.deleteEventRule(state.get("rule"),run);},errors);
-            cleanup("lambda_name",()->{if(!backend.isDemo())backend.deleteLambda(state.get("lambda_arn"),run);state.remove("lambda_arn");state.remove("lambda_url");},errors);
+            cleanup("lambda_name",()->{if(!backend.isDemo()){backend.deleteLambdaFunctionUrl(state.get("lambda_arn"),run);backend.deleteLambda(state.get("lambda_arn"),run);}state.remove("lambda_arn");state.remove("lambda_url");},errors);
             cleanup("log_group",()->{backend.deleteLambdaLogGroup(state.get("log_group"),run);state.remove("log_group");},errors);
             cleanup("table",()->{if(!backend.isDemo()&&backend.exists("table",state.get("table"))){if(!backend.owned("table",state.get("table"),run))throw new SecurityException("table tag mismatch");backend.delete("table",state.get("table"));}},errors);
             cleanup("bucket",()->{if(!backend.isDemo()&&backend.exists("bucket",state.get("bucket"))){if(!backend.owned("bucket",state.get("bucket"),run))throw new SecurityException("bucket tag mismatch");backend.emptyServerlessBucket(state.get("bucket"),run);backend.delete("bucket",state.get("bucket"));}},errors);
@@ -116,5 +117,13 @@ final class ServerlessRun implements AutoCloseable {
         }catch(RuntimeException error){throw error;}catch(Exception error){throw new IllegalStateException("cleanup scope failed",error);}
     }
     private void cleanup(String key,Runnable action,List<RuntimeException> errors){if(state.containsKey(key))try{action.run();state.remove(key);persist();}catch(RuntimeException error){errors.add(error);}}
-    public void close(){try{if(lock!=null&&lock.isValid())lock.release();if(channel!=null&&channel.isOpen())channel.close();}catch(java.io.IOException e){throw new IllegalStateException("cannot release serverless state",e);}}
+    private void enforceBudget(String op,Map<String,Object> args){
+        java.math.BigDecimal cap=new java.math.BigDecimal(state.getOrDefault("cost_cap",cost.cap().toPlainString()));
+        java.math.BigDecimal prior=new java.math.BigDecimal(state.getOrDefault("request_cost_prior","0"));
+        java.math.BigDecimal reserved=new java.math.BigDecimal(state.getOrDefault("http_reserved","0"));
+        java.math.BigDecimal estimate=prior.add(cost.total()).add(reserved);
+        if("reserve_http".equals(op)){long req=integer(args,"requests",0),bytes=integer(args,"bytes",0);estimate=estimate.add(java.math.BigDecimal.valueOf(req).multiply(new java.math.BigDecimal("0.000001")).add(java.math.BigDecimal.valueOf(bytes).multiply(new java.math.BigDecimal("0.09")).divide(new java.math.BigDecimal("1073741824"),12,java.math.RoundingMode.CEILING)));}
+        if(estimate.compareTo(cap)>0)throw new CostLedger.BudgetExceeded("serverless scenario cost cap exceeded before "+op);
+    }
+    public void close(){try{state.put("request_cost_prior",cost.total().toPlainString());persist();if(lock!=null&&lock.isValid())lock.release();if(channel!=null&&channel.isOpen())channel.close();}catch(java.io.IOException e){throw new IllegalStateException("cannot release serverless state",e);}}
 }

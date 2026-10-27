@@ -424,15 +424,12 @@ public final class AwsBackend implements AutoCloseable {
         WebStack.requireRun(runId);
         if(demo)return List.of();
         List<Map<String,String>> rows=new ArrayList<>();
-        for(var row:prefixFunctions("lmaws_"+runId+"_"))if(runId.equals(row.get("run_id")))rows.add(row);
+        for(var row:prefixFunctions("lmaws_"+runId+"_"))if(runId.equals(row.get("run_id"))){rows.add(row);try{rows.add(lambdaUrlRecord(row.get("id"),runId));}catch(software.amazon.awssdk.services.lambda.model.ResourceNotFoundException ignored){}}
         for(var row:prefixTables("lmaws_"+runId+"_"))if(runId.equals(row.get("run_id")))rows.add(row);
-        for(var row:prefixLogGroups("lmaws_"+runId+"_"))if(runId.equals(row.get("run_id")))rows.add(row);
+        for(var row:prefixLogGroups("lmaws_"))if(row.getOrDefault("name","").endsWith("_logs_"+runId)&&runId.equals(row.get("run_id")))rows.add(row);
         for(var row:prefixBuckets("lmaws-"+runId+"-"))if(runId.equals(row.get("run_id")))rows.add(row);
         for(var row:prefixEc2Tags("lmaws_"+runId+"_"))if(runId.equals(row.get("run_id")))rows.add(row);
-        String ruleToken=null; do { var page=events().listRules(software.amazon.awssdk.services.eventbridge.model.ListRulesRequest.builder().nextToken(ruleToken).build()); for(var rule:page.rules())if(rule.name()!=null&&rule.name().startsWith("lmaws_"+runId+"_")){
-            var tags=events().listTagsForResource(x->x.resourceARN(rule.arn())).tags();boolean owned=tags.stream().anyMatch(t->"lmaws_test".equals(t.key())&&runId.equals(t.value()));
-            if(owned)rows.add(row("kind","event_rule","id",rule.arn(),"name",rule.name(),"region",regionName,"run_id",runId));
-        } ruleToken=page.nextToken(); } while(ruleToken!=null&&!ruleToken.isBlank());
+        String ruleName="lmaws_"+runId+"_rule"; try { var rule=events().describeRule(x->x.name(ruleName)); var tags=events().listTagsForResource(x->x.resourceARN(rule.arn())).tags();boolean owned=tags.stream().anyMatch(t->"lmaws_test".equals(t.key())&&runId.equals(t.value())); if(owned){rows.add(row("kind","event_rule","id",rule.arn(),"name",rule.name(),"region",regionName,"run_id",runId));for(var target:events().listTargetsByRule(x->x.rule(rule.name())).targets())rows.add(row("kind","event_target","id",target.id(),"name",rule.name(),"target",target.arn(),"region",regionName,"run_id",runId));}} catch(software.amazon.awssdk.services.eventbridge.model.ResourceNotFoundException ignored) { }
         return List.copyOf(rows);
     }
 
@@ -515,12 +512,13 @@ public final class AwsBackend implements AutoCloseable {
     }
     Map<String,String> serverlessReport(String bucket,String table,String runId) {
         requireScenarioWrite();requireRunId(runId);requireName(bucket);requireName(table);
-        if(demo)return row("bucket",bucket,"table",table,"latest_json","true","latest_html","true","table_items","2","run_id",runId);
+        if(demo)return row("bucket",bucket,"table",table,"latest_json_body","{\"ok\":true}","latest_html_body","<html>fixture</html>","table_items","2","run_id",runId);
         if(!owned("bucket",bucket,runId)||!owned("table",table,runId))throw new SecurityException("report resources are not owned by this run");
         var json=s3().getObjectAsBytes(software.amazon.awssdk.services.s3.model.GetObjectRequest.builder().bucket(bucket).key("latest.json").build()).asUtf8String();
         var html=s3().getObjectAsBytes(software.amazon.awssdk.services.s3.model.GetObjectRequest.builder().bucket(bucket).key("latest.html").build()).asUtf8String();
         long items=0;String token=null;do{var response=ddb().scan(software.amazon.awssdk.services.dynamodb.model.ScanRequest.builder().tableName(table).exclusiveStartKey(token==null?null:Map.of("pk",AttributeValue.builder().s(token).build())).select(software.amazon.awssdk.services.dynamodb.model.Select.COUNT).build());items+=response.count()==null?0:response.count();token=response.lastEvaluatedKey()==null?null:response.lastEvaluatedKey().getOrDefault("pk",AttributeValue.builder().s("").build()).s();}while(token!=null&&!token.isBlank());
-        return row("bucket",bucket,"table",table,"latest_json",Boolean.toString(!json.isBlank()),"latest_html",Boolean.toString(!html.isBlank()),"table_items",Long.toString(items),"run_id",runId);
+        if(json.length()>65536||html.length()>65536)throw new IllegalStateException("report body exceeds bounded readback");
+        return row("bucket",bucket,"table",table,"latest_json_body",json,"latest_html_body",html,"table_items",Long.toString(items),"run_id",runId);
     }
     private void requireScenarioWrite() {
         requireWriteEnabled();
@@ -535,6 +533,12 @@ public final class AwsBackend implements AutoCloseable {
         var actual=lambda().getFunction(x->x.functionName(arn));
         if(actual.configuration()==null || !arn.equals(actual.configuration().functionArn()) || actual.tags()==null || !runId.equals(actual.tags().get("lmaws_test")))
             throw new SecurityException("Lambda provider ownership tag mismatch");
+    }
+    Map<String,String> lambdaUrlRecord(String arn,String runId) {
+        requireScenarioWrite();requireOwnedLambda(arn,runId);var cfg=lambda().getFunctionUrlConfig(x->x.functionName(arn));return row("kind","function_url","id",arn,"url",cfg.functionUrl(),"auth",cfg.authTypeAsString(),"run_id",runId);
+    }
+    void deleteLambdaFunctionUrl(String arn,String runId) {
+        requireScenarioWrite();requireOwnedLambda(arn,runId);try{lambda().deleteFunctionUrlConfig(x->x.functionName(arn));}catch(software.amazon.awssdk.services.lambda.model.ResourceNotFoundException ignored){}
     }
     private String requireOwnedEvent(String name,String runId) {
         requireRunId(runId);requireName(name);
@@ -573,8 +577,7 @@ public final class AwsBackend implements AutoCloseable {
                 if(!runId.equals(tags.get("lmaws_test"))) throw new SecurityException("Lambda log group exists without this run tag");
                 return;
             }
-            logs().createLogGroup(x->x.logGroupName(logGroup));
-            logs().tagLogGroup(x->x.logGroupName(logGroup).tags(Map.of("lmaws_test",runId)));
+            logs().createLogGroup(x->x.logGroupName(logGroup).tags(Map.of("lmaws_test",runId)));
         } catch (software.amazon.awssdk.services.cloudwatchlogs.model.ResourceAlreadyExistsException e) {
             var tags=logs().listTagsLogGroup(x->x.logGroupName(logGroup)).tags();
             if(!runId.equals(tags.get("lmaws_test"))) throw new SecurityException("Lambda log group race has foreign ownership");
@@ -586,7 +589,7 @@ public final class AwsBackend implements AutoCloseable {
         if(demo)return;
         var tags=logs().listTagsLogGroup(x->x.logGroupName(logGroup)).tags();
         if(!runId.equals(tags.get("lmaws_test"))) throw new SecurityException("refusing foreign Lambda log group");
-        logs().deleteLogGroup(x->x.logGroupName(logGroup));
+        try{logs().deleteLogGroup(x->x.logGroupName(logGroup));}catch(software.amazon.awssdk.services.cloudwatchlogs.model.ResourceNotFoundException ignored){}
     }
     Map<String,String> waitLambdaActive(String arn,String runId,int seconds) {
         if(seconds<1||seconds>120)throw new IllegalArgumentException("Lambda Active wait must be 1..120 seconds");

@@ -13,6 +13,8 @@ public final class ServerlessChecks {
         try(var backend=new AwsBackend("us-east-1",true,cost)){
             try(var run=new ServerlessRun(backend,cost,"cafe03","example.com",state.toString())){
                 run.step("table","{}");run.step("bucket","{}");run.step("lambda",config);run.step("event","{}");
+                var report=run.step("report","{}");if(!report.get("latest_json_body").contains("ok")||!"2".equals(report.get("table_items")))throw new AssertionError("report readback");
+                run.step("reserve_http","{\"requests\":10,\"bytes\":1024}");run.step("record_http","{\"requests\":2,\"bytes\":100}");
                 if(run.leftovers().size()!=5)throw new AssertionError("expected five simulated resource receipts including custom logs");
             }
             try(var run=new ServerlessRun(backend,cost,"cafe03","example.com",state.toString())){
