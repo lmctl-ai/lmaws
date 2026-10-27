@@ -40,4 +40,4 @@ Canonical external records: [USER_TEST](../docs/USER_TEST.md),
 [current comparison campaign](../evidence/comparison-campaign-v013.json),
 [provider findings](../compare/PROVIDER_TEST.md).
 Superseded release/candidate notes and evidence are available in Git history.
-- [../docs/LMSYNC_DESIGN.md](../docs/LMSYNC_DESIGN.md): v2/addendum-2 local registry, script-owned download/lmcurl, upload/lmaws and SFTP/libssh2 pairings, pipeline, crash recovery and scale benchmarks; [legacy pointer](../SYNC_DESIGN.md).
+- [../docs/LMSYNC_DESIGN.md](../docs/LMSYNC_DESIGN.md): v2 local registry, API-audited existing lmcurl/lmaws/lmssh job pairings, narrow missing-call notes, crash recovery and scale benchmarks; [legacy pointer](../SYNC_DESIGN.md).
