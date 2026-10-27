@@ -148,6 +148,7 @@ public final class WebTransportChecks {
                     () -> seen.put("accepted", true)));
             if (!Boolean.TRUE.equals(seen.get("accepted")))
                 throw new AssertionError("DNS state callback did not run before INSYNC timeout");
+            seen.remove("timeoutChange");
 
             // Scenario 11 shifts the same run-scoped pair repeatedly. Each
             // call must emit two UPSERT records and preserve the callback
