@@ -14,8 +14,15 @@ subprocess.run(['java','-cp',cp,'ai.lmctl.lmaws.ServerlessChecks'],cwd=root,env=
 import json,tempfile,shutil
 with tempfile.TemporaryDirectory(prefix='lmaws-serverless-error-') as directory:
     work=pathlib.Path(directory);state=work/'.lmweblab-local'/'state.json'
-    script=work/'failure.lms';bytecode=work/'failure.dslb'
-    script.write_text('let p=_dsl_ cli="lmaws";\nlet run=aws.demo().serverless_stack("cafe05","example.com",'+json.dumps(str(state))+');let made=run.step("table","{}");check(false);\nend _dsl_\nsavedsl(p,'+json.dumps(str(bytecode))+');\nlet result=system(concat(dsl_cli(p),["--dry-run","--dsl",'+json.dumps(str(bytecode))+']),60000);assert(result.code!=0);\n')
-    subprocess.run([shutil.which('lmscript'),str(script)],cwd=work,env=env,check=True,timeout=90,capture_output=True,text=True)
+    script=work/'failure.lms';bytecode=work/'failure.dslb';schema=work/'schema.json'
+    host=pathlib.Path(env['LMAWS_TEST_HOST']).resolve()
+    runner=['cmd.exe','/c',str(host)] if host.suffix.lower()=='.cmd' else [str(host)]
+    schema.write_bytes(subprocess.check_output(runner+['--dsl-schema','--json'],env=env,timeout=30))
+    execute=runner+['--dry-run','--dsl',bytecode.as_posix()]
+    script.write_text('let p=_dsl_ schema='+json.dumps(schema.as_posix())+';\nlet run=aws.demo().serverless_stack("cafe05","example.com",'+json.dumps(state.as_posix())+');let made=run.step("table","{}");check(false);\nend _dsl_\nsavedsl(p,'+json.dumps(bytecode.as_posix())+');\nlet result=system('+json.dumps(execute)+',60000);assert(result.code!=0);\n',encoding='utf-8')
+    compiler=shutil.which('lmscript.cmd' if os.name=='nt' else 'lmscript')
+    compiler_args=['cmd.exe','/c',compiler] if os.name=='nt' else [compiler]
+    result=subprocess.run(compiler_args+[str(script)],cwd=work,env=env,timeout=90,capture_output=True,text=True)
+    assert result.returncode==0,(result.stdout,result.stderr)
     assert json.loads(state.read_text())['status']=='down','VM failure skipped persistent teardown'
 print('PASS serverless VM-error cleanup through the compiled CLI')
