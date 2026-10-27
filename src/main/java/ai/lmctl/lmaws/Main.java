@@ -62,7 +62,19 @@ public final class Main {
     static String safeError(Throwable e) {
         for(Throwable x=e;x!=null;x=x.getCause())if(x instanceof IllegalStateException && x.getMessage()!=null && x.getMessage().startsWith("estimated cost cap exceeded"))return x.getMessage();
         if(e instanceof NumberFormatException)return "invalid integer argument";
-        if(e instanceof AwsServiceException aws) {String code=aws.awsErrorDetails()==null?"AWS_SERVICE_ERROR":aws.awsErrorDetails().errorCode();if(code==null||!code.matches("[A-Za-z0-9_.-]{1,100}"))code="AWS_SERVICE_ERROR";return "AWS "+code+" (HTTP "+aws.statusCode()+")";}
+        if(e instanceof AwsServiceException aws) {
+            String code=aws.awsErrorDetails()==null?"AWS_SERVICE_ERROR":aws.awsErrorDetails().errorCode();
+            if(code==null||!code.matches("[A-Za-z0-9_.-]{1,100}"))code="AWS_SERVICE_ERROR";
+            if("MalformedPolicyDocument".equals(code)||"MalformedPolicyDocumentException".equals(code)||"MalformedPolicy".equals(code)) {
+                String msg=aws.awsErrorDetails()==null?null:aws.awsErrorDetails().errorMessage();
+                if(msg!=null&&!msg.isBlank()) {
+                    String clean=Jsons.mask(msg.replaceAll("[\\r\\n\\t]+"," ").trim());
+                    if(clean.length()>300)clean=clean.substring(0,300);
+                    return "AWS "+code+" (HTTP "+aws.statusCode()+"): "+clean;
+                }
+            }
+            return "AWS "+code+" (HTTP "+aws.statusCode()+")";
+        }
         if(e instanceof VmException || e instanceof IllegalArgumentException || e instanceof IllegalStateException) return Jsons.mask(e.getMessage()==null?e.getClass().getSimpleName():e.getMessage());
         return "operation failed ("+e.getClass().getSimpleName()+")";
     }

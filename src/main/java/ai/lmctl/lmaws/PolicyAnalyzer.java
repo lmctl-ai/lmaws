@@ -677,7 +677,7 @@ public final class PolicyAnalyzer {
                 conditionKeys.add("aws:ResourceTag/lmaws_test");
                 scopedResource = "lambda:CreateEventSourceMapping".equalsIgnoreCase(action)
                     ? "*"
-                    : "arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:event-source-mapping:*";
+                    : "arn:aws:lambda:us-east-1:*:event-source-mapping:*";
                 failedCondition = "lambda:FunctionArn Like function:lmaws_* && aws:RequestTag/lmaws_test == ?* && aws:TagKeys == [lmaws_test] (create/tag) or aws:ResourceTag/lmaws_test == ?* (get/delete/list-tags)";
                 plainEnglish = "No Allow statement matched " + action + " on " + scopedResource
                     + ": add scoped Lambda event-source-mapping statements (EsmCreate, EsmTag, EsmOwn).";
@@ -687,7 +687,7 @@ public final class PolicyAnalyzer {
                 suggestedStmt.put("Action", "lambda:CreateEventSourceMapping");
                 suggestedStmt.put("Resource", "*");
                 suggestedStmt.put("Condition", Map.of(
-                    "ArnLike", Map.of("lambda:FunctionArn", "arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:function:lmaws_*"),
+                    "ArnLike", Map.of("lambda:FunctionArn", "arn:aws:lambda:us-east-1:*:function:lmaws_*"),
                     "StringLike", Map.of("aws:RequestTag/lmaws_test", "?*"),
                     "ForAllValues:StringEquals", Map.of("aws:TagKeys", List.of("lmaws_test"))
                 ));
@@ -1410,8 +1410,8 @@ public final class PolicyAnalyzer {
             "serverless_lambda",
             List.of("Fn", "LambdaPassRole", "EsmCreate", "EsmTag", "EsmOwn"),
             bytesBySid,
-            "ARN prefix function:lmaws_* & rule/lmaws_*; iam:PassRole on role/lmaws_* with iam:PassedToService == lambda.amazonaws.com; CreateEventSourceMapping on * with lambda:FunctionArn + RequestTag + TagKeys; EsmTag/EsmOwn on event-source-mapping:*",
-            "Lambda functions and EventBridge rules are merged into Fn by lmaws_* name prefix. PassRole is restricted to role/lmaws_* and lambda.amazonaws.com. AWS evaluates CreateEventSourceMapping against Resource: * because the mapping UUID does not exist yet, so EsmCreate binds lambda:FunctionArn to function:lmaws_* and enforces aws:RequestTag/lmaws_test + aws:TagKeys; EsmTag gates creation-time TagResource and EsmOwn gates Get/Delete/ListTags by ResourceTag/lmaws_test.",
+            "ARN prefix function:lmaws_* & rule/lmaws_*; iam:PassRole on role/lmaws_* with iam:PassedToService == lambda.amazonaws.com; CreateEventSourceMapping on * with lambda:FunctionArn + RequestTag + TagKeys; EsmTag/EsmOwn on arn:aws:lambda:us-east-1:*:event-source-mapping:*",
+            "Lambda functions and EventBridge rules are merged into Fn by lmaws_* name prefix. PassRole is restricted to role/lmaws_* and lambda.amazonaws.com. AWS evaluates CreateEventSourceMapping against Resource: * because the mapping UUID does not exist yet, so EsmCreate binds lambda:FunctionArn to arn:aws:lambda:us-east-1:*:function:lmaws_* and enforces aws:RequestTag/lmaws_test + aws:TagKeys. Wildcard account '*' is required because AWS IAM rejects ${aws:PrincipalAccount} inside event-source-mapping ARNs with MalformedPolicyDocument (ESM_ARN_NO_POLICY_VARIABLE). Residual risk: Lambda has no CreateAction condition key, so EsmTag could tag an existing mapping with lmaws_test and enable EsmOwn deletion; lmaws compensates in the host by forbidding standalone lambda:TagResource on event-source-mapping ARNs (tagging only inside CreateEventSourceMapping) and requiring 3-way run-tag ownership (mapping + lmaws_* queue + lmaws_* function) before delete.",
             "User: arn:aws:sts::*:federated-user/lmaws is not authorized to perform: lambda:CreateEventSourceMapping on resource: * because no session policy allows the lambda:CreateEventSourceMapping action",
             "policy.lambda_deployer_by_name(\"lmaws\").pass_role_to_service(\"LambdaPassRole\", \"lmaws\", \"lambda.amazonaws.com\").lambda_event_source_mapping(\"lmaws\", \"lmaws_test\", \"us-east-1\")"
         ));

@@ -318,13 +318,26 @@ public final class IamPolicyChecks {
 
         String esmPolicy = """
             {"Version":"2012-10-17","Statement":[
-              {"Sid":"EsmCreate","Effect":"Allow","Action":"lambda:CreateEventSourceMapping","Resource":"*","Condition":{"ArnLike":{"lambda:FunctionArn":"arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:function:lmaws_*"},"StringLike":{"aws:RequestTag/lmaws_test":"?*"},"ForAllValues:StringEquals":{"aws:TagKeys":["lmaws_test"]}}},
-              {"Sid":"EsmTag","Effect":"Allow","Action":"lambda:TagResource","Resource":"arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:event-source-mapping:*","Condition":{"StringLike":{"aws:RequestTag/lmaws_test":"?*"},"ForAllValues:StringEquals":{"aws:TagKeys":["lmaws_test"]}}},
-              {"Sid":"EsmOwn","Effect":"Allow","Action":["lambda:GetEventSourceMapping","lambda:DeleteEventSourceMapping","lambda:ListTags"],"Resource":"arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:event-source-mapping:*","Condition":{"StringLike":{"aws:ResourceTag/lmaws_test":"?*"}}}
+              {"Sid":"EsmCreate","Effect":"Allow","Action":"lambda:CreateEventSourceMapping","Resource":"*","Condition":{"ArnLike":{"lambda:FunctionArn":"arn:aws:lambda:us-east-1:*:function:lmaws_*"},"StringLike":{"aws:RequestTag/lmaws_test":"?*"},"ForAllValues:StringEquals":{"aws:TagKeys":["lmaws_test"]}}},
+              {"Sid":"EsmTag","Effect":"Allow","Action":"lambda:TagResource","Resource":"arn:aws:lambda:us-east-1:*:event-source-mapping:*","Condition":{"StringLike":{"aws:RequestTag/lmaws_test":"?*"},"ForAllValues:StringEquals":{"aws:TagKeys":["lmaws_test"]}}},
+              {"Sid":"EsmOwn","Effect":"Allow","Action":["lambda:GetEventSourceMapping","lambda:DeleteEventSourceMapping","lambda:ListTags"],"Resource":"arn:aws:lambda:us-east-1:*:event-source-mapping:*","Condition":{"StringLike":{"aws:ResourceTag/lmaws_test":"?*"}}}
             ]}
             """;
         IamPolicies.LintResult esmRes = IamPolicies.lint(esmPolicy);
         require(esmRes.valid(), "Scoped Lambda event-source-mapping statements (EsmCreate, EsmTag, EsmOwn) must pass lint: " + esmRes.findings());
+
+        // Policy variables (${aws:PrincipalAccount}) in event-source-mapping ARNs or FunctionArn condition must fail with ESM_ARN_NO_POLICY_VARIABLE
+        String[] esmPolicyVarViolations = {
+            esmPolicy.replace("arn:aws:lambda:us-east-1:*:event-source-mapping:*", "arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:event-source-mapping:*"),
+            esmPolicy.replace("arn:aws:lambda:us-east-1:*:function:lmaws_*", "arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:function:lmaws_*")
+        };
+        for (String badVar : esmPolicyVarViolations) {
+            IamPolicies.LintResult badVarRes = IamPolicies.lint(badVar);
+            require(!badVarRes.valid()
+                    && badVarRes.findings().toString().contains("ESM_ARN_NO_POLICY_VARIABLE")
+                    && badVarRes.findings().toString().contains("MalformedPolicyDocument"),
+                "Policy variable in event-source-mapping ARN must fail with ESM_ARN_NO_POLICY_VARIABLE: " + badVarRes.findings());
+        }
 
         String[] badEsm = {
             esmPolicy.replace("function:lmaws_*", "function:*"),
@@ -337,6 +350,25 @@ public final class IamPolicyChecks {
             require(!badRes.valid() && badRes.findings().toString().contains("LAMBDA_ESM_CREATE_SCOPED"),
                 "Unsafe EsmCreate variant must fail with LAMBDA_ESM_CREATE_SCOPED: " + badRes.findings());
         }
+
+        // Compensating host guard: standalone lambda:TagResource on event-source-mapping ARN is refused
+        expectThrows(SecurityException.class, "only be tagged at creation inside CreateEventSourceMapping",
+            () -> AwsBackend.requireNoStandaloneEsmTag("arn:aws:lambda:us-east-1:123456789012:event-source-mapping:00000000-0000-0000-0000-000000000001"));
+        AwsBackend.requireNoStandaloneEsmTag("arn:aws:lambda:us-east-1:123456789012:function:lmaws_r1_worker");
+
+        // MalformedPolicyDocument surfaces sanitized AWS errorMessage with account IDs masked
+        var malformedEx = software.amazon.awssdk.services.iam.model.MalformedPolicyDocumentException.builder()
+            .statusCode(400)
+            .awsErrorDetails(software.amazon.awssdk.awscore.exception.AwsErrorDetails.builder()
+                .errorCode("MalformedPolicyDocument")
+                .errorMessage("Resource arn:aws:lambda:us-east-1:123456789012:event-source-mapping:* is invalid in ${aws:PrincipalAccount}")
+                .build())
+            .build();
+        String surfaced = Main.safeError(malformedEx);
+        require(surfaced.startsWith("AWS MalformedPolicyDocument (HTTP 400): ")
+                && surfaced.contains("event-source-mapping:* is invalid")
+                && !surfaced.contains("123456789012"),
+            "Main.safeError must surface sanitized MalformedPolicyDocument message with account ID masked, got: " + surfaced);
     }
 
     private static void checkPassRolePolicyContext() {

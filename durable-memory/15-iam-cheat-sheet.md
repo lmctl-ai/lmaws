@@ -1,7 +1,7 @@
 # IAM cheat sheet for lmaws
 
 Reference guide mapping every `lmaws` capability to its exact IAM statements in
-`lmaws_session` (25 statements, `6,032 / 6,144` compact chars), why each
+`lmaws_session` (25 statements, `5,966 / 6,144` compact chars), why each
 statement is scoped the way it is, the exact `AccessDenied` message when a
 statement or condition is missing, and the minimal `PolicyBuilder` fix.
 
@@ -20,7 +20,7 @@ lmctl examples/recipe_policy_cheat_sheet.lms
 | `named_sandboxes` | `NamedTestResources` (`581`) | ARN name prefix (`lmaws-*` / `lmaws_*`) + `aws:ResourceAccount == ${aws:PrincipalAccount}` | S3, SQS, SNS, DynamoDB, SSM, and CloudWatch Logs support resource-name ARN scoping at creation time. Prefixing names with `lmaws-` or `lmaws_` isolates test resources from non-`lmaws` resources in the account, while `aws:ResourceAccount` blocks cross-account writes. | `User: arn:aws:sts::*:federated-user/lmaws is not authorized to perform: s3:PutObject on resource: "arn:aws:s3:::lmaws-*/obj" because no session policy allows the s3:PutObject action` | `policy.name_prefix("NamedTestResources", "s3,sqs,sns,dynamodb,ssm,logs", "lmaws", "-,_", true)` |
 | `ec2_spot_nano` | `RunTagged` (`184`), `RunRefs` (`212`), `RunTaggedSg` (`144`), `CreateSg` (`163`), `OwnEc2` (`386`), `TagOnCreate` (`207`), `NanoOnly` (`188`), `SmallDisks` (`164`), `SgMustBeTagged` (`178`) | `aws:RequestTag/lmaws_test` on instance/volume/sg creation; `RunRefs` on subnet/image/eni/spot-request; `ec2:ResourceTag/lmaws_test` on `RunTaggedSg` & `OwnEc2`; explicit `Deny` when `ec2:InstanceType != [t4g.nano,t3.nano]` or `ec2:VolumeSize > 8` | EC2 assigns random IDs (`i-*`, `vol-*`, `sg-*`) at creation time so name-prefix ARNs cannot gate EC2 writes. Tag-on-create forces instance, volume, and security-group creation to carry `lmaws_test`; `subnet/*`, `image/*`, `network-interface/*`, and `spot-instances-request/*` are in `RunRefs` because AWS SDK / Terraform only tag the instance and volume on launch; `OwnEc2` restricts mutations/deletes (including `RevokeSecurityGroupEgress`) to tagged resources. | `User: arn:aws:sts::*:federated-user/lmaws is not authorized to perform: ec2:RunInstances on resource: "arn:aws:ec2:*:*:instance/*" with an explicit deny in a session policy` | `policy.spot_nano_sandbox("lmaws_test", "t4g.nano,t3.nano", 8)` |
 | `static_web_stack` | `CfCreate` (`206`), `CfOwn` (`313`), `CfOac` (`236`), `Route53Names` (`334`), `AcmRequest` (`181`), `AcmOwn` (`260`) | `aws:RequestTag/lmaws_test` on `CfCreate` (`CreateDistribution`, `CreateDistributionWithTags`, `TagResource`) & `AcmRequest`; `aws:ResourceTag/lmaws_test` on `CfOwn` & `AcmOwn` (including `acm:GetCertificate`); Route53 `lmaws-*.<domain>` record conditions | ACM certificates and CloudFront distributions use AWS-generated IDs, so creation requires `RequestTag/lmaws_test` and subsequent reads/updates/deletes require `ResourceTag/lmaws_test` (`acm:GetCertificate` stays tag-scoped in `AcmOwn` rather than `*`). Route53 changes are locked to `lmaws-*.<domain>` `A`/`AAAA`/`CNAME`. | `User: arn:aws:sts::*:federated-user/lmaws is not authorized to perform: acm:GetCertificate on resource: "arn:aws:acm:*:*:certificate/*" because no session policy allows the acm:GetCertificate action` | `policy.static_site_stack("lmaws", "lmaws_test", "example.com", "us-east-1")` |
-| `serverless_lambda` | `Fn` (`154`), `LambdaPassRole` (`174`), `EsmCreate` (`316`), `EsmTag` (`269`), `EsmOwn` (`275`) | ARN prefix `function:lmaws_*` & `rule/lmaws_*`; `iam:PassRole` on `arn:aws:iam::*:role/lmaws_*` with `iam:PassedToService == lambda.amazonaws.com`; `CreateEventSourceMapping` on `*` with `lambda:FunctionArn` + `RequestTag` + `TagKeys`; `EsmTag`/`EsmOwn` on `event-source-mapping:*` | Lambda functions and EventBridge rules are merged into `Fn` by `lmaws_*` name prefix. `PassRole` is restricted to `role/lmaws_*` and `lambda.amazonaws.com`. AWS evaluates `CreateEventSourceMapping` against `Resource: "*"` because the mapping UUID does not exist yet, so `EsmCreate` binds `lambda:FunctionArn` to `function:lmaws_*` and enforces `aws:RequestTag/lmaws_test` + `aws:TagKeys`; `EsmTag` gates creation-time `TagResource` and `EsmOwn` gates `GetEventSourceMapping`, `DeleteEventSourceMapping`, and `ListTags` by `aws:ResourceTag/lmaws_test`. | `User: arn:aws:sts::*:federated-user/lmaws is not authorized to perform: lambda:CreateEventSourceMapping on resource: * because no session policy allows the lambda:CreateEventSourceMapping action` | `policy.lambda_deployer_by_name("lmaws").pass_role_to_service("LambdaPassRole", "lmaws", "lambda.amazonaws.com").lambda_event_source_mapping("lmaws", "lmaws_test", "us-east-1")` |
+| `serverless_lambda` | `Fn` (`154`), `LambdaPassRole` (`174`), `EsmCreate` (`294`), `EsmTag` (`247`), `EsmOwn` (`253`) | ARN prefix `function:lmaws_*` & `rule/lmaws_*`; `iam:PassRole` on `arn:aws:iam::*:role/lmaws_*` with `iam:PassedToService == lambda.amazonaws.com`; `CreateEventSourceMapping` on `*` with `lambda:FunctionArn` (`arn:aws:lambda:us-east-1:*:function:lmaws_*`) + `RequestTag` + `TagKeys`; `EsmTag`/`EsmOwn` on `arn:aws:lambda:us-east-1:*:event-source-mapping:*` | Lambda functions and EventBridge rules are merged into `Fn` by `lmaws_*` name prefix. `PassRole` is restricted to `role/lmaws_*` and `lambda.amazonaws.com`. AWS evaluates `CreateEventSourceMapping` against `Resource: "*"` because the mapping UUID does not exist yet, so `EsmCreate` binds `lambda:FunctionArn` to `function:lmaws_*` and enforces `aws:RequestTag/lmaws_test` + `aws:TagKeys`. Wildcard account `*` is required because AWS IAM rejects `${aws:PrincipalAccount}` inside `event-source-mapping` ARNs with `MalformedPolicyDocument` (`ESM_ARN_NO_POLICY_VARIABLE`). **Residual risk**: AWS Lambda has no `CreateAction` condition key, so `EsmTag` allows tagging any event-source-mapping in `us-east-1` with `lmaws_test`, which would then make `EsmOwn` allow deleting it; scripts must only tag mappings they create, and the `lmaws` host compensates by refusing standalone `lambda:TagResource` on `event-source-mapping` ARNs (`AwsBackend.requireNoStandaloneEsmTag`) and verifying 3-way run-tag ownership (mapping + `lmaws_*` queue + `lmaws_*` function) before delete. | `User: arn:aws:sts::*:federated-user/lmaws is not authorized to perform: lambda:CreateEventSourceMapping on resource: * because no session policy allows the lambda:CreateEventSourceMapping action` | `policy.lambda_deployer_by_name("lmaws").pass_role_to_service("LambdaPassRole", "lmaws", "lambda.amazonaws.com").lambda_event_source_mapping("lmaws", "lmaws_test", "us-east-1")` |
 | `region_guardrail` | `OnlyUsEast1` (`220`), `S3OnlyUsEast1` (`157`) | Explicit `Deny` with `NotAction: [sts:GetCallerIdentity, cloudfront:*, route53:*]` when `aws:RequestedRegion != us-east-1`; S3 `s3:LocationConstraint != us-east-1` deny | Prevents stray resources and surprise charges in other AWS regions while exempting global control-plane services (`sts`, `cloudfront`, `route53`) whose endpoints do not use regional `us-east-1` requests, and blocks S3 buckets with a non-`us-east-1` `LocationConstraint`. | `User: arn:aws:sts::*:federated-user/lmaws is not authorized to perform: ec2:DescribeInstances on resource: * with an explicit deny in a session policy` | `policy.region_lock("OnlyUsEast1", "us-east-1", "sts:GetCallerIdentity,cloudfront:*,route53:*")` |
 
 ## 2. EC2 `RunInstances` 6-sub-resource probe expansion (`simulate_run_instances`)
@@ -65,9 +65,13 @@ rule and allow-list (`[rule=..., allowlist=...]`):
 
 - `LAMBDA_ESM_CREATE_SCOPED`: `lambda:CreateEventSourceMapping` allowed on
   `Resource: "*"` only when gated by `ArnLike.lambda:FunctionArn` on
-  `arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:function:lmaws_*`,
+  `arn:aws:lambda:us-east-1:*:function:lmaws_*`,
   `StringLike.aws:RequestTag/lmaws_test == "?*"`, and
   `ForAllValues:StringEquals.aws:TagKeys == ["lmaws_test"]`.
+- `ESM_ARN_NO_POLICY_VARIABLE`: rejects `${aws:PrincipalAccount}` (or any
+  `${...}` policy variable) inside `event-source-mapping` resource ARNs or
+  `lambda:FunctionArn` condition patterns because AWS IAM rejects them with
+  `MalformedPolicyDocument`.
 
 ## 4. Automatic `AccessDenied` -> minimal builder patch in run evidence
 
@@ -79,13 +83,15 @@ mask all account IDs and concrete resource IDs into ARN wildcards (`lmaws-*` /
 `ec2:InstanceType`, `iam:PassedToService`, etc.), and record the minimal fluent
 builder patch in both the `.jsonl` cost ledger (`event: "access_denied_patch"`)
 and the run evidence JSON (`access_denied_count`, `access_denied_patch`,
-`access_denied_patches`).
+`access_denied_patches`). For `MalformedPolicyDocument`, `Main.safeError`
+surfaces the sanitized AWS `errorMessage` (with account IDs masked) so policy
+syntax/ARN rejections show the exact cause.
 
 ## 5. `lmaws_session` size report and lint-valid compaction (`size_report()`)
 
 `policy.size_report()` (included in `recipes/session_policy.lms` `extra_rows`)
 reports the compact byte size of each of the 25 statements in `lmaws_session`
-(`6,032 / 6,144` chars, `112` bytes of headroom) and verifies cumulative
+(`5,966 / 6,144` chars, `178` bytes of headroom) and verifies cumulative
 compaction strategies that keep `IamPolicies.lint()` valid (including
 collapsing allow-listed `Reads` wildcards, merging unconditioned prefix-scoped
 Allow statements such as `Fn` + `Ev`, and omitting optional `Sid` fields for

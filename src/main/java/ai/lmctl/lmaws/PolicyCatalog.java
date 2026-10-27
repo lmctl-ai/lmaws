@@ -631,7 +631,16 @@ public final class PolicyCatalog {
             case "cloudfront" -> "arn:aws:cloudfront::*:" + (type.isEmpty() ? "distribution" : type) + "/" + name;
             case "route53" -> "arn:aws:route53:::" + (type.isEmpty() ? "hostedzone" : type) + "/" + name;
             case "acm" -> "arn:aws:acm:" + ("*".equals(reg) ? "us-east-1" : reg) + ":*:certificate/" + name;
-            case "lambda" -> "arn:aws:lambda:" + reg + ":*:function:" + name;
+            case "lambda" -> {
+                if ("event-source-mapping".equals(type) || "esm".equals(type)) {
+                    if (name.contains("${") || reg.contains("${")) {
+                        throw new IllegalArgumentException(
+                            "AWS IAM rejects policy variables (${...}) inside Lambda event-source-mapping ARNs with MalformedPolicyDocument; use wildcard account '*'");
+                    }
+                    yield "arn:aws:lambda:" + reg + ":*:event-source-mapping:" + name;
+                }
+                yield "arn:aws:lambda:" + reg + ":*:function:" + name;
+            }
             case "events" -> "arn:aws:events:" + reg + ":*:rule/" + name;
             case "ecs" -> "arn:aws:ecs:" + reg + ":*:" + (type.isEmpty() ? "cluster" : type) + "/" + name;
             case "cloudformation" -> "arn:aws:cloudformation:" + reg + ":*:stack/" + name + "/*";

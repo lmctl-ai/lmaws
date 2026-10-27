@@ -29,6 +29,7 @@ public final class IamPolicies {
     public static final String RULE_TAG_SCOPED_SENSITIVE_READ = "TAG_SCOPED_SENSITIVE_READ";
     public static final String RULE_PASS_ROLE_LAMBDA_ONLY = "PASS_ROLE_LAMBDA_ONLY";
     public static final String RULE_LAMBDA_ESM_CREATE = "LAMBDA_ESM_CREATE_SCOPED";
+    public static final String RULE_ESM_ARN_NO_POLICY_VAR = "ESM_ARN_NO_POLICY_VARIABLE";
     public static final String RULE_FORBIDDEN_BARE_WILDCARD = "FORBIDDEN_BARE_WILDCARD";
     public static final String RULE_FORBIDDEN_STS_WILDCARD = "FORBIDDEN_STS_WILDCARD";
     public static final String RULE_FORBIDDEN_ACTION_PREFIX = "FORBIDDEN_ACTION_PREFIX";
@@ -505,6 +506,19 @@ public final class IamPolicies {
             }
 
             List<String> stmtFindings = new ArrayList<>();
+            for (String res : resources) {
+                if (res.contains(":event-source-mapping:") && res.contains("${")) {
+                    stmtFindings.add("statement " + sid + " [rule=" + RULE_ESM_ARN_NO_POLICY_VAR
+                        + "]: AWS IAM rejects policy variables (${...}) inside Lambda event-source-mapping ARNs with MalformedPolicyDocument ('"
+                        + res + "'); use wildcard account '*' (arn:aws:lambda:us-east-1:*:event-source-mapping:*)");
+                }
+            }
+            if (stmtMap.get("Condition") != null
+                    && compactJson(stmtMap.get("Condition")).contains("${")
+                    && actions.stream().anyMatch(a -> a.toLowerCase(Locale.ROOT).contains("eventsourcemapping"))) {
+                stmtFindings.add("statement " + sid + " [rule=" + RULE_ESM_ARN_NO_POLICY_VAR
+                    + "]: AWS IAM rejects policy variables (${...}) in Lambda event-source-mapping FunctionArn condition with MalformedPolicyDocument; use wildcard account '*' (arn:aws:lambda:us-east-1:*:function:lmaws_*)");
+            }
             boolean scopedIamRead = isScopedIamRead(actions, resources);
             for (String action : actions) {
                 String lower = action.trim().toLowerCase(Locale.ROOT);
@@ -658,6 +672,10 @@ public final class IamPolicies {
                     || condLower.contains("\"aws:requesttag/lmaws_test\":\"?*\"")
                     || condLower.contains("\"aws:resourcetag/lmaws_test\":\"?*\"")
                     || condLower.contains("\"ec2:resourcetag/lmaws_test\":\"?*\"")) {
+                if (resources.stream().anyMatch(r -> r.contains(":event-source-mapping:"))
+                        && actions.stream().anyMatch("lambda:tagresource"::equalsIgnoreCase)) {
+                    return "scoped by lmaws_test tag condition (note: Lambda has no CreateAction condition key; host only tags mappings at creation inside CreateEventSourceMapping and verifies queue+function run tags before delete)";
+                }
                 return "scoped by lmaws_test tag condition";
             }
             if (actions.size() == 1 && "ec2:createtags".equalsIgnoreCase(actions.get(0).trim())
@@ -723,7 +741,7 @@ public final class IamPolicies {
     private static String explainStarReadRejection(String sid, String action) {
         if ("lambda:createeventsourcemapping".equalsIgnoreCase(action == null ? "" : action.trim())) {
             return "statement " + sid + " [rule=" + RULE_LAMBDA_ESM_CREATE + ", rejected_by=" + ALLOWLIST_STAR_READ
-                + "]: lambda:CreateEventSourceMapping on Resource '*' requires Condition ArnLike lambda:FunctionArn=arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:function:lmaws_*, "
+                + "]: lambda:CreateEventSourceMapping on Resource '*' requires Condition ArnLike lambda:FunctionArn=arn:aws:lambda:us-east-1:*:function:lmaws_*, "
                 + "StringLike aws:RequestTag/lmaws_test=?*, and ForAllValues:StringEquals aws:TagKeys=[lmaws_test]";
         }
         ReadRuleEntry matched = matchReadRule(action);
@@ -752,7 +770,7 @@ public final class IamPolicies {
         if (!(tagKeysObj instanceof Map<?, ?> tagKeysMap) || tagKeysMap.size() != 1) return false;
         Object fnArnObj = arnLike.get("lambda:FunctionArn");
         if (!(fnArnObj instanceof String fnArn)) return false;
-        if (!fnArn.trim().matches("arn:aws:lambda:(?:us-east-1|\\*):(?:\\$\\{aws:PrincipalAccount\\}|\\*):function:lmaws_[a-z0-9_*?-]+")) {
+        if (!fnArn.trim().matches("arn:aws:lambda:(?:us-east-1|\\*):\\*:function:lmaws_[a-z0-9_*?-]+")) {
             return false;
         }
         Object reqTagObj = strLike.get("aws:RequestTag/lmaws_test");

@@ -476,20 +476,22 @@ public final class PolicyBuilder {
     /**
      * Adds tightly-scoped Lambda event-source-mapping statements (EsmCreate, EsmTag, EsmOwn):
      * - EsmCreate: lambda:CreateEventSourceMapping on '*' gated by ArnLike lambda:FunctionArn
-     *   (arn:aws:lambda:<region>:${aws:PrincipalAccount}:function:<prefix>_*), StringLike
+     *   (arn:aws:lambda:<region>:*:function:<prefix>_*), StringLike
      *   aws:RequestTag/<tagKey>=?*, and ForAllValues:StringEquals aws:TagKeys=[<tagKey>].
-     * - EsmTag: lambda:TagResource on arn:aws:lambda:<region>:${aws:PrincipalAccount}:event-source-mapping:*
+     * - EsmTag: lambda:TagResource on arn:aws:lambda:<region>:*:event-source-mapping:*
      *   gated by StringLike aws:RequestTag/<tagKey>=?* and ForAllValues:StringEquals aws:TagKeys=[<tagKey>].
      * - EsmOwn: lambda:GetEventSourceMapping, lambda:DeleteEventSourceMapping, lambda:ListTags on
-     *   arn:aws:lambda:<region>:${aws:PrincipalAccount}:event-source-mapping:* gated by StringLike
+     *   arn:aws:lambda:<region>:*:event-source-mapping:* gated by StringLike
      *   aws:ResourceTag/<tagKey>=?*.
+     * Note: AWS IAM rejects policy variables (${aws:PrincipalAccount}) in event-source-mapping ARNs
+     * with MalformedPolicyDocument, so wildcard account '*' is required.
      */
     public PolicyBuilder lambdaEventSourceMapping(String prefix, String tagKey, String region) {
         requirePrefix(prefix);
         requireTagKey(tagKey);
         String reg = (region == null || region.isBlank()) ? "us-east-1" : region.trim();
-        String fnArn = "arn:aws:lambda:" + reg + ":${aws:PrincipalAccount}:function:" + prefix + "_*";
-        String esmArn = "arn:aws:lambda:" + reg + ":${aws:PrincipalAccount}:event-source-mapping:*";
+        String fnArn = "arn:aws:lambda:" + reg + ":*:function:" + prefix + "_*";
+        String esmArn = "arn:aws:lambda:" + reg + ":*:event-source-mapping:*";
 
         Map<String, Object> createCond = new LinkedHashMap<>();
         createCond.put("ArnLike", Map.of("lambda:FunctionArn", fnArn));

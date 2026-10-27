@@ -54,10 +54,10 @@ and 12 `Cloud` helper methods.
 ## Dogfood and recipes
 
 `recipes/session_policy.lms` generates the 25-statement `lmaws_session` managed
-policy (`6,032` compact chars, including `LambdaPassRole`, `EsmCreate`, `EsmTag`,
+policy (`5,966` compact chars, including `LambdaPassRole`, `EsmCreate`, `EsmTag`,
 `EsmOwn`, `CfCreate`, `AcmOwn`, and `size_report()`) byte-for-byte identically
 (`+0 ~0 -0 =25`, `byte_identical=true`) to
-`~/.aws/session-tools/tasks/iam-snapshots/lmaws-managed-policy.v7.json`.
+`~/.aws/session-tools/tasks/iam-snapshots/lmaws-managed-policy.json` (v7b).
 28 recipes in `recipes/lib/policy_builder.lms`
 (including `recipes/policy_cheat_sheet.lms`) and matching synthetic picture-first
 examples (`examples/recipe_*.lms`) cover all building blocks, compaction,

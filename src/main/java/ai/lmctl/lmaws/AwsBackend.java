@@ -665,12 +665,23 @@ public final class AwsBackend implements AutoCloseable {
         String arn="arn:aws:lambda:local:000000000000:event-source-mapping:lmaws-"+runId+"-"+Integer.toUnsignedString((queueUrl+lambdaArn).hashCode(),16);
         mappingRuns.put(arn,runId); return new QueueWorker(this,arn,runId);
     }
+    /**
+     * Compensating host guard for EsmTag: AWS Lambda has no CreateAction condition key for
+     * event-source-mapping, so the lmaws host forbids standalone lambda:TagResource on
+     * event-source-mapping ARNs and only tags mappings atomically inside CreateEventSourceMapping.
+     */
+    static void requireNoStandaloneEsmTag(String resourceArn) {
+        if(resourceArn!=null&&resourceArn.contains(":event-source-mapping:")) {
+            throw new SecurityException("refusing standalone lambda:TagResource on event-source-mapping ARN; mappings may only be tagged at creation inside CreateEventSourceMapping");
+        }
+    }
     Map<String,String> eventSourceMappingStatus(String arn,String runId) {
         requireRunId(runId); if(mappingRuns.containsKey(arn)&&!runId.equals(mappingRuns.get(arn))) throw new SecurityException("event source mapping ownership mismatch");
         if(demo)return row("kind","sqs_event_source_mapping","id",arn,"state","Enabled","run_id",runId);
         if(!arn.matches("arn:aws:lambda:us-east-1:[0-9]{12}:event-source-mapping:[A-Za-z0-9-]{8,128}")) throw new SecurityException("event source mapping ARN outside the scenario namespace");
         var m=lambda().getEventSourceMapping(x->x.uuid(arn.substring(arn.lastIndexOf(':')+1)));
         if(m.eventSourceMappingArn()==null||!arn.equals(m.eventSourceMappingArn())) throw new SecurityException("event source mapping identity mismatch");
+        // Compensating guard for EsmTag/EsmOwn: verify runId tag on the mapping AND on the lmaws_* SQS queue AND on the lmaws_* Lambda function.
         var tags=lambda().listTags(x->x.resource(arn)).tags(); if(!runId.equals(tags.get("lmaws_test"))) throw new SecurityException("event source mapping ownership tag mismatch");
         if(m.eventSourceArn()==null||!m.eventSourceArn().matches("arn:aws:sqs:us-east-1:[0-9]{12}:lmaws[_-][A-Za-z0-9_-]+")) throw new SecurityException("event source queue outside scenario namespace");
         if(m.functionArn()==null||!m.functionArn().matches("arn:aws:lambda:us-east-1:[0-9]{12}:function:lmaws[-_][A-Za-z0-9_-]{1,58}")) throw new SecurityException("event source function outside scenario namespace");

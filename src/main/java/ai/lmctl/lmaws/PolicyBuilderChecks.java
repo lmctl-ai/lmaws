@@ -87,12 +87,8 @@ public final class PolicyBuilderChecks {
             "pass_role_to_service to ec2.amazonaws.com must be rejected by PASS_ROLE_LAMBDA_ONLY");
 
         // If the local snapshot file exists, extract its domain dynamically and verify 100% byte-for-byte equivalence
-        Path v7Snapshot = Path.of(System.getProperty("user.home", ""),
-            ".aws", "session-tools", "tasks", "iam-snapshots", "lmaws-managed-policy.v7.json");
-        Path localSnapshot = Files.isRegularFile(v7Snapshot)
-            ? v7Snapshot
-            : Path.of(System.getProperty("user.home", ""),
-                ".aws", "session-tools", "tasks", "iam-snapshots", "lmaws-managed-policy.json");
+        Path localSnapshot = Path.of(System.getProperty("user.home", ""),
+            ".aws", "session-tools", "tasks", "iam-snapshots", "lmaws-managed-policy.json");
         // Opt-in only: --self-test must not depend on the operator's private ~/.aws files (they drift independently).
         if ("1".equals(System.getenv("LMAWS_CHECK_LOCAL_POLICY_SNAPSHOT")) && Files.isRegularFile(localSnapshot)) {
             try {
@@ -103,11 +99,11 @@ public final class PolicyBuilderChecks {
                     .lmawsSessionPolicy("lmaws", "lmaws_test", snapshotDomain, "us-east-1", "t4g.nano,t3.nano", 8);
                 IamPolicies.DiffResult snapDiff = IamPolicies.diff(rawSnapshot, fromBuilder.json());
                 require(!snapDiff.changed() && snapDiff.unchangedCount() == 25,
-                    "Built policy must match local snapshot 25/25: " + snapDiff.summary());
+                    "Built policy must match local lmaws-managed-policy.json 25/25: " + snapDiff.summary());
                 require(fromBuilder.compactJson().equals(IamPolicies.compactJson(PolicyAnalyzer.parseDoc(rawSnapshot))),
-                    "Built policy compact JSON must match local snapshot byte-for-byte");
+                    "Built policy compact JSON must match local lmaws-managed-policy.json byte-for-byte");
                 require(fromBuilder.json().trim().equals(rawSnapshot.trim()),
-                    "Built policy pretty JSON must match local snapshot byte-for-byte");
+                    "Built policy pretty JSON must match local lmaws-managed-policy.json byte-for-byte");
             } catch (java.io.IOException ex) {
                 throw new IllegalStateException("Failed reading local snapshot", ex);
             }
@@ -187,8 +183,8 @@ public final class PolicyBuilderChecks {
         }
         Map<String, String> sizeSummary = sizeRows.get(sizeRows.size() - 1);
         require("size_summary".equals(sizeSummary.get("kind")), "Last sizeReport row is size_summary");
-        require("6032".equals(sizeSummary.get("compact_bytes")),
-            "lmaws_session v7 (lmnature.com) must be 6032 compact bytes, got " + sizeSummary.get("compact_bytes"));
+        require("5966".equals(sizeSummary.get("compact_bytes")),
+            "lmaws_session v7b (lmnature.com) must be 5966 compact bytes, got " + sizeSummary.get("compact_bytes"));
 
         // IAM cheat sheet for lmaws
         List<Map<String, String>> cheatRows = session.cheatSheet();
