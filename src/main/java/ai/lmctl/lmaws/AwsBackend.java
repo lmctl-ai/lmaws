@@ -494,69 +494,115 @@ public final class AwsBackend implements AutoCloseable {
         out.put("created", Instant.now().toString()); out.put("run_id", runId); return out;
     }
 
+    private void requireScenarioWrite() {
+        requireWriteEnabled();
+        if(!demo && endpoint==null && (!"lmaws".equals(activeProfile()) || !"us-east-1".equals(regionName)))
+            throw new SecurityException("scenario mutations require AWS_PROFILE=lmaws in us-east-1");
+    }
+    private void requireOwnedLambda(String arn,String runId) {
+        requireRunId(runId);
+        if(arn==null || !arn.matches("arn:aws:lambda:us-east-1:[0-9]{12}:function:lmaws[-_][A-Za-z0-9_-]{1,58}"))
+            throw new SecurityException("Lambda ARN outside the scenario namespace");
+        if(demo)return;
+        var actual=lambda().getFunction(x->x.functionName(arn));
+        if(actual.configuration()==null || !arn.equals(actual.configuration().functionArn()) || actual.tags()==null || !runId.equals(actual.tags().get("lmaws_test")))
+            throw new SecurityException("Lambda provider ownership tag mismatch");
+    }
+    private String requireOwnedEvent(String name,String runId) {
+        requireRunId(runId);requireName(name);
+        if(!runId.equals(eventRuns.get(name))&&!name.startsWith("lmaws_"+runId+"_"))throw new SecurityException("EventBridge rule outside this run namespace");
+        var rule=events().describeRule(x->x.name(name));String arn=rule.arn();
+        if(arn==null || !arn.matches("arn:aws:events:us-east-1:[0-9]{12}:rule/lmaws[-_][A-Za-z0-9_-]+") || events().listTagsForResource(x->x.resourceARN(arn)).tags().stream().noneMatch(t->"lmaws_test".equals(t.key())&&runId.equals(t.value())))
+            throw new SecurityException("EventBridge provider ownership tag mismatch");
+        return arn;
+    }
+    private static String eventPermissionId(String rule){return "lmaws-event-"+Integer.toUnsignedString(rule.hashCode(),16);}
     Map<String,String> createLambda(String name,String role,String runtime,String handler,String source,int memory,int timeout,String runId) {
-        requireWriteEnabled(); requireName(name); requireRunId(runId);
-        if (demo) return row("kind","lambda","id","arn:aws:lambda:local:000000000000:function:"+name,"name",name,"run_id",runId,"state","active");
-        String roleArn = role.startsWith("arn:") ? role : "arn:aws:iam::" + sts().getCallerIdentity().account() + ":role/" + role;
-        byte[] zip = LambdaFunction.sourceZip(handler, source);
-        var response = lambda().createFunction(x -> x.functionName(name).role(roleArn).runtime(software.amazon.awssdk.services.lambda.model.Runtime.fromValue(runtime)).handler(handler).memorySize(memory).timeout(timeout).code(c -> c.zipFile(SdkBytes.fromByteArray(zip))).publish(true).tags(Map.of("lmaws_test",runId)));
-        lambdaRuns.put(response.functionArn(),runId); return row("kind","lambda","id",response.functionArn(),"name",name,"arn",response.functionArn(),"run_id",runId,"state","active");
+        requireScenarioWrite();requireName(name);requireRunId(runId);
+        new LambdaFunction(name,role,runtime,handler,source,memory,timeout,runId);
+        if(memory>512||timeout>30)throw new IllegalArgumentException("scenario Lambda caps: 512 MiB / 30 seconds");
+        if(demo)return row("kind","lambda","id","arn:aws:lambda:local:000000000000:function:"+name,"name",name,"run_id",runId,"state","active");
+        String roleArn=role.startsWith("arn:")?role:"arn:aws:iam::"+sts().getCallerIdentity().account()+":role/"+role;
+        byte[] zip=LambdaFunction.sourceZip(handler,source);
+        var response=lambda().createFunction(x->x.functionName(name).role(roleArn).runtime(software.amazon.awssdk.services.lambda.model.Runtime.fromValue(runtime)).handler(handler).memorySize(memory).timeout(timeout).code(c->c.zipFile(SdkBytes.fromByteArray(zip))).publish(true).tags(Map.of("lmaws_test",runId)));
+        String arn=response.functionArn();lambdaRuns.put(arn,runId);
+        return row("kind","lambda","id",arn,"name",name,"arn",arn,"run_id",runId,"state",response.stateAsString()==null?"Pending":response.stateAsString());
     }
     Map<String,String> invokeLambda(String arn,String payload) {
-        if (!lambdaRuns.containsKey(arn) && !demo) throw new IllegalStateException("Lambda is not owned by this run");
-        if (demo) return row("status","200","function_name",arn,"request_id","fake-invoke","payload",payload,"cold_start","false");
-        var response=lambda().invoke(x -> x.functionName(arn).payload(SdkBytes.fromUtf8String(payload)).invocationType("RequestResponse"));
+        requireScenarioWrite();
+        if(payload==null||payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>262144)throw new IllegalArgumentException("Lambda payload exceeds 256 KiB");
+        if(demo)return row("status","200","function_name",arn,"request_id","fake-invoke","payload",payload,"cold_start","false");
+        String run=lambdaRuns.get(arn);if(run==null)throw new SecurityException("Lambda not created by this host");requireOwnedLambda(arn,run);
+        var response=lambda().invoke(x->x.functionName(arn).payload(SdkBytes.fromUtf8String(payload)).invocationType("RequestResponse"));
+        if(response.functionError()!=null)throw new IllegalStateException("Lambda invocation returned a function error");
         return row("status",Integer.toString(response.statusCode()),"function_name",arn,"request_id",response.executedVersion()==null?"":response.executedVersion(),"payload",response.payload()==null?"":response.payload().asUtf8String());
     }
     String lambdaUrl(String arn,String reason) {
-        if (reason==null||reason.isBlank()) throw new IllegalArgumentException("public Function URL auth NONE requires an explicit reason");
-        if (!demo && !lambdaRuns.containsKey(arn)) throw new IllegalStateException("Lambda is not owned by this run");
-        if (demo) return "https://"+last(arn)+".lambda-url.local/";
+        requireScenarioWrite();
+        if(reason==null||reason.isBlank()||reason.length()>256)throw new IllegalArgumentException("public Function URL auth NONE requires a bounded explicit reason");
+        if(demo)return "https://"+last(arn)+".lambda-url.local/";
+        String run=lambdaRuns.get(arn);if(run==null)throw new SecurityException("Lambda not created by this host");requireOwnedLambda(arn,run);
+        var config=lambda().createFunctionUrlConfig(x->x.functionName(arn).authType("NONE"));
         lambda().addPermission(x->x.functionName(arn).statementId("lmaws-url").action("lambda:InvokeFunctionUrl").principal("*").functionUrlAuthType("NONE"));
         lambda().addPermission(x->x.functionName(arn).statementId("lmaws-invoke-url").action("lambda:InvokeFunction").principal("*").invokedViaFunctionUrl(true));
-        var r=lambda().createFunctionUrlConfig(x -> x.functionName(arn).authType("NONE")); return r.functionUrl();
+        return config.functionUrl();
     }
-    /** Verify a Lambda URL belongs to the tagged function before CloudFront adopts it. */
     void requireLambdaUrlOwned(String functionName,String expectedUrl,String runId) {
-        requireRunId(runId); requireName(functionName);
-        if (expectedUrl==null||expectedUrl.isBlank()) throw new IllegalArgumentException("Lambda URL is required");
-        if (demo) { if(!expectedUrl.matches("https://"+java.util.regex.Pattern.quote(functionName)+"\\.lambda-url\\.local/?")) throw new SecurityException("fixture Lambda URL mismatch"); return; }
-        var fn=lambda().getFunction(x->x.functionName(functionName)).configuration();
-        if(fn==null||fn.functionArn()==null||lambda().listTags(x->x.resource(fn.functionArn())).tags().entrySet().stream().noneMatch(e->"lmaws_test".equals(e.getKey())&&runId.equals(e.getValue()))) throw new SecurityException("Lambda function is not owned by this run");
+        requireRunId(runId);requireName(functionName);
+        if(expectedUrl==null||expectedUrl.isBlank())throw new IllegalArgumentException("Lambda URL required");
+        if(demo){if(!expectedUrl.matches("https://"+java.util.regex.Pattern.quote(functionName)+"\\.lambda-url\\.local/?"))throw new SecurityException("fixture Lambda URL mismatch");return;}
+        var fn=lambda().getFunction(x->x.functionName(functionName));
+        if(fn.configuration()==null)throw new SecurityException("missing Lambda configuration");requireOwnedLambda(fn.configuration().functionArn(),runId);
         var cfg=lambda().getFunctionUrlConfig(x->x.functionName(functionName));
-        if(!"NONE".equalsIgnoreCase(cfg.authTypeAsString())||!expectedUrl.equals(cfg.functionUrl())) throw new SecurityException("Lambda URL does not match the owned NONE-auth configuration");
+        if(!"NONE".equals(cfg.authTypeAsString())||!expectedUrl.equals(cfg.functionUrl()))throw new SecurityException("Lambda URL does not match owned NONE-auth configuration");
     }
     Map<String,String> putEventRule(String name,String schedule,String runId) {
-        requireWriteEnabled(); requireName(name); if(demo)return row("kind","event_rule","name",name,"id","arn:aws:events:local:rule/"+name,"run_id",runId,"state","active");
-        if(eventRuns.containsKey(name)) throw new IllegalStateException("EventBridge rule already exists in this host"); try { events().describeRule(x->x.name(name)); throw new IllegalStateException("refusing to overwrite existing EventBridge rule"); } catch (software.amazon.awssdk.services.eventbridge.model.ResourceNotFoundException absent) { }
-        var out=events().putRule(x->x.name(name).scheduleExpression(schedule).state("ENABLED").tags(software.amazon.awssdk.services.eventbridge.model.Tag.builder().key("lmaws_test").value(runId).build())); eventRuns.put(name,runId);
+        requireScenarioWrite();requireName(name);requireRunId(runId);new EventRule(name,schedule,runId);
+        if(demo)return row("kind","event_rule","name",name,"id","arn:aws:events:local:rule/"+name,"run_id",runId,"state","active");
+        try{events().describeRule(x->x.name(name));throw new SecurityException("refusing existing EventBridge rule");}catch(software.amazon.awssdk.services.eventbridge.model.ResourceNotFoundException absent){}
+        var out=events().putRule(x->x.name(name).scheduleExpression(schedule).state("ENABLED").tags(software.amazon.awssdk.services.eventbridge.model.Tag.builder().key("lmaws_test").value(runId).build()));eventRuns.put(name,runId);
         return row("kind","event_rule","name",name,"id",out.ruleArn(),"arn",out.ruleArn(),"run_id",runId,"state","active");
     }
     Map<String,String> putEventTarget(String rule,String lambdaArn,String runId) {
-        requireWriteEnabled(); if(!demo && !eventRuns.containsKey(rule)) throw new IllegalStateException("EventBridge rule is not owned by this run"); if(demo)return row("kind","event_target","rule",rule,"target",lambdaArn,"state","active");
-        if(!lambdaRuns.containsKey(lambdaArn)) throw new IllegalStateException("EventBridge target Lambda is not owned by this run");
-        var response=events().putTargets(x->x.rule(rule).targets(software.amazon.awssdk.services.eventbridge.model.Target.builder().id("lmaws-target").arn(lambdaArn).build())); if(response.failedEntryCount()!=null&&response.failedEntryCount()>0) throw new IllegalStateException("EventBridge target was rejected");
+        requireScenarioWrite();requireRunId(runId);
+        if(demo)return row("kind","event_target","rule",rule,"target",lambdaArn,"state","active");
+        String ruleArn=requireOwnedEvent(rule,runId);requireOwnedLambda(lambdaArn,runId);
+        lambda().addPermission(x->x.functionName(lambdaArn).statementId(eventPermissionId(rule)).action("lambda:InvokeFunction").principal("events.amazonaws.com").sourceArn(ruleArn).sourceAccount(lambdaArn.split(":")[4]));
+        var response=events().putTargets(x->x.rule(rule).targets(software.amazon.awssdk.services.eventbridge.model.Target.builder().id("lmaws-target").arn(lambdaArn).build()));
+        if(response.failedEntryCount()!=null&&response.failedEntryCount()>0)throw new IllegalStateException("EventBridge target rejected");
         return row("kind","event_target","rule",rule,"target",lambdaArn,"state","active");
     }
-    Map<String,String> deleteEventRule(String name,String runId) { requireWriteEnabled(); if(!demo && !runId.equals(eventRuns.get(name))) throw new IllegalStateException("EventBridge rule is not owned by this run"); if(!demo)events().removeTargets(x->x.rule(name).ids("lmaws-target")); if(!demo)events().deleteRule(x->x.name(name)); eventRuns.remove(name); return row("kind","event_rule","name",name,"state","deleted","run_id",runId); }
+    Map<String,String> deleteEventRule(String name,String runId) {
+        requireScenarioWrite();
+        if(!demo){requireOwnedEvent(name,runId);var result=events().removeTargets(x->x.rule(name).ids("lmaws-target"));if(result.failedEntryCount()!=null&&result.failedEntryCount()>0)throw new IllegalStateException("EventBridge target removal rejected");events().deleteRule(x->x.name(name));eventRuns.remove(name);}
+        return row("kind","event_rule","name",name,"state","deleted","run_id",runId);
+    }
     Map<String,String> deleteLambda(String arn,String runId) {
-        requireWriteEnabled(); if (!demo && !lambdaRuns.containsKey(arn)) throw new IllegalStateException("Lambda is not owned by this run"); if (demo) return row("kind","lambda","id",arn,"state","deleted");
-        lambda().deleteFunction(x -> x.functionName(arn)); lambdaRuns.remove(arn); return row("kind","lambda","id",arn,"state","deleted","run_id",runId);
+        requireScenarioWrite();if(!demo){requireOwnedLambda(arn,runId);lambda().deleteFunction(x->x.functionName(arn));lambdaRuns.remove(arn);}
+        return row("kind","lambda","id",arn,"state","deleted","run_id",runId);
     }
     Map<String,String> tableTtl(String table,String attribute,String runId) {
-        requireWriteEnabled(); requireName(table); if(attribute==null||!attribute.matches("[A-Za-z0-9_-]{1,255}")) throw new IllegalArgumentException("invalid DynamoDB TTL attribute");
-        if(!demo && !owned("table",table,runId)) throw new IllegalStateException("DynamoDB table is not owned by this run"); if(!demo) ddb().updateTimeToLive(x -> x.tableName(table).timeToLiveSpecification(t -> t.attributeName(attribute).enabled(true)));
+        requireScenarioWrite();requireName(table);requireRunId(runId);
+        if(attribute==null||!attribute.matches("[A-Za-z0-9_-]{1,255}"))throw new IllegalArgumentException("invalid TTL attribute");
+        if(!demo){if(!owned("table",table,runId))throw new SecurityException("table ownership mismatch");ddb().updateTimeToLive(x->x.tableName(table).timeToLiveSpecification(t->t.attributeName(attribute).enabled(true)));}
         return row("kind","dynamodb_ttl","table",table,"attribute",attribute,"enabled","true");
     }
     Map<String,String> tableItem(String table,String key,String value,String runId) {
-        requireWriteEnabled(); requireName(table); if(key==null||key.isBlank()||key.length()>1024) throw new IllegalArgumentException("invalid DynamoDB item key");
-        if(!demo && !owned("table",table,runId)) throw new IllegalStateException("DynamoDB table is not owned by this run"); if(!demo) ddb().putItem(x -> x.tableName(table).item(Map.of("pk",AttributeValue.builder().s(key).build(),"value",AttributeValue.builder().s(value==null?"":value).build())));
-        return row("kind","dynamodb_item","table",table,"pk",key,"value",value==null?"":value);
+        requireScenarioWrite();requireName(table);requireRunId(runId);
+        if(key==null||key.isBlank()||key.length()>1024||value==null||value.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>65536)throw new IllegalArgumentException("bounded item key/value required");
+        if(!demo){if(!owned("table",table,runId))throw new SecurityException("table ownership mismatch");ddb().putItem(x->x.tableName(table).item(Map.of("pk",AttributeValue.builder().s(key).build(),"value",AttributeValue.builder().s(value).build())));}
+        return row("kind","dynamodb_item","table",table,"pk",key,"value",value);
     }
     Map<String,String> s3Notification(String bucket,String lambdaArn,String eventName,String runId) {
-        requireWriteEnabled(); requireName(bucket); if(lambdaArn==null||!lambdaArn.contains(":function:lmaws")) throw new IllegalArgumentException("S3 notification target must be an lmaws Lambda ARN");
-        if(eventName==null||!eventName.matches("s3:ObjectCreated:(Put|Post|Copy|CompleteMultipartUpload|\\*)")) throw new IllegalArgumentException("unsupported S3 notification event");
-        if(!demo && !owned("bucket",bucket,runId)) throw new IllegalStateException("S3 bucket is not owned by this run"); if(!demo) s3().putBucketNotificationConfiguration(x -> x.bucket(bucket).notificationConfiguration(NotificationConfiguration.builder().lambdaFunctionConfigurations(LambdaFunctionConfiguration.builder().lambdaFunctionArn(lambdaArn).events(Event.fromValue(eventName)).build()).build()));
+        requireScenarioWrite();requireName(bucket);requireRunId(runId);
+        if(eventName==null||!eventName.matches("s3:ObjectCreated:(Put|Post|Copy|CompleteMultipartUpload|\\*)"))throw new IllegalArgumentException("unsupported notification event");
+        if(!demo){
+            if(!owned("bucket",bucket,runId))throw new SecurityException("bucket ownership mismatch");requireOwnedLambda(lambdaArn,runId);
+            var prior=s3().getBucketNotificationConfiguration(x->x.bucket(bucket));
+            if(!prior.lambdaFunctionConfigurations().isEmpty()||!prior.topicConfigurations().isEmpty()||!prior.queueConfigurations().isEmpty()||prior.eventBridgeConfiguration()!=null)throw new SecurityException("refusing to replace existing bucket notifications");
+            lambda().addPermission(x->x.functionName(lambdaArn).statementId("lmaws-s3-"+Integer.toUnsignedString(bucket.hashCode(),16)).action("lambda:InvokeFunction").principal("s3.amazonaws.com").sourceArn("arn:aws:s3:::"+bucket).sourceAccount(lambdaArn.split(":")[4]));
+            s3().putBucketNotificationConfiguration(x->x.bucket(bucket).notificationConfiguration(NotificationConfiguration.builder().lambdaFunctionConfigurations(LambdaFunctionConfiguration.builder().id("lmaws-"+runId).lambdaFunctionArn(lambdaArn).events(Event.fromValue(eventName)).build()).build()));
+        }
         return row("kind","s3_notification","bucket",bucket,"lambda_arn",lambdaArn,"event",eventName,"state","active");
     }
 

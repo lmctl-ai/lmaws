@@ -11,10 +11,11 @@ public final class EventRule {
     EventRule(String name,String schedule,String runId){this(null,name,schedule,runId);}
     EventRule(AwsBackend backend,String name,String schedule,String runId){
         if(name==null||!NAME.matcher(name).matches())throw new IllegalArgumentException("EventBridge rule name must start with lmaws_ or lmaws-");
-        if(schedule==null||schedule.length()<5||schedule.length()>256||(!schedule.startsWith("rate(")&&!schedule.startsWith("cron(")))throw new IllegalArgumentException("schedule must be a bounded rate(...) or cron(...) expression");
+        if(schedule==null||!schedule.matches("rate\\((1 minute|[2-9] minutes|[1-5][0-9] minutes)\\)"))throw new IllegalArgumentException("schedule must be rate(1 minute)..rate(59 minutes)");
         this.backend=backend;this.name=name;this.schedule=schedule;this.runId=runId;
     }
+    void providerArn(String arn){providerArn=arn;}
     public synchronized Map<String,String> target(String lambdaArn){if(deleted)throw new IllegalStateException("rule is deleted");if(lambdaArn==null||!lambdaArn.contains(":function:lmaws"))throw new IllegalArgumentException("EventBridge target must be an lmaws Lambda ARN");target=lambdaArn;if(backend!=null)backend.putEventTarget(name,lambdaArn,runId);return status();}
-    public synchronized Map<String,String> status(){var m=new LinkedHashMap<String,String>();m.put("kind","event_rule");m.put("name",name);m.put("id","arn:aws:events:local:000000000000:rule/"+name);m.put("schedule",schedule);m.put("target",target);m.put("run_id",runId);m.put("state",deleted?"deleted":"active");return m;}
+    public synchronized Map<String,String> status(){var m=new LinkedHashMap<String,String>();m.put("kind","event_rule");m.put("name",name);m.put("id",providerArn.isEmpty()?"arn:aws:events:local:000000000000:rule/"+name:providerArn);m.put("schedule",schedule);m.put("target",target);m.put("run_id",runId);m.put("state",deleted?"deleted":"active");return m;}
     public synchronized Map<String,String> delete(){if(backend!=null)backend.deleteEventRule(name,runId);deleted=true;return status();}
 }

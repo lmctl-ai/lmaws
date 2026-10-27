@@ -158,6 +158,7 @@ public final class WebTransportChecks {
             // Scenario 11 shifts the same run-scoped pair repeatedly. Each
             // call must emit two UPSERT records and preserve the callback
             // ordering used by durable state recovery.
+            seen.remove("timeoutChange");
             seen.remove("foreignWeighted");
             web.weightedSet("zone", "lmaws-weighted-" + RUN + "." + DOMAIN,
                     "d1234567890.cloudfront.net", "192.0.2.20", 90, 10, false,
