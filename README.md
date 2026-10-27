@@ -974,7 +974,7 @@ assert(r.code == 0);
 
 For `run.put`, `key` is the S3 object key or DynamoDB `pk`; queue/topic/parameter writes use `value` as the message or parameter value, and log groups accept `key="retention_days"`.
 
-Writes are limited to those six resource kinds, one run-owned spot nano sandbox (instance, its root volume and network interface, one security group) under `AWS_PROFILE=lmaws-ec2`, and customer-managed `lmaws_` IAM session policies under `AWS_PROFILE=admin` with `LMAWS_ADMIN_GRANT=1` and `--apply`. Other compute, networking, IAM, ECS, Lambda, DNS and Secrets Manager calls are metadata-only.
+Writes are limited to those six resource kinds, one run-owned spot nano sandbox (instance, its root volume and network interface, one security group) under `AWS_PROFILE=lmaws-ec2`, and customer-managed `lmaws_` IAM session policies under `AWS_PROFILE=admin` with `LMAWS_ADMIN_GRANT=1` and `--apply`. General ECS and Secrets Manager operations remain metadata-only. The guarded Web API below additionally owns temporary CloudFront/Route 53/ACM resources. Source-only serverless APIs are tested against fake transports pending the live execution-role rollout.
 
 ## Cost per example
 
@@ -1113,3 +1113,6 @@ These fixtures show literal prefix matching, age metadata and ledger-qualified r
 ![Synthetic sweeper_table.png](docs/images/sweeper_table.png)
 
 `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms`
+
+
+Current source also supports weighted DNS and the [lmweblab scenario catalog](https://github.com/lmctl-ai/lmweblab/tree/main/scenarios). Typed Lambda/EventBridge operations, DynamoDB TTL/items, S3 notifications and persistent `Serverless` state are verified with loopback SDK transports. The serverless scenario driver refuses real AWS endpoints until explicit rollout authorization; no live Lambda result is claimed. Function roles are restricted to the short name `lmaws_lambda_exec`, resolved in the caller's account. See [the web/scenario note](durable-memory/11-web-stack.md) for limits, ownership checks and fake verification. These new APIs require a current source build until a release includes them.

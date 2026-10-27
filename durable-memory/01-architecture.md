@@ -16,8 +16,10 @@ count/filter, CSV and JSON; `Row` exposes string/integer fields.
 `Run` creates only buckets, queues, topics, Standard String parameters,
 on-demand pk/value tables and log groups. `put` handles their bounded payload or
 retention updates; cleanup, remaining count and estimated cost are exposed.
-There is no general AWS dispatcher, secret-value API, IAM user/key mutation,
-compute/network creation or Lambda deployment. Account IDs are masked in public
+There is no general AWS dispatcher, secret-value API or IAM user/key mutation.
+Guarded Spot/Web APIs support owned nano and web-stack deployments; typed
+Lambda/EventBridge and durable Serverless APIs are implemented and tested with
+fake transports pending the explicit live rollout. Account IDs are masked in public
 outputs; raw ownership identifiers stay in private recovery ledgers.
 
 Masking (`Jsons.mask`, used by `Rows.json/csv`, spend exports and error messages) replaces the
@@ -50,6 +52,6 @@ own signatures (`iam_policy_lint`, `iam_policy_get`, `iam_policy_versions`,
 From v0.1.12, the fluent IAM Permission Builder (`PolicyBuilder`, `PolicyCatalog`,
 `PolicyAnalyzer`, `PolicySimulator`) adds the `Policy` type (46 methods) and 12
 policy analysis/simulation methods on `Cloud` (58 new own signatures).
-The verified v0.1.15 snapshot has 152 callable host bindings, 153 host signature
-lines including the implicit context, and 225 lines including 72 standard
-signatures. Use `--dsl-signatures` to inspect later main additions.
+Current main has 175 host signature lines including the implicit context,
+and 247 lines including the 72 standard signatures. The new serverless API is
+source-only until released; use `--dsl-signatures` to check the actual binary.
