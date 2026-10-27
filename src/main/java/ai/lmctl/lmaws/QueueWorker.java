@@ -10,6 +10,7 @@ final class QueueWorker {
     QueueWorker(AwsBackend backend, String mappingArn, String runId) {
         this.backend = backend; this.mappingArn = mappingArn; this.runId = runId;
     }
+    String arn() { return mappingArn; }
     Map<String,String> status() { return backend.eventSourceMappingStatus(mappingArn, runId); }
     Map<String,String> delete() { return backend.deleteEventSourceMapping(mappingArn, runId); }
 }

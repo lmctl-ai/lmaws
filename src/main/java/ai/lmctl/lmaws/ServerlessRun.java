@@ -144,11 +144,11 @@ final class ServerlessRun implements AutoCloseable {
     synchronized Map<String,String> settle(int maxSeconds){
         if(maxSeconds<1||maxSeconds>900)throw new IllegalArgumentException("settlement bound must be 1..900 seconds");
         long deadline=System.nanoTime()+java.time.Duration.ofSeconds(maxSeconds).toNanos();
-        Instant deleted=Instant.parse(state.getOrDefault("lambda_deleted_at",state.getOrDefault("finished_at",Instant.now().toString())));
+        Instant deleted=latestDeletionInstant();
         Instant deliveryEnd=backend.isDemo()||backend.fixtureEndpoint()?Instant.now():deleted.plusSeconds(600);
         try(var scope=cost.cleanupScope()){
             for(;;){
-                down();deliveryEnd=backend.isDemo()||backend.fixtureEndpoint()||!state.containsKey("lambda_deleted_at")?Instant.now():Instant.parse(state.get("lambda_deleted_at")).plusSeconds(600);
+                down();deliveryEnd=backend.isDemo()||backend.fixtureEndpoint()?Instant.now():latestDeletionInstant().plusSeconds(600);
                 var rows=backend.isDemo()?leftovers():backend.serverlessInventory(run);
                 if(rows.isEmpty()&&!Instant.now().isBefore(deliveryEnd)){state.put("settled_at",Instant.now().toString());persist();return summary();}
                 if(System.nanoTime()>=deadline)throw new IllegalStateException("post-delivery inventory did not settle within the bound");
@@ -157,6 +157,14 @@ final class ServerlessRun implements AutoCloseable {
                 try{Thread.sleep(wait);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IllegalStateException("settlement interrupted");}
             }
         }catch(RuntimeException error){throw error;}catch(Exception error){throw new IllegalStateException("cannot settle serverless cleanup",error);}
+    }
+    /** Latest deletion timestamp across API and worker Lambdas for log delivery settlement. */
+    Instant latestDeletionInstant(){
+        Instant latest=null;
+        for(String key:List.of("lambda_deleted_at","worker_deleted_at")){
+            String value=state.get(key);if(value!=null){Instant candidate=Instant.parse(value);if(latest==null||candidate.isAfter(latest))latest=candidate;}
+        }
+        return latest==null?Instant.EPOCH:latest;
     }
     private String privateError(Throwable error){
         if(error instanceof software.amazon.awssdk.awscore.exception.AwsServiceException aws&&aws.awsErrorDetails()!=null)return aws.awsErrorDetails().errorCode()+": "+aws.awsErrorDetails().errorMessage();

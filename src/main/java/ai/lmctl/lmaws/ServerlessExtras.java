@@ -53,7 +53,8 @@ final class ServerlessExtras {
             String arn=b.isDemo()?"arn:aws:lambda:local:000000000000:function:"+name:b.createLambda(name,role,runtime,handler,code,memory,timeout,run.run,log).get("arn");
             s.put("worker_arn",arn);s.put("worker_name_receipt",name);s.put("worker_log_receipt",log);run.persist();if(!b.isDemo())b.waitLambdaActive(arn,run.run,120);
             var mapping=b.createEventSourceMapping(s.get("queue"),arn,1,run.run);
-            s.put("mapping",mapping.status().get("id"));run.persist();
+            s.put("mapping",mapping.arn());run.persist();
+            if(!b.isDemo())b.waitEventSourceMappingEnabled(mapping.arn(),run.run,120);
         }
     }
     static String workerSource(ServerlessRun run,Path source) throws java.io.IOException {

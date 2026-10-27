@@ -10,6 +10,7 @@ public final class RemainingChecks {
   try(var backend=new AwsBackend("us-east-1",true,cost)) {
    Path state=dir.resolve("state.json");
    try(var run=new ServerlessRun(backend,cost,"cafe07","example.com",state.toString())) {
+    if(!run.latestDeletionInstant().equals(java.time.Instant.EPOCH))throw new AssertionError("a run without Lambda deletion must not wait for logs");
     String uploadEnv=ServerlessExtras.environment(run,io.lmctl.lmcode.Json.object(io.lmctl.lmcode.Json.parse("{\"max_upload_bytes\":1048576,\"upload_expiry_seconds\":10,\"content_types\":\"image/png\"}")));
     if(!uploadEnv.contains("MAX_UPLOAD_BYTES")||!uploadEnv.contains("1048576")||!uploadEnv.contains("UPLOAD_EXPIRY_SECONDS")||!uploadEnv.contains("10")||uploadEnv.contains("1048576.0")||uploadEnv.contains("10.0"))throw new AssertionError("numeric upload environment was not canonicalized: "+uploadEnv);
     refused(() -> ServerlessExtras.environment(run,Map.of("max_upload_bytes",1.5)));
@@ -18,6 +19,12 @@ public final class RemainingChecks {
     String code=ServerlessExtras.workerSource(run,source);
     if(!code.contains("os.environ['RUN_ID']=\"cafe07\"")||!code.contains("os.environ['TABLE_NAME']=\"lmaws_cafe07_table\""))throw new AssertionError("worker source lost its run/table environment");
     run.step("queues","{}");run.step("lambda",config);run.step("worker",config);
+    run.state.put("finished_at","2026-01-01T00:00:00Z");
+    run.state.put("lambda_deleted_at","2026-01-01T00:00:00Z");
+    run.state.put("worker_deleted_at","2026-01-01T00:00:07Z");
+    if(!run.latestDeletionInstant().equals(java.time.Instant.parse("2026-01-01T00:00:07Z")))throw new AssertionError("settlement ignored worker deletion timestamp");
+    run.state.put("finished_at","2099-01-01T00:00:00Z");
+    if(!run.latestDeletionInstant().equals(java.time.Instant.parse("2026-01-01T00:00:07Z")))throw new AssertionError("finished_at extended settlement window");
     var pendingErrors=new java.util.ArrayList<RuntimeException>();ServerlessExtras.cleanupLogs(run,pendingErrors);
     if(!run.state.containsKey("worker_logs")||!pendingErrors.isEmpty())throw new AssertionError("worker logs drained while functions remained active");
     if(run.leftovers().size()!=8)throw new AssertionError("expected table, queues, two functions/logs and mapping receipts: "+run.leftovers());

@@ -691,23 +691,39 @@ public final class AwsBackend implements AutoCloseable {
         return row("kind","sqs_event_source_mapping","id",arn,"state",m.state(),"source",m.eventSourceArn(),"function",m.functionArn(),"run_id",runId);
     }
     QueueWorker resumeEventSourceMapping(String arn,String runId) { eventSourceMappingStatus(arn,runId); mappingRuns.put(arn,runId); return new QueueWorker(this,arn,runId); }
+    void waitEventSourceMappingEnabled(String arn,String runId,int maxSeconds) {
+        if(maxSeconds<1||maxSeconds>120)throw new IllegalArgumentException("event source mapping wait must be 1..120 seconds");
+        if(demo)return;
+        long deadline=System.nanoTime()+Duration.ofSeconds(maxSeconds).toNanos();
+        for(;;){
+            String state=eventSourceMappingStatus(arn,runId).getOrDefault("state","");
+            if("Enabled".equalsIgnoreCase(state))return;
+            if("Failed".equalsIgnoreCase(state)||"UpdateFailed".equalsIgnoreCase(state))throw new IllegalStateException("SQS Lambda event source mapping entered "+state);
+            if(System.nanoTime()>=deadline)throw new IllegalStateException("SQS Lambda event source mapping did not become Enabled within "+maxSeconds+" seconds");
+            sleepReady();
+        }
+    }
     List<Map<String,String>> findEventSourceMappings(String runId) {
         requireRunId(runId); List<Map<String,String>> out=new ArrayList<>();
         if(demo){ for(String arn:mappingRuns.keySet()) if(runId.equals(mappingRuns.get(arn))) out.add(row("kind","sqs_event_source_mapping","id",arn,"run_id",runId)); return out; }
         int seen=0; for(var page:lambda().listEventSourceMappingsPaginator(x->x.functionName("lmaws_"+runId+"_worker"))) for(var m:page.eventSourceMappings()) {
             if(++seen>1000) throw new IllegalStateException("event source mapping inventory exceeded 1000 items");
             String arn=m.eventSourceMappingArn(); if(arn==null||!arn.matches("arn:aws:lambda:us-east-1:[0-9]{12}:event-source-mapping:[A-Za-z0-9-]{8,128}")) continue;
-            var tags=lambda().listTags(x->x.resource(arn)).tags(); if(runId.equals(tags.get("lmaws_test"))) out.add(row("kind","sqs_event_source_mapping","id",arn,"state",m.state(),"run_id",runId));
+            var tags=lambda().listTags(x->x.resource(arn)).tags();
+            boolean owned=runId.equals(tags.get("lmaws_test"));
+            out.add(row("kind","sqs_event_source_mapping","id",arn,"state",m.state(),"source",m.eventSourceArn()==null?"":m.eventSourceArn(),"function",m.functionArn()==null?"":m.functionArn(),"owned",Boolean.toString(owned),"run_id",owned?runId:""));
         }
         return out;
     }
     Map<String,String> deleteEventSourceMapping(String arn,String runId) {
         requireScenarioWrite(); requireRunId(runId); try { eventSourceMappingStatus(arn,runId); } catch(ResourceNotFoundException absent) { mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId); }
         if(!demo) {
-            try { lambda().deleteEventSourceMapping(x->x.uuid(arn.substring(arn.lastIndexOf(':')+1))); } catch(ResourceNotFoundException ignored) { mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId); }
-            long deadline=System.nanoTime()+Duration.ofSeconds(30).toNanos();
+            String uuid=arn.substring(arn.lastIndexOf(':')+1);
+            String state=eventSourceMappingStatus(arn,runId).getOrDefault("state","");
+            if(!"Deleting".equalsIgnoreCase(state))try { lambda().deleteEventSourceMapping(x->x.uuid(uuid)); } catch(ResourceNotFoundException ignored) { mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId); }
+            long deadline=System.nanoTime()+Duration.ofSeconds(120).toNanos();
             while(System.nanoTime()<deadline) { try { lambda().getEventSourceMapping(x->x.uuid(arn.substring(arn.lastIndexOf(':')+1))); sleepReady(); } catch(ResourceNotFoundException gone) { mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId); } }
-            throw new IllegalStateException("SQS Lambda event source mapping did not disappear within 30 seconds");
+            throw new IllegalStateException("SQS Lambda event source mapping did not disappear within 120 seconds");
         }
         mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId);
     }
