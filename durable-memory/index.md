@@ -40,4 +40,4 @@ Canonical external records: [USER_TEST](../docs/USER_TEST.md),
 [current comparison campaign](../evidence/comparison-campaign-v013.json),
 [provider findings](../compare/PROVIDER_TEST.md).
 Superseded release/candidate notes and evidence are available in Git history.
-- [../SYNC_DESIGN.md](../SYNC_DESIGN.md): design-only selectable TTL/hashed/release/invalidate sync strategies, costs, optional grant and acceptance tests.
+- [../docs/LMSYNC_DESIGN.md](../docs/LMSYNC_DESIGN.md): v2 local believed-state API, user-script policy, multi-host jobs, crash recovery and scale benchmarks; [legacy pointer](../SYNC_DESIGN.md).
