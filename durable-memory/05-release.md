@@ -53,4 +53,4 @@ Genuinely open items:
   includes guarded compute and customer-managed IAM policy operations; these
   require their documented explicit approval and ownership checks.
 
-Current source has weighted-DNS and typed/persistent serverless scenario APIs beyond v0.1.16. Their native release artifacts have not been published. The local JVM and loopback gates pass; Lambda scenarios remain fake-only pending explicit role/PassRole authorization and live validation, including actual EventBridge scheduling. The scenario driver rejects real serverless endpoints. Do not infer new-platform native proof from the existing v0.1.16 release.
+Current source includes live custom logging, cumulative serverless caps, provider inventory and post-delivery settlement. The lmweblab 03–06 campaign passed with profile lmaws only and zero final leftovers across five attempts. New settlement changes were verified locally on the JVM and with SDK loopback tests; earlier native release evidence does not cover them.

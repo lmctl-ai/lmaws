@@ -19,7 +19,7 @@ retention updates; cleanup, remaining count and estimated cost are exposed.
 There is no general AWS dispatcher, secret-value API or IAM user/key mutation.
 Guarded Spot/Web APIs support owned nano and web-stack deployments; typed
 Lambda/EventBridge and durable Serverless APIs are implemented and tested with
-fake transports pending the explicit live rollout. Account IDs are masked in public
+fake transports and the live lmweblab integration. Account IDs are masked in public
 outputs; raw ownership identifiers stay in private recovery ledgers.
 
 Masking (`Jsons.mask`, used by `Rows.json/csv`, spend exports and error messages) replaces the
@@ -55,5 +55,8 @@ policy analysis/simulation methods on `Cloud` (58 new own signatures).
 The verified v0.1.18 snapshot has 178 callable bindings, 179 host signature lines
 including the implicit context, and 251 lines including 72 standard signatures.
 Its binaries include serverless lifecycle, Lambda/EventBridge and the guarded
-IAM role API. Live Lambda verification is separately gated on the Lead's session
-readiness signal; inspect `--dsl-signatures` for later main additions.
+IAM role API. The current live Lambda campaign is recorded in lmweblab. The
+snapshot's binaries predate the new settlement fixes; inspect `--dsl-signatures`
+for later main additions.
+
+Verified current source schema: 204 host signature lines including context, 276 including 72 standard declarations. The current settlement API is newer than the v0.1.18 artifact evidence; use --dsl-signatures on the actual binary.
