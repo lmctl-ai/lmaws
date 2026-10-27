@@ -5,7 +5,7 @@ Current maintenance notes:
 - [01-architecture.md](01-architecture.md): SDK, schema, curated API and memory budget.
 - [02-build-test.md](02-build-test.md): local verification gate and five-platform tooling.
 - [03-live.md](03-live.md): canonical live procedure, current results and zero leftovers.
-- [04-examples.md](04-examples.md): 123 examples (counts checked by test-recipes.py), autoruns, images and cost labels.
+- [04-examples.md](04-examples.md): 124 examples (counts checked by test-recipes.py), autoruns, images and cost labels.
 - [05-release.md](05-release.md): published versions, distribution and genuinely open items.
 - [16-release-procedure.md](16-release-procedure.md): one release owner, versioning, cut/prove/retag safely.
 - [06-comparisons.md](06-comparisons.md): lmcloud equivalents, findings and safety checks.
@@ -16,6 +16,9 @@ Current maintenance notes:
 
 - [11-web-stack.md](11-web-stack.md): persistent guarded web-stack integration and local safety gates.
 - [12-policy-builder.md](12-policy-builder.md): fluent IAM permission builder, action catalog, compaction, denial/ledger synthesizer and simulator.
+- [13-lambda-role.md](13-lambda-role.md): bounded admin Lambda execution-role grant, PassRole lint and pending session rollout.
+- [14-remaining-scenarios.md](14-remaining-scenarios.md): queue/worker, conditional writes, presigning, cache bounds and pending live scenario handoff.
+- [15-iam-cheat-sheet.md](15-iam-cheat-sheet.md): IAM cheat sheet mapping every lmaws capability to its statements, scope rationale, failure messages and minimal builder fixes.
 
 Current release/comparison evidence:
 
@@ -37,6 +40,3 @@ Canonical external records: [USER_TEST](../docs/USER_TEST.md),
 [current comparison campaign](../evidence/comparison-campaign-v013.json),
 [provider findings](../compare/PROVIDER_TEST.md).
 Superseded release/candidate notes and evidence are available in Git history.
-
-- [13-lambda-role.md](13-lambda-role.md): bounded admin Lambda execution-role grant, PassRole lint and pending session rollout.
-- [14-remaining-scenarios.md](14-remaining-scenarios.md): queue/worker, conditional writes, presigning, cache bounds and pending live scenario handoff.

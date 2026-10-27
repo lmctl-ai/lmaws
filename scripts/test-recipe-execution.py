@@ -247,8 +247,9 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertTrue(sp_report["lint_valid"])
         self.assertEqual(sp_report["statement_count"], 23)
         self.assertTrue(sp_report["fits_managed"])
+        self.assertGreaterEqual(len(sp_report["extra_rows"]), 25)
 
-        # Compare generated policy against itself via --file -> 22 unchanged, byte_identical=True
+        # Compare generated policy against itself via --file -> 23 unchanged, byte_identical=True
         sp_diff_out = self.work / "session_policy_diff"
         sp_diff_res = self.run_script(
             ROOT / "recipes" / "session_policy.lms",
@@ -260,6 +261,12 @@ class RecipeExecutionTests(unittest.TestCase):
         sp_diff_report = json.loads(sp_diff_out.with_suffix(".json").read_text(encoding="utf-8"))
         self.assertEqual(sp_diff_report["snapshot_diff"]["unchanged_count"], 23)
         self.assertTrue(sp_diff_report["snapshot_diff"]["byte_identical"])
+
+        cs_out = self.work / "policy_cheat_sheet"
+        cs_res = self.run_script(ROOT / "recipes" / "policy_cheat_sheet.lms", "--domain", "example.com", "--output", str(cs_out))
+        self.assertEqual(cs_res.returncode, 0, cs_res.stdout + cs_res.stderr)
+        cs_report = json.loads(cs_out.with_suffix(".json").read_text(encoding="utf-8"))
+        self.assertEqual(len(cs_report["rows"]), 6)
 
         fit_out = self.work / "fit_inline"
         fit_res = self.run_script(ROOT / "recipes" / "policy_fit_inline.lms", "--output", str(fit_out))

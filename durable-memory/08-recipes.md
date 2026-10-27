@@ -29,10 +29,10 @@ reported as compliant, and stopped state alone does not establish idle duration.
 
 `test.sh` checks index/header/image contracts and actual import/composition/
 preview/profile behavior without cloud credentials. The native gallery stage
-runs every recipe example. There are 83 recipe/example pairs across all nine task groups,
+runs every recipe example. There are 84 recipe/example pairs across all nine task groups,
 including the account spend detail, seven per-topic spend reports, seven EC2 compute
 recipes, three IAM/session recipes (`policy_lint`, `grant_session_policy`, and `session_doctor`),
-and 27 permission builder & IAM analysis recipes (`recipes/lib/policy_builder.lms`). The spend
+and 28 permission builder & IAM analysis recipes (`recipes/lib/policy_builder.lms`). The spend
 functions use the concurrent Spend API; their hosted commands require its
 spend-capable native release. Preview works without querying AWS.
 

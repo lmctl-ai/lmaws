@@ -176,6 +176,7 @@ file_write(${out_compact}, p.compact_json());
 file_write(${out_lint}, p.lint().json());
 file_write(${out_explain}, p.explain().json());
 file_write(${out_matrix}, p.matrix().json());
+file_write(${out_extra}, p.size_report().json());
 end _dsl_
     return prog;
   }
@@ -606,6 +607,20 @@ file_write(${out_extra}, migrated.json());
 end _dsl_
     return prog;
   }
+  if (task == "policy_cheat_sheet") {
+    let prog = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud = aws.example("recipe_policy_cheat_sheet");
+let p = cloud.policy(${policy_name}).lmaws_session_policy(${prefix}, ${tag_key}, ${domain}, ${region}, ${types}, ${max_gib});
+let cs = p.cheat_sheet();
+file_write(${out_policy}, p.json());
+file_write(${out_compact}, p.compact_json());
+file_write(${out_lint}, p.lint().json());
+file_write(${out_explain}, p.explain().json());
+file_write(${out_matrix}, p.matrix().json());
+file_write(${out_extra}, cs.json());
+end _dsl_
+    return prog;
+  }
   assert(false);
 }
 
@@ -710,7 +725,7 @@ end _dsl_
   }
 
   let rows = matrix_rows;
-  if (task == "policy_split_managed" || task == "policy_simulate_probes" || task == "policy_diff_review") {
+  if (task == "policy_split_managed" || task == "policy_simulate_probes" || task == "policy_diff_review" || task == "policy_cheat_sheet") {
     rows = extra_list;
   } else if (task == "policy_fit_inline") {
     rows = [
@@ -902,6 +917,20 @@ fn recipe_policy_picture(report, task, name) {
       if (len(lines) < 12) { push(lines, line); }
     }
     _pb_table(name, "Migrated hand-written IAM JSON -> fluent policy builder", lines);
+    return "images/" + name + ".png";
+  }
+  if (task == "policy_cheat_sheet") {
+    let lines = [
+      "Capability        | Statements                 | Bytes | Builder Fix"
+    ];
+    for (r in report.rows) {
+      let cap = substr(str(get(r, "capability", "")) + "                  ", 0, 17);
+      let sids = substr(str(get(r, "statements", "")) + "                          ", 0, 26);
+      let b = substr(str(get(r, "compact_bytes", "")) + "     ", 0, 5);
+      let patch = substr(str(get(r, "minimal_builder_patch", "")), 0, 42);
+      push(lines, cap + " | " + sids + " | " + b + " | " + patch);
+    }
+    _pb_table(name, "IAM cheat sheet for lmaws capabilities (statements, bytes & builder fix)", lines);
     return "images/" + name + ".png";
   }
 

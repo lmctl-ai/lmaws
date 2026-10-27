@@ -37,7 +37,7 @@ for name,what,access,cost,args,run in [
 
 PB_ARGS='--prefix lmaws --region us-east-1 --output data/NAME'
 for name,what,access,cost,args,run in [
- ('session_policy','Generate the 22-statement lmaws_session IAM managed policy with the fluent builder and diff against an optional snapshot','Read-only','$0.00 offline policy compilation and diff','--policy lmaws_session --prefix lmaws --domain example.com --region us-east-1 --types t4g.nano,t3.nano --max-gib 8 [--file SNAPSHOT.json] --output data/NAME','--domain example.com'),
+ ('session_policy','Generate the 23-statement lmaws_session IAM managed policy with the fluent builder, statement size report and optional snapshot diff','Read-only','$0.00 offline policy compilation and diff','--policy lmaws_session --prefix lmaws --domain example.com --region us-east-1 --types t4g.nano,t3.nano --max-gib 8 [--file SNAPSHOT.json] --output data/NAME','--domain example.com'),
  ('policy_s3_sandbox','Build a prefix-scoped S3 bucket and object sandbox policy with account-boundary and tagged-delete guardrails','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
  ('policy_sqs_sandbox','Build a prefix-scoped SQS queue sandbox policy with account-boundary and region-lock guardrails','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
  ('policy_sns_sandbox','Build a prefix-scoped SNS topic sandbox policy with account-boundary and region-lock guardrails','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
@@ -63,7 +63,8 @@ for name,what,access,cost,args,run in [
  ('policy_from_ledger','Synthesize a least-privilege IAM policy and fluent builder program from observed SDK calls in run ledgers','Read-only','$0.00 offline ledger synthesis','[--ledger FILE] --output data/NAME',''),
  ('policy_diff_review','Compare two policy versions statement-by-statement and report added, modified, removed and unchanged rules','Read-only','$0.00 offline statement diff',PB_ARGS,''),
  ('policy_simulate_probes','Evaluate allow and deny security probes against a policy offline or via IAM SimulateCustomPolicy','Read-only','$0.00 offline; live IAM simulator requires AWS_PROFILE=admin','--policy lmaws_session [--probes SPEC] [--live --profile admin] --output data/NAME',''),
- ('policy_migrate_json','Migrate hand-written IAM policy JSON into a typed fluent lmaws permission builder program','Read-only','$0.00 offline JSON migration','[--file POLICY.json] --output data/NAME','')]:
+ ('policy_migrate_json','Migrate hand-written IAM policy JSON into a typed fluent lmaws permission builder program','Read-only','$0.00 offline JSON migration','[--file POLICY.json] --output data/NAME',''),
+ ('policy_cheat_sheet','Map every lmaws capability to its exact IAM statement Sids, scope rationale, missing-permission error and minimal builder fix','Read-only','$0.00 offline IAM cheat sheet','--policy lmaws_session --prefix lmaws --domain example.com --output data/NAME','--domain example.com')]:
  ITEMS.append(dict(name=name,category='Permission builder and IAM analysis',task=name,library='policy_builder',function='recipe_policy_builder',what=what,access=access,cost=cost,args=args.replace('NAME',name),run=run))
 
 HYGIENE_ARGS='--region us-east-1 --profile default --output data/NAME [--live]'

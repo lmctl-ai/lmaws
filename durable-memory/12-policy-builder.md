@@ -52,11 +52,13 @@ and 12 `Cloud` helper methods.
 
 ## Dogfood and recipes
 
-`recipes/session_policy.lms` generates the 22-statement `lmaws_session` managed
-policy (`5,290` compact chars) byte-for-byte identically (`+0 ~0 -0 =23`,
+`recipes/session_policy.lms` generates the 23-statement `lmaws_session` managed
+policy (`5,292` compact chars, including `LambdaPassRole`, `CfCreate`, `AcmOwn`,
+and `size_report()`) byte-for-byte identically (`+0 ~0 -0 =23`,
 `byte_identical=true`) to `~/.aws/session-tools/tasks/iam-snapshots/lmaws-managed-policy.json`
 and `grant_session_policy.lms --live --profile admin` confirms `0` diff against
-the live default policy version. 27 recipes in `recipes/lib/policy_builder.lms`
-and matching synthetic picture-first examples (`examples/recipe_*.lms`) cover
-all building blocks, compaction, splitting, denial/ledger analysis, diffing,
-simulation and migration.
+the live default policy version. 28 recipes in `recipes/lib/policy_builder.lms`
+(including `recipes/policy_cheat_sheet.lms`) and matching synthetic picture-first
+examples (`examples/recipe_*.lms`) cover all building blocks, compaction,
+splitting, denial/ledger analysis, diffing, 6-sub-resource `RunInstances`
+simulation, cheat-sheet mapping and migration.

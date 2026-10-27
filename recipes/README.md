@@ -70,6 +70,7 @@ println("matched rows:",len(report.rows));
 |---|---|---|---|---|
 | [`policy_billing_viewer.lms`](policy_billing_viewer.lms) | Build a read-only Cost Explorer, Budgets, Pricing and CloudWatch metrics viewer policy | Read-only | --prefix lmaws --region us-east-1 --output data/policy_billing_viewer | $0.00 offline policy compilation |
 | [`policy_break_glass.lms`](policy_break_glass.lms) | Build an MFA-gated, time-windowed and bastion-IP-locked emergency break-glass policy | Read-only | --cidr 203.0.113.10/32 --from 2026-01-01T00:00:00Z --to 2026-01-01T04:00:00Z --output data/policy_break_glass | $0.00 offline policy compilation |
+| [`policy_cheat_sheet.lms`](policy_cheat_sheet.lms) | Map every lmaws capability to its exact IAM statement Sids, scope rationale, missing-permission error and minimal builder fix | Read-only | --policy lmaws_session --prefix lmaws --domain example.com --output data/policy_cheat_sheet | $0.00 offline IAM cheat sheet |
 | [`policy_ci_bucket_deployer.lms`](policy_ci_bucket_deployer.lms) | Build a least-privilege CI static asset uploader and CloudFront invalidation policy | Read-only | --prefix lmaws --region us-east-1 --output data/policy_ci_bucket_deployer | $0.00 offline policy compilation |
 | [`policy_deny_untagged_delete.lms`](policy_deny_untagged_delete.lms) | Build a defense-in-depth policy pairing request-tag creation gates with explicit Denies on untagged deletes | Read-only | --prefix lmaws --region us-east-1 --output data/policy_deny_untagged_delete | $0.00 offline policy compilation |
 | [`policy_diff_review.lms`](policy_diff_review.lms) | Compare two policy versions statement-by-statement and report added, modified, removed and unchanged rules | Read-only | --prefix lmaws --region us-east-1 --output data/policy_diff_review | $0.00 offline statement diff |
@@ -94,7 +95,7 @@ println("matched rows:",len(report.rows));
 | [`policy_ssm_sandbox.lms`](policy_ssm_sandbox.lms) | Build a prefix-scoped SSM Parameter Store sandbox policy with public parameter read access | Read-only | --prefix lmaws --region us-east-1 --output data/policy_ssm_sandbox | $0.00 offline policy compilation |
 | [`policy_tag_operator.lms`](policy_tag_operator.lms) | Build a tag discovery and tag-gated resource tagging operator policy | Read-only | --prefix lmaws --region us-east-1 --output data/policy_tag_operator | $0.00 offline policy compilation |
 | [`policy_web_stack.lms`](policy_web_stack.lms) | Build a static site stack policy (S3 bucket + CloudFront OAC + ACM + Route53 record pattern lock) | Read-only | --prefix lmaws --domain example.com --region us-east-1 --output data/policy_web_stack | $0.00 offline policy compilation |
-| [`session_policy.lms`](session_policy.lms) | Generate the 22-statement lmaws_session IAM managed policy with the fluent builder and diff against an optional snapshot | Read-only | --policy lmaws_session --prefix lmaws --domain example.com --region us-east-1 --types t4g.nano,t3.nano --max-gib 8 [--file SNAPSHOT.json] --output data/session_policy | $0.00 offline policy compilation and diff |
+| [`session_policy.lms`](session_policy.lms) | Generate the 23-statement lmaws_session IAM managed policy with the fluent builder, statement size report and optional snapshot diff | Read-only | --policy lmaws_session --prefix lmaws --domain example.com --region us-east-1 --types t4g.nano,t3.nano --max-gib 8 [--file SNAPSHOT.json] --output data/session_policy | $0.00 offline policy compilation and diff |
 
 ## Inventory
 
@@ -287,6 +288,15 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_break_glass.lms`
 
 Example: [`examples/recipe_policy_break_glass.lms`](../examples/recipe_policy_break_glass.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
+
+### policy_cheat_sheet
+
+![Map every lmaws capability to its exact IAM statement Sids, scope rationale, missing-permission error and minimal builder fix](../docs/images/recipe_policy_cheat_sheet.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_policy_cheat_sheet.lms`
+
+Example: [`examples/recipe_policy_cheat_sheet.lms`](../examples/recipe_policy_cheat_sheet.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/policy_builder.lms`; function `recipe_policy_builder`.
 
 ### policy_ci_bucket_deployer
@@ -507,7 +517,7 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 ### session_policy
 
-![Generate the 22-statement lmaws_session IAM managed policy with the fluent builder and diff against an optional snapshot](../docs/images/recipe_session_policy.png)
+![Generate the 23-statement lmaws_session IAM managed policy with the fluent builder, statement size report and optional snapshot diff](../docs/images/recipe_session_policy.png)
 
 `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_session_policy.lms`
 
