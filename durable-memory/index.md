@@ -18,6 +18,9 @@ Current maintenance notes:
 
 Current release/comparison evidence:
 
+- [release-v0118.json](release-v0118.json): five v0.1.18 assets, checksums and offline role API verification.
+- [autorun-v0118.json](autorun-v0118.json): fresh-cache synthetic Lambda grant example; no AWS requests.
+
 - [release-v0115.json](release-v0115.json): five v0.1.15 assets, checksums, linkage and offline checks.
 - [autorun-v0115.json](autorun-v0115.json): eight fresh-cache public spend examples and 12 synthetic images.
 

@@ -28,3 +28,5 @@ Missing, widened, extra-condition, wrong-service, wrong-resource, mixed-action,
 or any other `iam:` statements fail lint. Live Lambda create/invoke/delete
 verification remains pending the Lead's policy rollout; tests use synthetic or
 loopback transports only until then.
+
+Verified release: v0.1.18. The offline role suite has 38 controls; SDK loopback tests cover preview, idempotence, pagination, owned teardown and refusals. All five native jobs and the fresh-cache synthetic example passed. Real Lambda execution remains gated on the Lead confirmation and scoped log-group cleanup permission; public evidence is synthetic only.

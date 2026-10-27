@@ -1,20 +1,28 @@
 # Releases and remaining work
 
-Current verified release: **v0.1.15**, source commit
-`549ee9fd40aa8b4b92b1b1a59d2a70c265d32c72`.
-[Release proof](release-v0115.json) records all five binaries, their verified
-SHA256SUMS, Linux linkage and released-native offline checks. Packaging run
-[40417639588](https://github.com/lmctl-ai/lmaws/actions/runs/40417639588) passed
-on all five platforms. The snapshot includes the spend reports and the current
-IAM permission builder, credential-process and guarded web-stack API.
+Current verified release: **v0.1.18**, source commit
+`2aaba04653733e898469b0faa55b8534ff6bd481`.
+[Release proof](release-v0118.json) records all five native assets, verified
+SHA256SUMS, Linux linkage, released-native self-tests and exact role API signatures.
+[Packaging run 40433490733](https://github.com/lmctl-ai/lmaws/actions/runs/40433490733)
+passed all five platform jobs. The release includes guarded Lambda execution-role
+grants and the narrow Lambda-only PassRole lint exception, preserving the IAM
+builder and persistent serverless work.
 
-The local managed/native gate passed all 115 gallery programs, 75 recipe
-contracts, nine recipe execution regressions, 188 spend controls, 33 native SDK
-loopback controls and 12 spend API cases. The release has 152 callable bindings,
-153 host signature lines including its implicit context, and 225 including std.
-[Fresh-cache proof](autorun-v0115.json) records eight public spend URLs from
-empty working directories, installing v0.1.15 and producing 12 synthetic images;
-no AWS credentials or account data were used. All public proof is synthetic.
+The managed/native local gate passed 116 gallery programs, 76 recipe contracts,
+ten recipe execution regressions, 38 role controls and SDK role transport cases.
+The snapshot has 178 callable bindings, 179 host signature lines including its
+context and 251 including std. [Fresh-cache proof](autorun-v0118.json) runs the
+public synthetic Lambda grant example from an empty directory/cache, verifies
+v0.1.18, validation success, no apply and the PNG. Public proof uses no AWS access.
+
+Live Lambda execution is separately gated on the Lead's explicit PassRole/session
+readiness signal and the documented log-cleanup permission. The role grant recipe
+is the only administrative path; tests use the lmaws profile. Live account evidence
+stays ignored and is not part of the public proof.
+
+Earlier [v0.1.15 release](release-v0115.json) and [v0.1.15 autorun](autorun-v0115.json)
+proofs retain the spend-release baseline.
 
 Earlier [v0.1.3 release](release-v013.json), [v0.1.3 autorun](autorun-v013.json),
 [v0.1.2 release](release-v012.json) and [v0.1.2 autorun](autorun-v012.json) proofs

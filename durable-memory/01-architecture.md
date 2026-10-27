@@ -52,6 +52,8 @@ own signatures (`iam_policy_lint`, `iam_policy_get`, `iam_policy_versions`,
 From v0.1.12, the fluent IAM Permission Builder (`PolicyBuilder`, `PolicyCatalog`,
 `PolicyAnalyzer`, `PolicySimulator`) adds the `Policy` type (46 methods) and 12
 policy analysis/simulation methods on `Cloud` (58 new own signatures).
-Current main has 179 host signature lines including the implicit context,
-and 251 lines including the 72 standard signatures. The new serverless API is
-source-only until released; use `--dsl-signatures` to check the actual binary.
+The verified v0.1.18 snapshot has 178 callable bindings, 179 host signature lines
+including the implicit context, and 251 lines including 72 standard signatures.
+Its binaries include serverless lifecycle, Lambda/EventBridge and the guarded
+IAM role API. Live Lambda verification is separately gated on the Lead's session
+readiness signal; inspect `--dsl-signatures` for later main additions.
