@@ -19,6 +19,8 @@ public final class LambdaChecks {
         if (!rule.target(fn.arn()).get("target").contains("lmaws_demo_fn")) throw new AssertionError("EventBridge target");
         expect(() -> rule.target("arn:aws:lambda:elsewhere:000000000000:function:lmaws_bad"));
         expect(() -> new EventRule("unsafe", "rate(1 minute)", "demo01"));
+        fn.delete();fn.delete();rule.delete();rule.delete();
+        if(!"deleted".equals(fn.status().get("state"))||!"deleted".equals(rule.status().get("state")))throw new AssertionError("idempotent object teardown");
     }
     private static void expect(Runnable r){try{r.run();throw new AssertionError("unsafe input accepted");}catch(IllegalArgumentException expected){}}
 }

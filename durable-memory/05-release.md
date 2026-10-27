@@ -43,3 +43,5 @@ Genuinely open items:
   guards, capped estimates, redaction and credential-free fake CI. Current code
   includes guarded compute and customer-managed IAM policy operations; these
   require their documented explicit approval and ownership checks.
+
+Current source has weighted-DNS and typed/persistent serverless scenario APIs beyond v0.1.16. Their native release artifacts have not been published. The local JVM and loopback gates pass; Lambda scenarios remain fake-only pending explicit role/PassRole authorization and live validation, including actual EventBridge scheduling. The scenario driver rejects real serverless endpoints. Do not infer new-platform native proof from the existing v0.1.16 release.
