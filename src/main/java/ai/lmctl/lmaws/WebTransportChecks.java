@@ -61,6 +61,12 @@ public final class WebTransportChecks {
                     && !req.distributionConfigWithTags().distributionConfig().aliases().items().isEmpty())
                 throw new AssertionError("phase one distribution must not claim custom alias");
 
+            Distribution lambdaDist=web.createLambdaDistribution("", "lmaws-site-"+RUN+"."+DOMAIN,
+                    "https://lmaws-transport.lambda-url.us-east-1.on.aws/", "", null, false);
+            DistributionConfig lambdaCfg=((CreateDistributionWithTagsRequest)seen.get("createDistributionWithTags")).distributionConfigWithTags().distributionConfig();
+            if(lambdaCfg.origins().items().size()!=1||!lambdaCfg.origins().items().getFirst().customOriginConfig().originProtocolPolicy().equals(OriginProtocolPolicy.HTTPS_ONLY)||lambdaCfg.defaultCacheBehavior().defaultTTL()!=0L||lambdaCfg.cacheBehaviors()!=null)
+                throw new AssertionError("Lambda URL distribution did not enforce HTTPS and zero caching");
+
             web.createOac();
             Object oac = seen.get("createOriginAccessControl");
             if (!(oac instanceof CreateOriginAccessControlRequest oacReq)

@@ -80,6 +80,24 @@ public final class WebStackAws implements AutoCloseable {
         for(;;)try{return cloudfront.createDistributionWithTags(request).distribution();}
         catch(InvalidViewerCertificateException e){if(certArn==null||System.nanoTime()>deadline)throw e;sleep(15000);}
     }
+    /** CloudFront distribution for Lambda URL scenarios 03 (API origin) and 05 (S3 + /api/*). */
+    public Distribution createLambdaDistribution(String bucket,String alias,String lambdaUrl,String oac,String certArn,boolean mixed){
+        if(!alias.equals("lmaws-site-"+runId+"."+domain))throw new SecurityException("alias outside this run namespace");
+        if(lambdaUrl==null||!lambdaUrl.matches("https://[a-z0-9-]+\\.lambda-url\\.(?:[a-z0-9-]+\\.)?on\\.aws/?|https://[a-z0-9-]+\\.lambda-url\\.local/?"))throw new SecurityException("Lambda URL is not an allowed HTTPS origin");
+        String host=lambdaUrl.substring("https://".length()).replaceFirst("/$","");
+        Origin api=Origin.builder().id("lambda-api-"+runId).domainName(host).customOriginConfig(CustomOriginConfig.builder().originProtocolPolicy(OriginProtocolPolicy.HTTPS_ONLY).httpsPort(443).httpPort(80).originSslProtocols(OriginSslProtocols.builder().items(SslProtocol.TLS_V1_2).quantity(1).build()).build()).build();
+        Origin s3origin=null; String defaultId=api.id();
+        if(mixed){owned(bucket);s3origin=Origin.builder().id("s3-"+bucket).domainName(bucket+".s3.amazonaws.com").originAccessControlId(oac).s3OriginConfig(S3OriginConfig.builder().originAccessIdentity("").build()).build();defaultId=s3origin.id();}
+        AllowedMethods apiMethods=AllowedMethods.builder().items(Method.GET,Method.HEAD,Method.OPTIONS,Method.PUT,Method.POST,Method.PATCH,Method.DELETE).quantity(7).cachedMethods(CachedMethods.builder().items(Method.GET,Method.HEAD).quantity(2).build()).build();
+        DefaultCacheBehavior def=DefaultCacheBehavior.builder().targetOriginId(defaultId).viewerProtocolPolicy(ViewerProtocolPolicy.ALLOW_ALL).allowedMethods(mixed?AllowedMethods.builder().items(Method.GET,Method.HEAD).quantity(2).cachedMethods(CachedMethods.builder().items(Method.GET,Method.HEAD).quantity(2).build()).build():apiMethods).forwardedValues(ForwardedValues.builder().queryString(!mixed).cookies(CookiePreference.builder().forward(ItemSelection.NONE).build()).build()).minTTL(0L).defaultTTL(mixed?30L:0L).maxTTL(mixed?60L:0L).compress(true).build();
+        CacheBehavior apiPath=mixed?CacheBehavior.builder().pathPattern("/api/*").targetOriginId(api.id()).viewerProtocolPolicy(ViewerProtocolPolicy.ALLOW_ALL).allowedMethods(apiMethods).forwardedValues(ForwardedValues.builder().queryString(true).cookies(CookiePreference.builder().forward(ItemSelection.ALL).build()).build()).minTTL(0L).defaultTTL(0L).maxTTL(0L).build():null;
+        Origins.Builder origins=Origins.builder().items(mixed?List.of(s3origin,api):List.of(api)).quantity(mixed?2:1);
+        DistributionConfig.Builder cfg=DistributionConfig.builder().callerReference(UUID.randomUUID().toString()).enabled(true).comment("lmweblab "+runId).origins(origins.build()).defaultCacheBehavior(def).priceClass(PriceClass.PRICE_CLASS_100).viewerCertificate(ViewerCertificate.builder().cloudFrontDefaultCertificate(true).build());
+        if(apiPath!=null)cfg.cacheBehaviors(CacheBehaviors.builder().items(apiPath).quantity(1).build());
+        if(certArn!=null)cfg.aliases(Aliases.builder().items(alias).quantity(1).build()).viewerCertificate(viewerCertificate(alias,certArn));
+        var req=CreateDistributionWithTagsRequest.builder().distributionConfigWithTags(DistributionConfigWithTags.builder().distributionConfig(cfg.build()).tags(Tags.builder().items(software.amazon.awssdk.services.cloudfront.model.Tag.builder().key("lmaws_test").value(runId).build()).build()).build()).build();
+        return cloudfront.createDistributionWithTags(req).distribution();
+    }
     private ViewerCertificate viewerCertificate(String alias,String arn) {
         if(!alias.equals("lmaws-site-"+runId+"."+domain))throw new SecurityException("certificate alias outside this run");
         var detail=certificate(arn);

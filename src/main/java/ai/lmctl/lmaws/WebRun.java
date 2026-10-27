@@ -59,7 +59,7 @@ final class WebRun implements AutoCloseable {
     private void persist(){try{Path temp=Files.createTempFile(path.getParent(),".web-state-",".tmp");try{try{Files.setPosixFilePermissions(temp,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));}catch(UnsupportedOperationException ignored){}Files.writeString(temp,Jsons.encodeRaw(state));try(FileChannel f=FileChannel.open(temp,StandardOpenOption.WRITE)){f.force(true);}Files.move(temp,path,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}finally{Files.deleteIfExists(temp);}}catch(java.io.IOException e){throw new IllegalStateException("cannot save private web state",e);}}
     private String val(String k){String v=state.get(k);if(v==null||v.isEmpty())throw new IllegalStateException("web step prerequisite missing: "+k);return v;}
     @SuppressWarnings("unchecked") synchronized Map<String,String> step(String op,String json) {
-        guard();if(!Set.of("bucket","distribution","certificate","dns_site","compute","dns_app","dns_weighted","https","invalidate","record_http","reserve_http").contains(op))throw new IllegalArgumentException("unknown web step");
+        guard();if(!Set.of("bucket","distribution","lambda_distribution","certificate","dns_site","compute","dns_app","dns_weighted","https","invalidate","record_http","reserve_http").contains(op))throw new IllegalArgumentException("unknown web step");
         Object parsed=Json.parse(json);if(!(parsed instanceof Map<?,?> raw))throw new IllegalArgumentException("web step arguments must be an object");
         Map<String,Object> args=(Map<String,Object>)raw;
         if("down".equals(state.get("status")))throw new IllegalStateException("run is torn down; choose a new run id");
@@ -84,6 +84,7 @@ final class WebRun implements AutoCloseable {
         switch(op){
             case "bucket"->state.put("bucket_created","true");
             case "distribution"->{val("bucket_created");state.put("oac","fixture-oac");state.put("distribution","fixture-distribution");state.put("cf_domain","dfixture.cloudfront.net");}
+            case "lambda_distribution"->{state.put("distribution","fixture-lambda-distribution");state.put("distribution_arn","arn:aws:cloudfront::000000000000:distribution/fixture-lambda-distribution");state.put("cf_domain","dfixture.cloudfront.net");state.put("lambda_distribution","true");}
             case "certificate"->{state.put("cert","fixture-cert");state.put("certificate_status","ISSUED");}
             case "dns_site"->{val("cert");state.put("site_record","true");state.put("zone","fixture-zone");}
             case "compute"->{WebStack.requireHttpCidr(arg(a,"cidr","203.0.113.10/32"));state.put("instance_id","i-fixture");state.put("security_group_id","sg-fixture");state.put("public_ip","203.0.113.20");}
@@ -105,6 +106,11 @@ final class WebRun implements AutoCloseable {
                 if(!state.containsKey("oac")){state.put("oac",aws().createOac());persist();}
                 if(!state.containsKey("distribution")){var d=aws().createDistribution(val("bucket"),val("site"),val("oac"),state.get("cert"));state.put("distribution",d.id());state.put("distribution_arn",d.arn());state.put("cf_domain",d.domainName());persist();}
                 aws().bucketPolicy(val("bucket"),val("distribution_arn"));aws().waitDeployed(val("distribution"),Duration.ofMinutes(20));
+            }
+            case "lambda_distribution"->{
+                String url=arg(a,"lambda_url",""); boolean mixed="true".equalsIgnoreCase(arg(a,"mixed","false"));
+                String alias=val("site"); String bucket=mixed?val("bucket"):""; String oac=mixed?val("oac"):""; String cert=state.get("cert");
+                var d=aws().createLambdaDistribution(bucket,alias,url,oac,cert,mixed); state.put("distribution",d.id());state.put("distribution_arn",d.arn());state.put("cf_domain",d.domainName());state.put("lambda_distribution","true");persist();aws().waitDeployed(val("distribution"),Duration.ofMinutes(20));
             }
             case "certificate"->{
                 if(!state.containsKey("zone")){state.put("zone",aws().zoneId(domain));persist();}
