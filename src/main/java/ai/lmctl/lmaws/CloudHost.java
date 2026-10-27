@@ -104,6 +104,9 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","demo",List.of(),"Cloud",(c,s,a)->Value.object("Cloud",open("us-east-1",true)));
         r.method("Cloud","region",List.of("string"),"Cloud",(c,s,a)->Value.object("Cloud",open(text(a[0]),false)));
         for(String inventory:INVENTORIES) r.method("Cloud",inventory,List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.inventory(inventory),c)));
+        r.method("Cloud","iam_role_get",List.of("string"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamRoleGet(text(a[0]))));
+        r.method("Cloud","iam_role_put",List.of("string","string","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamRolePut(text(a[0]),text(a[1]),a[2].asBool())));
+        r.method("Cloud","iam_role_delete",List.of("string","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamRoleDelete(text(a[0]),a[1].asBool())));
         r.method("Cloud","iam_policy_lint",List.of("string"),"Row",(c,s,a)->{
             Map<String,String> out=(s.asObject() instanceof Session sess)?sess.backend.iamPolicyLint(text(a[0])):IamPolicies.lint(text(a[0])).toMap();
             return rowValue(c,out);

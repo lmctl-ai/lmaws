@@ -807,6 +807,24 @@ public final class AwsBackend implements AutoCloseable {
         return System.getenv().getOrDefault("AWS_REGION", System.getenv().getOrDefault("AWS_DEFAULT_REGION", ""));
     }
 
+    private IamRoles iamRoles;
+    private IamRoles roleManager() {
+        if(iamRoles==null)iamRoles=new IamRoles(demo,this::iam,()->resolvePolicyArn("lmaws_boundary").split(":")[4],this::requireIamRoleAccess);
+        return iamRoles;
+    }
+    private void requireIamRoleAccess(boolean apply) {
+        if(demo&&!apply)return;
+        if(!"admin".equals(activeProfile())||!"1".equals(System.getenv("LMAWS_ADMIN_GRANT")))
+            throw new IllegalStateException("IAM role grants require AWS_PROFILE=admin and LMAWS_ADMIN_GRANT=1");
+        if(!demo&&endpoint==null&&!isLiveEnabled())throw new IllegalStateException("IAM role grants require LMAWS_LIVE=1");
+        if(apply)IamPolicies.checkMutationGuard(true,activeProfile(),demo||endpoint!=null||isLiveEnabled(),true,isApplyEnabled(),"lmaws_lambda_exec");
+        String ci=System.getenv().getOrDefault("CI","");
+        if(!demo&&endpoint==null&&(ci.equalsIgnoreCase("true")||ci.equals("1")))throw new IllegalStateException("live IAM role access is forbidden in CI");
+    }
+    public Map<String,String> iamRoleGet(String name){return roleManager().get(name);}
+    public Map<String,String> iamRolePut(String name,String spec,boolean apply){return roleManager().put(name,spec,apply);}
+    public Map<String,String> iamRoleDelete(String name,boolean apply){return roleManager().delete(name,apply);}
+
     public Map<String, String> iamPolicyLint(String documentJson) {
         if (cost != null) cost.request("iam", "LintPolicyDocument");
         IamPolicies.LintResult lint = IamPolicies.lint(documentJson);
