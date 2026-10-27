@@ -17,6 +17,7 @@ public final class LambdaFunction {
     private static final Pattern NAME = Pattern.compile("lmaws[-_][a-z0-9_-]{1,62}");
     private static final Pattern ROLE = Pattern.compile("(?:arn:aws:iam::[0-9]+:role/)?lmaws_lambda_exec");
     private final String name, role, runtime, handler, code, runId;
+    private String providerArn;
     private final AwsBackend backend;
     private final int memoryMb, timeoutSeconds;
     private boolean deleted;
@@ -29,7 +30,7 @@ public final class LambdaFunction {
         if (name == null || !NAME.matcher(name).matches()) throw new IllegalArgumentException("Lambda name must start with lmaws_ or lmaws-");
         if (role == null || !ROLE.matcher(role).matches()) throw new IllegalArgumentException("only the pre-created lmaws_lambda_exec role is allowed");
         if (!runtime.equals("python3.12") && !runtime.equals("python3.11")) throw new IllegalArgumentException("runtime must be python3.12 or python3.11");
-        if (handler == null || !handler.matches("[A-Za-z_][A-Za-z0-9_.-]{0,127}")) throw new IllegalArgumentException("invalid Lambda handler");
+        if (handler == null || !handler.matches("[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_.-]{0,127}")) throw new IllegalArgumentException("invalid Lambda handler");
         if (code == null || code.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 256 * 1024) throw new IllegalArgumentException("inline Lambda source exceeds 256 KiB");
         if (memoryMb < 128 || memoryMb > 10240 || memoryMb % 1 != 0) throw new IllegalArgumentException("memory must be 128..10240 MiB");
         if (timeoutSeconds < 1 || timeoutSeconds > 900) throw new IllegalArgumentException("timeout must be 1..900 seconds");
@@ -38,7 +39,8 @@ public final class LambdaFunction {
     public synchronized Map<String,String> status() {
         return row("kind","lambda","name",name,"id",arn(),"arn",arn(),"role","lmaws_lambda_exec","runtime",runtime,"handler",handler,"memory_mb",Integer.toString(memoryMb),"timeout_s",Integer.toString(timeoutSeconds),"run_id",runId,"state",deleted?"deleted":"active");
     }
-    public synchronized String arn(){return "arn:aws:lambda:local:000000000000:function:"+name;}
+    synchronized void providerArn(String arn){if(arn!=null&&!arn.isBlank())providerArn=arn;}
+    public synchronized String arn(){return providerArn==null?"arn:aws:lambda:local:000000000000:function:"+name:providerArn;}
     public synchronized String url(String reason){
         if (deleted) throw new IllegalStateException("Lambda is deleted");
         if (reason == null || reason.isBlank()) throw new IllegalArgumentException("public Function URL auth NONE requires an explicit reason");
