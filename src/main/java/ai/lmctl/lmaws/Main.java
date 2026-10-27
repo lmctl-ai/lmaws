@@ -105,7 +105,7 @@ public final class Main {
             RuntimeBudget.configure(bytes,requested);
             Path input=Path.of(args[1]);if(Files.size(input)>Math.min(bytes/4,64L*1024*1024))throw VmException.run("LMAWS_MAX_MEMORY_MB bytecode input exceeds memory budget");
             io.lmctl.lmcode.Program program=io.lmctl.lmcode.Program.load(Files.readAllBytes(input),schema,registry);
-            try{program.run(host.context(bytes),registry);}catch(Exception failure){
+            try{program.run(host.context(bytes),registry);}catch(Exception|OutOfMemoryError failure){
                 String action="";
                 if(failure instanceof AwsServiceException service && service.awsErrorDetails()!=null){String reason=service.awsErrorDetails().errorMessage();if(reason!=null){var matcher=java.util.regex.Pattern.compile("perform:?\\s+([A-Za-z0-9]+:[A-Za-z0-9]+)").matcher(reason);if(matcher.find())action=matcher.group(1);}}
                 host.noteFailure(safeError(failure),action);throw failure;

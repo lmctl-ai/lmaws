@@ -32,8 +32,8 @@ public final class LambdaFunction {
         if (!runtime.equals("python3.12") && !runtime.equals("python3.11")) throw new IllegalArgumentException("runtime must be python3.12 or python3.11");
         if (handler == null || !handler.matches("[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_.-]{0,127}")) throw new IllegalArgumentException("invalid Lambda handler");
         if (code == null || code.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 256 * 1024) throw new IllegalArgumentException("inline Lambda source exceeds 256 KiB");
-        if (memoryMb < 128 || memoryMb > 10240 || memoryMb % 1 != 0) throw new IllegalArgumentException("memory must be 128..10240 MiB");
-        if (timeoutSeconds < 1 || timeoutSeconds > 900) throw new IllegalArgumentException("timeout must be 1..900 seconds");
+        if (memoryMb < 128 || memoryMb > 512) throw new IllegalArgumentException("memory must be 128..512 MiB");
+        if (timeoutSeconds < 1 || timeoutSeconds > 30) throw new IllegalArgumentException("timeout must be 1..30 seconds");
         this.backend=backend;this.name=name;this.role=role;this.runtime=runtime;this.handler=handler;this.code=code;this.memoryMb=memoryMb;this.timeoutSeconds=timeoutSeconds;this.runId=runId;
     }
     public synchronized Map<String,String> status() {

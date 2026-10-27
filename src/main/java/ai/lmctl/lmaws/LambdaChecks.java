@@ -12,8 +12,11 @@ public final class LambdaChecks {
         expect(() -> new LambdaFunction("lmaws_bad", "other-role", "python3.12", "app.handler", "x", 128, 1, "demo01"));
         expect(() -> new LambdaFunction("lmaws_bad", "lmaws_lambda_exec", "python3.12", "app.handler", "x", 127, 1, "demo01"));
         expect(() -> fn.url(""));
+        expect(() -> new LambdaFunction("lmaws_bad","lmaws_lambda_exec","python3.12","app.handler","x",513,1,"demo01"));
+        expect(() -> new LambdaFunction("lmaws_bad","lmaws_lambda_exec","python3.12","app.handler","x",128,31,"demo01"));
         var rule = new EventRule("lmaws_demo_rule", "rate(1 minute)", "demo01");
         if (!rule.target(fn.arn()).get("target").contains("lmaws_demo_fn")) throw new AssertionError("EventBridge target");
+        expect(() -> rule.target("arn:aws:lambda:elsewhere:000000000000:function:lmaws_bad"));
         expect(() -> new EventRule("unsafe", "rate(1 minute)", "demo01"));
     }
     private static void expect(Runnable r){try{r.run();throw new AssertionError("unsafe input accepted");}catch(IllegalArgumentException expected){}}

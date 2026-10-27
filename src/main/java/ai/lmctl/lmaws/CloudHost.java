@@ -289,11 +289,14 @@ public final class CloudHost implements AutoCloseable {
     }
     public Context context(long budget) {Context c=new Context();c.memoryLimitBytes=budget;c.setObject("aws","Cloud",new Object());return c;}
     void emergencyWebCleanup() {
+        for(var run:serverlessRuns.reversed())try{run.down();}catch(RuntimeException e){System.err.println("serverless cleanup incomplete; inspect private state");}
         for(var run:webRuns.reversed())try{run.down();}catch(RuntimeException e){System.err.println("web shutdown cleanup incomplete; inspect private state");}
     }
     @Override public synchronized void close() {
         if(closed)return;
         RuntimeException failure=null;
+        if(!failureCode.isEmpty())emergencyWebCleanup();
+        for(var run:serverlessRuns.reversed())try{run.close();}catch(RuntimeException e){failure=e;}
         for(var run:webRuns.reversed())try{run.close();}catch(RuntimeException e){failure=e;}
         for(var run:spots.reversed())try{run.close();}catch(RuntimeException e){failure=e;System.err.println("lmaws spot teardown failed: "+Main.safeError(e));}
         for(var run:runs.reversed())try{run.close();}catch(RuntimeException e){failure=e;}
@@ -331,6 +334,11 @@ public final class CloudHost implements AutoCloseable {
             var total=new java.math.BigDecimal(web.state.getOrDefault("total_estimated_usd","0"));
             report.put("total_estimated_usd",total);report.put("estimated_cost_display","$"+total.setScale(8,java.math.RoundingMode.CEILING).toPlainString());
             report.put("web_status",web.state.getOrDefault("status","new"));report.put("web_verified_leftover_count","down".equals(web.state.get("status"))?0:null);
+        }
+        for(var run:serverlessRuns)if(run.cost==session.cost){
+            report.put("serverless_status",run.state.getOrDefault("status","new"));
+            report.put("serverless_active_receipt_count",run.leftovers().size());
+            report.put("serverless_verified_leftover_count","down".equals(run.state.get("status"))?0:null);
         }
         Path dir=Path.of(System.getenv().getOrDefault("LMAWS_EVIDENCE_DIR",session.cost.live()?"evidence":"data/cost-evidence"));Path output=dir.resolve("live-cost-"+session.cost.example()+"-"+session.cost.runId()+".json");
         try {

@@ -15,7 +15,7 @@ public final class EventRule {
         this.backend=backend;this.name=name;this.schedule=schedule;this.runId=runId;
     }
     void providerArn(String arn){providerArn=arn;}
-    public synchronized Map<String,String> target(String lambdaArn){if(deleted)throw new IllegalStateException("rule is deleted");if(lambdaArn==null||!lambdaArn.contains(":function:lmaws"))throw new IllegalArgumentException("EventBridge target must be an lmaws Lambda ARN");target=lambdaArn;if(backend!=null)backend.putEventTarget(name,lambdaArn,runId);return status();}
+    public synchronized Map<String,String> target(String lambdaArn){if(deleted)throw new IllegalStateException("rule is deleted");if(lambdaArn==null||!lambdaArn.matches("arn:aws:lambda:(us-east-1|local):[0-9]{12}:function:lmaws[-_][A-Za-z0-9_-]{1,58}"))throw new IllegalArgumentException("EventBridge target must be an lmaws Lambda ARN");target=lambdaArn;if(backend!=null)backend.putEventTarget(name,lambdaArn,runId);return status();}
     public synchronized Map<String,String> status(){var m=new LinkedHashMap<String,String>();m.put("kind","event_rule");m.put("name",name);m.put("id",providerArn.isEmpty()?"arn:aws:events:local:000000000000:rule/"+name:providerArn);m.put("schedule",schedule);m.put("target",target);m.put("run_id",runId);m.put("state",deleted?"deleted":"active");return m;}
     public synchronized Map<String,String> delete(){if(backend!=null)backend.deleteEventRule(name,runId);deleted=true;return status();}
 }
