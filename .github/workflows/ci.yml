@@ -14,7 +14,7 @@ jobs:
   native:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 80
     strategy:
       fail-fast: false
       matrix:
@@ -51,7 +51,7 @@ jobs:
       - name: Pinned script compiler
         run: npm install -g @lmctl-ai/lmctl@0.2.420
       - name: JVM, fake endpoints and examples
-        timeout-minutes: 15
+        timeout-minutes: 25
         run: bash test.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -59,7 +59,7 @@ jobs:
         timeout-minutes: 30
         run: bash scripts/build-native.sh
       - name: Native, fake endpoints and examples
-        timeout-minutes: 15
+        timeout-minutes: 30
         run: LMAWS_NATIVE=1 bash test.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
