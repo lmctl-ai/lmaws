@@ -76,7 +76,8 @@ public final class PolicyBuilderChecks {
         // If the local snapshot file exists, extract its domain dynamically and verify 100% byte-for-byte equivalence
         Path localSnapshot = Path.of(System.getProperty("user.home", ""),
             ".aws", "session-tools", "tasks", "iam-snapshots", "lmaws-managed-policy.json");
-        if (Files.isRegularFile(localSnapshot)) {
+        // Opt-in only: --self-test must not depend on the operator's private ~/.aws files (they drift independently).
+        if ("1".equals(System.getenv("LMAWS_CHECK_LOCAL_POLICY_SNAPSHOT")) && Files.isRegularFile(localSnapshot)) {
             try {
                 String rawSnapshot = Files.readString(localSnapshot, StandardCharsets.UTF_8);
                 var m = java.util.regex.Pattern.compile("lmaws-\\*\\.([a-z0-9.-]+)\"").matcher(rawSnapshot);

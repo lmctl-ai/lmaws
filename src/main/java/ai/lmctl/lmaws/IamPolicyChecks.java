@@ -104,7 +104,7 @@ public final class IamPolicyChecks {
         require(template.denyStatements() == 3, "Expected 3 deny statements in template policy");
 
         Path snapshot = Path.of(System.getProperty("user.home"), ".aws", "session-tools", "tasks", "iam-snapshots", "lmaws-managed-policy.json");
-        if (Files.isRegularFile(snapshot)) {
+        if ("1".equals(System.getenv("LMAWS_CHECK_LOCAL_POLICY_SNAPSHOT")) && Files.isRegularFile(snapshot)) {  // opt-in: operator files drift
             String raw = Files.readString(snapshot);
             IamPolicies.LintResult res = IamPolicies.lint(raw);
             require(res.valid(), "Real lmaws-managed-policy.json must pass lint: " + res.findings());
