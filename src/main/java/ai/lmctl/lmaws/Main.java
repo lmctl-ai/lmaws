@@ -18,8 +18,10 @@ public final class Main {
         Live writes require AWS_PROFILE=lmaws (or lmaws-ec2 for the spot nano sandbox),
         a new ledger, prefixed names and ownership tags.
         Exceptions for the admin profile (refused for every other mutating call):
-        1. lmaws_ customer-managed IAM policy writes (iam_policy_put/iam_policy_delete)
+        1. lmaws_ IAM policy and Lambda execution-role grants (iam_policy_put/iam_policy_delete, iam_role_put/iam_role_delete)
            require AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1, LMAWS_LIVE=1 and --apply (LMAWS_APPLY=1).
+           iam_role_get and live role previews require the same admin/grant/live flags without --apply.
+           Role grants require Lambda-only trust and the same-account lmaws_boundary.
         2. lmaws --credential-process <mode> reads ONLY the static admin source profile
            from shared credentials/config (ignoring ambient env/web-identity/container/IMDS)
            to call STS GetCallerIdentity and GetFederationToken (awsspot-local-<mode>, 3600s,

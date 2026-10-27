@@ -4,6 +4,22 @@
 lmweblab Lambda scenarios. The lmaws session never creates IAM roles and the
 policy linter continues to reject role-management actions.
 
+The typed API is:
+
+```text
+Cloud.iam_role_get(string name) -> Row
+Cloud.iam_role_put(string name, string specification_json, bool apply) -> Row
+Cloud.iam_role_delete(string name, bool apply) -> Row
+Lambda.wait_active(int timeout_seconds) -> Row
+```
+
+The role specification has exactly `trust_policy`, `permissions_boundary`,
+`managed_policies` (array of ARNs), and `inline_policies` (name-to-document map).
+The public recipe uses `${aws:PrincipalAccount}` in the boundary ARN; the host
+resolves it to the caller account before dispatch. Optional customer managed
+policies must belong to that account and have root-path names `lmaws_lambda_*`.
+Live output is restricted to the ignored `.lmaws-local/iam-role/` directory.
+
 The role is created or updated only through the admin grant path:
 
 ```text
