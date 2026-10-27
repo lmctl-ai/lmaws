@@ -67,6 +67,14 @@ public final class WebTransportChecks {
             if(lambdaCfg.origins().items().size()!=1||!lambdaCfg.origins().items().getFirst().customOriginConfig().originProtocolPolicy().equals(OriginProtocolPolicy.HTTPS_ONLY)||lambdaCfg.defaultCacheBehavior().defaultTTL()!=0L||lambdaCfg.cacheBehaviors()!=null)
                 throw new AssertionError("Lambda URL distribution did not enforce HTTPS and zero caching");
 
+            web.createLambdaDistribution("lmaws-site-"+RUN,"lmaws-site-"+RUN+"."+DOMAIN,"https://lmaws-transport.lambda-url.us-east-1.on.aws/","oac-"+RUN,null,true);
+            DistributionConfig mixed=((CreateDistributionWithTagsRequest)seen.get("createDistributionWithTags")).distributionConfigWithTags().distributionConfig();
+            if(mixed.origins().quantity()!=2||mixed.cacheBehaviors().items().getFirst().defaultTTL()!=0L||!"/api/*".equals(mixed.cacheBehaviors().items().getFirst().pathPattern()))throw new AssertionError("mixed origins or API no-cache contract");
+            web.configureCache("EDFDVBD6EXAMPLE",30,60);
+            var cache=((UpdateDistributionRequest)seen.get("updateDistribution")).distributionConfig().defaultCacheBehavior();
+            if(cache.defaultTTL()!=30L||cache.maxTTL()!=60L||cache.minTTL()!=0L)throw new AssertionError("bounded cache update missing");
+            expect(()->web.configureCache("EDFDVBD6EXAMPLE",301,3600));
+            expect(()->web.configureCache("EDFDVBD6EXAMPLE",60,30));
             web.createOac();
             Object oac = seen.get("createOriginAccessControl");
             if (!(oac instanceof CreateOriginAccessControlRequest oacReq)

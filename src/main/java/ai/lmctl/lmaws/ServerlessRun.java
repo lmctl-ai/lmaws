@@ -36,7 +36,7 @@ final class ServerlessRun implements AutoCloseable {
             ready=true;persist();
         }catch(Exception error){close();throw new IllegalStateException("cannot open private serverless state",error);}
     }
-    private void persist(){
+    void persist(){
         try{Path temp=Files.createTempFile(path.getParent(),".serverless-",".tmp");try{
             try{Files.setPosixFilePermissions(temp,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));}catch(UnsupportedOperationException ignored){}
             Files.writeString(temp,Jsons.encodeRaw(state));try(var file=FileChannel.open(temp,StandardOpenOption.WRITE)){file.force(true);}Files.move(temp,path,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
@@ -45,10 +45,10 @@ final class ServerlessRun implements AutoCloseable {
     private String arg(Map<String,Object> args,String name,String fallback){Object value=args.get(name);return value==null?fallback:String.valueOf(value);}
     private int integer(Map<String,Object> args,String key,int fallback){Object v=args.get(key);if(v==null)return fallback;double n=v instanceof Number number?number.doubleValue():Double.parseDouble(v.toString());if(!Double.isFinite(n)||n!=Math.rint(n)||n<0||n>Integer.MAX_VALUE)throw new IllegalArgumentException("invalid integer "+key);return (int)n;}
     synchronized Map<String,String> step(String op,String json) {
-        if(!Set.of("table","bucket","lambda","event","report","reserve_http","record_http").contains(op))throw new IllegalArgumentException("unknown serverless step");
+        if(!Set.of("table","bucket","lambda","event","report","reserve_http","record_http","queues","worker").contains(op))throw new IllegalArgumentException("unknown serverless step");
         if("down".equals(state.get("status")))throw new IllegalStateException("run torn down; choose a new id");
         Map<String,Object> args=Json.object(Json.parse(json));String encoded=Jsons.encodeRaw(args);
-        if(!Set.of("report","reserve_http","record_http").contains(op)&&"done".equals(state.get("step_"+op))){if(!encoded.equals(state.get("args_"+op)))throw new IllegalArgumentException("configuration changed; choose a new run");return summary();}
+        if(!Set.of("report","reserve_http","record_http","queues","worker").contains(op)&&"done".equals(state.get("step_"+op))){if(!encoded.equals(state.get("args_"+op)))throw new IllegalArgumentException("configuration changed; choose a new run");return summary();}
         enforceBudget(op,args);
         state.put("intent",op);state.put("intent_"+op,"true");state.put("args_"+op,encoded);persist();
         try {
@@ -74,7 +74,7 @@ final class ServerlessRun implements AutoCloseable {
                     String prefix="import os\n";
                     for(var e:Map.of("RUN_ID",run,"TABLE_NAME",state.getOrDefault("table",""),"BUCKET_NAME",state.getOrDefault("bucket",""),"TTL_SECONDS",String.valueOf(ttl)).entrySet())prefix+="os.environ["+Jsons.encodeRaw(e.getKey())+"]="+Jsons.encodeRaw(e.getValue())+"\n";
                     state.put("memory_mb",String.valueOf(memory));state.put("timeout_s",String.valueOf(timeout));
-                    String source=prefix+Files.readString(sourcePath);new LambdaFunction(name,role,runtime,handler,source,memory,timeout,run);
+                    String source=prefix+ServerlessExtras.environment(this,args)+Files.readString(sourcePath);new LambdaFunction(name,role,runtime,handler,source,memory,timeout,run);
                     state.put("log_group",logGroup);persist();
                     String arn=backend.isDemo()?"arn:aws:lambda:local:000000000000:function:"+name:backend.createLambda(name,role,runtime,handler,source,memory,timeout,run,logGroup).get("arn");
                     state.put("lambda_name",name);state.put("lambda_arn",arn);persist();
@@ -82,6 +82,7 @@ final class ServerlessRun implements AutoCloseable {
                     String reason=arg(args,"url_reason","ephemeral scenario API with no secrets; bounded requests and explicit teardown");
                     state.put("lambda_url",backend.isDemo()?"https://"+name+".lambda-url.local/":backend.lambdaUrl(arn,reason));persist();
                 }
+                case "queues", "worker" -> ServerlessExtras.step(this,op,args);
                 case "event"->{
                     String function=state.get("lambda_arn");if(function==null)throw new IllegalStateException("Lambda prerequisite missing");String name="lmaws_"+run+"_rule",schedule=arg(args,"schedule","rate(1 minute)");new EventRule(name,schedule,run);
                     state.put("event_execution_bound",invokeBound(20).toPlainString());
@@ -103,15 +104,16 @@ final class ServerlessRun implements AutoCloseable {
             state.put("step_"+op,"done");state.remove("intent");state.put("status","up");persist();return summary();
         }catch(Exception error){state.put("provider_error",privateError(error));persist();try{down();}catch(Exception cleanup){error.addSuppressed(cleanup);}if(error instanceof RuntimeException runtime)throw runtime;throw new IllegalStateException("serverless step failed",error);}
     }
-    synchronized Map<String,String> summary(){var result=new LinkedHashMap<String,String>();for(String k:List.of("run_id","status","table","bucket","lambda_name","lambda_arn","lambda_url","log_group","rule","latest_json_body","latest_html_body","table_items"))result.put(k,state.getOrDefault(k,""));result.put("estimated_cost_usd",estimate().toPlainString());return result;}
+    synchronized Map<String,String> summary(){var result=new LinkedHashMap<String,String>();for(String k:List.of("run_id","status","table","bucket","lambda_name","lambda_arn","lambda_url","log_group","rule","latest_json_body","latest_html_body","table_items","queue","dlq","worker_name","mapping"))result.put(k,state.getOrDefault(k,""));result.put("estimated_cost_usd",estimate().toPlainString());return result;}
     synchronized List<Map<String,String>> leftovers(){
         var rows=new ArrayList<Map<String,String>>();
-        for(String kind:List.of("table","bucket","lambda_name","log_group","rule"))if(state.containsKey(kind))rows.add(Map.of("kind",kind,"name",state.get(kind),"run_id",run));
+        for(String kind:List.of("table","bucket","lambda_name","log_group","rule","queue","dlq","worker_name","worker_logs","mapping"))if(state.containsKey(kind))rows.add(Map.of("kind",kind,"name",state.get(kind),"run_id",run));
         return rows;
     }
     synchronized Map<String,String> down(){
         try(var ignored=cost.cleanupScope()){
             var errors=new ArrayList<RuntimeException>();
+            ServerlessExtras.down(this,errors);
             cleanup("rule",()->{if(!backend.isDemo())backend.deleteEventRule(state.get("rule"),run);},errors);
             cleanup("lambda_name",()->{if(!backend.isDemo()){backend.deleteLambdaFunctionUrl(state.get("lambda_arn"),run);backend.deleteLambda(state.get("lambda_arn"),run);}state.remove("lambda_arn");state.remove("lambda_url");},errors);
             cleanup("log_group",()->{backend.deleteLambdaLogGroup(state.get("log_group"),run);state.remove("log_group");},errors);

@@ -59,14 +59,14 @@ final class WebRun implements AutoCloseable {
     private void persist(){try{Path temp=Files.createTempFile(path.getParent(),".web-state-",".tmp");try{try{Files.setPosixFilePermissions(temp,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));}catch(UnsupportedOperationException ignored){}Files.writeString(temp,Jsons.encodeRaw(state));try(FileChannel f=FileChannel.open(temp,StandardOpenOption.WRITE)){f.force(true);}Files.move(temp,path,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}finally{Files.deleteIfExists(temp);}}catch(java.io.IOException e){throw new IllegalStateException("cannot save private web state",e);}}
     private String val(String k){String v=state.get(k);if(v==null||v.isEmpty())throw new IllegalStateException("web step prerequisite missing: "+k);return v;}
     @SuppressWarnings("unchecked") synchronized Map<String,String> step(String op,String json) {
-        guard();if(!Set.of("bucket","distribution","lambda_distribution","certificate","dns_site","compute","dns_app","dns_weighted","https","invalidate","record_http","reserve_http").contains(op))throw new IllegalArgumentException("unknown web step");
+        guard();if(!Set.of("bucket","distribution","lambda_distribution","certificate","dns_site","compute","dns_app","dns_weighted","https","invalidate","record_http","reserve_http","cache").contains(op))throw new IllegalArgumentException("unknown web step");
         Object parsed=Json.parse(json);if(!(parsed instanceof Map<?,?> raw))throw new IllegalArgumentException("web step arguments must be an object");
         Map<String,Object> args=(Map<String,Object>)raw;
         if("down".equals(state.get("status")))throw new IllegalStateException("run is torn down; choose a new run id");
         // Weighted records are intentionally repeatable: each call may shift
         // the split (90/10 -> 50/50 -> 0/100) within the same run.
         if(!Set.of("record_http","reserve_http","dns_weighted").contains(op)&&"done".equals(state.get("step_"+op)))return summary();
-        if(estimate().add(Set.of("record_http","reserve_http").contains(op)?java.math.BigDecimal.ZERO:new java.math.BigDecimal(state.getOrDefault("http_reserved","0"))).compareTo(new java.math.BigDecimal(state.getOrDefault("cost_cap","0.10")))>=0)throw new CostLedger.BudgetExceeded("web run cost cap reached before step");
+        if(estimate().add(Set.of("record_http","reserve_http","cache").contains(op)?java.math.BigDecimal.ZERO:new java.math.BigDecimal(state.getOrDefault("http_reserved","0"))).compareTo(new java.math.BigDecimal(state.getOrDefault("cost_cap","0.10")))>=0)throw new CostLedger.BudgetExceeded("web run cost cap reached before step");
         state.put("intent",op);persist();long start=System.nanoTime();
         try{if(backend.isDemo()) demoStep(op,args);else liveStep(op,args);}
         catch(RuntimeException failure){
@@ -86,6 +86,7 @@ final class WebRun implements AutoCloseable {
             case "distribution"->{val("bucket_created");state.put("oac","fixture-oac");state.put("distribution","fixture-distribution");state.put("cf_domain","dfixture.cloudfront.net");}
             case "lambda_distribution"->{val("cert");String fn=arg(a,"function_name","");if(!fn.startsWith("lmaws_"+run+"_"))throw new SecurityException("Lambda name outside this run");backend.requireLambdaUrlOwned(fn,arg(a,"lambda_url",""),run);if("true".equals(arg(a,"mixed","false")))val("bucket_created");state.put("distribution","fixture-lambda-distribution");state.put("distribution_arn","arn:aws:cloudfront::000000000000:distribution/fixture-lambda-distribution");state.put("cf_domain","dfixture.cloudfront.net");state.put("lambda_distribution","true");}
             case "certificate"->{state.put("cert","fixture-cert");state.put("certificate_status","ISSUED");}
+            case "cache"->{val("distribution");long ttl=integerArg(a,"default_ttl"),max=integerArg(a,"max_ttl");if(ttl>300||max<ttl||max>3600)throw new IllegalArgumentException("cache TTL bounds");state.put("cache_default_ttl",Long.toString(ttl));state.put("cache_max_ttl",Long.toString(max));}
             case "dns_site"->{val("cert");state.put("site_record","true");state.put("zone","fixture-zone");}
             case "compute"->{WebStack.requireHttpCidr(arg(a,"cidr","203.0.113.10/32"));state.put("instance_id","i-fixture");state.put("security_group_id","sg-fixture");state.put("public_ip","203.0.113.20");}
             case "dns_app"->{val("instance_id");state.putIfAbsent("zone","fixture-zone");state.put("app_record","true");}
@@ -145,6 +146,7 @@ final class WebRun implements AutoCloseable {
                 if(sw+dw!=100)throw new IllegalArgumentException("weighted DNS weights must sum to 100");
                 if(!state.containsKey("zone")){state.put("zone",aws().zoneId(domain));persist();} String zone=arg(a,"zone",val("zone")); aws().weightedSetOwned(zone,fqdn,target,ip,sw,dw,false,state.containsKey("weighted_record"),()->{state.put("weighted_name",fqdn);state.put("weighted_static_target",target);state.put("weighted_dynamic_ip",ip);state.put("weighted_static_weight",String.valueOf(sw));state.put("weighted_dynamic_weight",String.valueOf(dw));state.put("weighted_record","true");persist();});
             }
+            case "cache"->{long ttl=integerArg(a,"default_ttl"),max=integerArg(a,"max_ttl");if(ttl>300||max<ttl||max>3600)throw new IllegalArgumentException("cache TTL bounds");if(!backend.isDemo())aws().configureCache(val("distribution"),ttl,max);state.put("cache_default_ttl",Long.toString(ttl));state.put("cache_max_ttl",Long.toString(max));}
             case "https"->{aws().attachCertificate(val("distribution"),val("site"),val("cert"),true);state.put("https","true");}
             case "invalidate"->aws().invalidate(val("distribution"));
             case "reserve_http", "record_http"->{

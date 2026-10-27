@@ -62,6 +62,9 @@ import software.amazon.awssdk.services.iam.model.Policy;
 import software.amazon.awssdk.services.iam.model.PolicyVersion;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.ListFunctionsRequest;
+import software.amazon.awssdk.services.lambda.model.CreateEventSourceMappingRequest;
+import software.amazon.awssdk.services.lambda.model.FunctionResponseType;
+import software.amazon.awssdk.services.lambda.model.ResourceNotFoundException;
 import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.route53.Route53Client;
@@ -78,6 +81,8 @@ import software.amazon.awssdk.services.s3.model.CreateBucketConfiguration;
 import software.amazon.awssdk.services.s3.model.Tag;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.model.NotificationConfiguration;
 import software.amazon.awssdk.services.s3.model.LambdaFunctionConfiguration;
 import software.amazon.awssdk.services.s3.model.Event;
@@ -98,6 +103,8 @@ import software.amazon.awssdk.services.sqs.model.DeleteQueueRequest;
 import software.amazon.awssdk.services.sqs.model.ListQueuesRequest;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 import software.amazon.awssdk.services.sqs.model.QueueDoesNotExistException;
+import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
+import software.amazon.awssdk.services.sqs.model.GetQueueAttributesRequest;
 import software.amazon.awssdk.services.sns.model.NotFoundException;
 import software.amazon.awssdk.services.ssm.model.ParameterAlreadyExistsException;
 import software.amazon.awssdk.services.sts.StsClient;
@@ -116,6 +123,7 @@ public final class AwsBackend implements AutoCloseable {
     private final URI endpoint;
     private final CostLedger cost;
     private final Map<String, Map<String, String>> demoResources = new LinkedHashMap<>();
+    private final Map<String,String> mappingRuns = new LinkedHashMap<>();
     private final Map<String,S3Client> regionalBuckets=new LinkedHashMap<>();
     private final Map<String, java.util.Set<String>> bucketObjects = new LinkedHashMap<>();
     private final Map<String, DemoPolicyState> demoPolicies = new LinkedHashMap<>();
@@ -425,6 +433,7 @@ public final class AwsBackend implements AutoCloseable {
         if(demo)return List.of();
         List<Map<String,String>> rows=new ArrayList<>();
         for(var row:prefixFunctions("lmaws_"+runId+"_")){rows.add(row);if(runId.equals(row.get("run_id")))try{rows.add(lambdaUrlRecord(row.get("id"),runId));}catch(software.amazon.awssdk.services.lambda.model.ResourceNotFoundException ignored){}}
+        rows.addAll(prefixQueues("lmaws_"+runId+"_"));
         for(var row:prefixTables("lmaws_"+runId+"_"))rows.add(row);
         for(var row:prefixLogGroups("lmaws_"))if(row.getOrDefault("name","").endsWith("_logs_"+runId))rows.add(row);
         for(var row:prefixBuckets("lmaws-"+runId+"-"))rows.add(row);
@@ -613,6 +622,74 @@ public final class AwsBackend implements AutoCloseable {
         if(response.functionError()!=null)throw new IllegalStateException("Lambda invocation returned a function error");
         return row("status",Integer.toString(response.statusCode()),"function_name",arn,"request_id",response.executedVersion()==null?"":response.executedVersion(),"payload",response.payload()==null?"":response.payload().asUtf8String());
     }
+    QueueWorker createEventSourceMapping(String queueUrl,String lambdaArn,int batchSize,String runId) {
+        requireScenarioWrite(); requireRunId(runId);
+        requireName(last(queueUrl));
+        if(!demo&&!queueUrl.matches("https://sqs\\.us-east-1\\.amazonaws\\.com/[0-9]{12}/lmaws[_-][A-Za-z0-9_-]+"))throw new SecurityException("queue URL outside the scenario region and namespace");
+        if(lambdaArn==null||!lambdaArn.matches("arn:aws:lambda:(?:us-east-1|local):[0-9]{12}:function:lmaws[_-][A-Za-z0-9_-]+"))throw new SecurityException("worker function ARN outside namespace");
+        if(batchSize<1||batchSize>10) throw new IllegalArgumentException("SQS Lambda batch size must be 1..10 without a batching window");
+        if(!demo) {
+            if(!owned("queue",queueUrl,runId)) throw new SecurityException("SQS source queue ownership mismatch");
+            requireOwnedLambda(lambdaArn,runId);
+            String queueArn=sqs().getQueueAttributes(GetQueueAttributesRequest.builder().queueUrl(queueUrl).attributeNames(QueueAttributeName.QUEUE_ARN).build()).attributesAsStrings().get("QueueArn");
+            if(queueArn==null||!queueArn.matches("arn:aws:sqs:us-east-1:[0-9]{12}:lmaws[_-][A-Za-z0-9_-]+")) throw new SecurityException("SQS source is outside the scenario namespace");
+            var response=lambda().createEventSourceMapping(CreateEventSourceMappingRequest.builder().eventSourceArn(queueArn).functionName(lambdaArn).batchSize(batchSize).enabled(true).tags(Map.of("lmaws_test",runId)).functionResponseTypes(FunctionResponseType.REPORT_BATCH_ITEM_FAILURES).build());
+            String arn=response.eventSourceMappingArn();
+            mappingRuns.put(arn,runId);
+            return new QueueWorker(this,arn,runId);
+        }
+        String arn="arn:aws:lambda:local:000000000000:event-source-mapping:lmaws-"+runId+"-"+Integer.toUnsignedString((queueUrl+lambdaArn).hashCode(),16);
+        mappingRuns.put(arn,runId); return new QueueWorker(this,arn,runId);
+    }
+    Map<String,String> eventSourceMappingStatus(String arn,String runId) {
+        requireRunId(runId); if(mappingRuns.containsKey(arn)&&!runId.equals(mappingRuns.get(arn))) throw new SecurityException("event source mapping ownership mismatch");
+        if(demo)return row("kind","sqs_event_source_mapping","id",arn,"state","Enabled","run_id",runId);
+        if(!arn.matches("arn:aws:lambda:us-east-1:[0-9]{12}:event-source-mapping:[A-Za-z0-9-]{8,128}")) throw new SecurityException("event source mapping ARN outside the scenario namespace");
+        var m=lambda().getEventSourceMapping(x->x.uuid(arn.substring(arn.lastIndexOf(':')+1)));
+        if(m.eventSourceMappingArn()==null||!arn.equals(m.eventSourceMappingArn())) throw new SecurityException("event source mapping identity mismatch");
+        var tags=lambda().listTags(x->x.resource(arn)).tags(); if(!runId.equals(tags.get("lmaws_test"))) throw new SecurityException("event source mapping ownership tag mismatch");
+        if(m.eventSourceArn()==null||!m.eventSourceArn().matches("arn:aws:sqs:us-east-1:[0-9]{12}:lmaws[_-][A-Za-z0-9_-]+")) throw new SecurityException("event source queue outside scenario namespace");
+        if(m.functionArn()==null||!m.functionArn().matches("arn:aws:lambda:us-east-1:[0-9]{12}:function:lmaws[-_][A-Za-z0-9_-]{1,58}")) throw new SecurityException("event source function outside scenario namespace");
+        String queueUrl=sqs().getQueueUrl(x->x.queueName(last(m.eventSourceArn()))).queueUrl();
+        if(!owned("queue",queueUrl,runId)) throw new SecurityException("event source queue ownership tag mismatch");
+        requireOwnedLambda(m.functionArn(),runId);
+        return row("kind","sqs_event_source_mapping","id",arn,"state",m.state(),"source",m.eventSourceArn(),"function",m.functionArn(),"run_id",runId);
+    }
+    QueueWorker resumeEventSourceMapping(String arn,String runId) { eventSourceMappingStatus(arn,runId); mappingRuns.put(arn,runId); return new QueueWorker(this,arn,runId); }
+    List<Map<String,String>> findEventSourceMappings(String runId) {
+        requireRunId(runId); List<Map<String,String>> out=new ArrayList<>();
+        if(demo){ for(String arn:mappingRuns.keySet()) if(runId.equals(mappingRuns.get(arn))) out.add(row("kind","sqs_event_source_mapping","id",arn,"run_id",runId)); return out; }
+        int seen=0; for(var page:lambda().listEventSourceMappingsPaginator(x->x.functionName("lmaws_"+runId+"_worker"))) for(var m:page.eventSourceMappings()) {
+            if(++seen>1000) throw new IllegalStateException("event source mapping inventory exceeded 1000 items");
+            String arn=m.eventSourceMappingArn(); if(arn==null||!arn.matches("arn:aws:lambda:us-east-1:[0-9]{12}:event-source-mapping:[A-Za-z0-9-]{8,128}")) continue;
+            var tags=lambda().listTags(x->x.resource(arn)).tags(); if(runId.equals(tags.get("lmaws_test"))) out.add(row("kind","sqs_event_source_mapping","id",arn,"state",m.state(),"run_id",runId));
+        }
+        return out;
+    }
+    Map<String,String> deleteEventSourceMapping(String arn,String runId) {
+        requireScenarioWrite(); requireRunId(runId); try { eventSourceMappingStatus(arn,runId); } catch(ResourceNotFoundException absent) { mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId); }
+        if(!demo) {
+            try { lambda().deleteEventSourceMapping(x->x.uuid(arn.substring(arn.lastIndexOf(':')+1))); } catch(ResourceNotFoundException ignored) { mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId); }
+            long deadline=System.nanoTime()+Duration.ofSeconds(30).toNanos();
+            while(System.nanoTime()<deadline) { try { lambda().getEventSourceMapping(x->x.uuid(arn.substring(arn.lastIndexOf(':')+1))); sleepReady(); } catch(ResourceNotFoundException gone) { mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId); } }
+            throw new IllegalStateException("SQS Lambda event source mapping did not disappear within 30 seconds");
+        }
+        mappingRuns.remove(arn); return row("kind","sqs_event_source_mapping","id",arn,"state","deleted","run_id",runId);
+    }
+    Map<String,String> setSqsRedrive(String sourceUrl,String dlqUrl,String runId) {
+        requireScenarioWrite(); requireRunId(runId); requireName(last(sourceUrl));requireName(last(dlqUrl)); if(sourceUrl.equals(dlqUrl)) throw new IllegalArgumentException("DLQ must differ from source queue");
+        if(!demo) {
+            if(!owned("queue",sourceUrl,runId)||!owned("queue",dlqUrl,runId)) throw new SecurityException("SQS redrive queue ownership mismatch");
+            String arn=sqs().getQueueAttributes(GetQueueAttributesRequest.builder().queueUrl(dlqUrl).attributeNames(QueueAttributeName.QUEUE_ARN).build()).attributesAsStrings().get("QueueArn");
+            String policy=Jsons.encode(Map.of("deadLetterTargetArn",arn,"maxReceiveCount","3"));
+            sqs().setQueueAttributes(x->x.queueUrl(sourceUrl).attributes(Map.of(QueueAttributeName.REDRIVE_POLICY,policy)));
+        }
+        return row("kind","sqs_redrive","source",sourceUrl,"dlq",dlqUrl,"max_receive_count","3","run_id",runId,"state","active");
+    }
+    Map<String,String> clearSqsRedrive(String sourceUrl,String runId) {
+        requireScenarioWrite(); requireRunId(runId); requireName(last(sourceUrl)); if(!demo) { if(!owned("queue",sourceUrl,runId)) throw new SecurityException("SQS source queue ownership mismatch"); sqs().setQueueAttributes(x->x.queueUrl(sourceUrl).attributes(Map.of(QueueAttributeName.REDRIVE_POLICY,"{}"))); }
+        return row("kind","sqs_redrive","source",sourceUrl,"state","cleared","run_id",runId);
+    }
     String lambdaUrl(String arn,String reason) {
         requireScenarioWrite();
         if(reason==null||reason.isBlank()||reason.length()>256)throw new IllegalArgumentException("public Function URL auth NONE requires a bounded explicit reason");
@@ -680,6 +757,33 @@ public final class AwsBackend implements AutoCloseable {
             s3().putBucketNotificationConfiguration(x->x.bucket(bucket).notificationConfiguration(NotificationConfiguration.builder().lambdaFunctionConfigurations(LambdaFunctionConfiguration.builder().id("lmaws-"+runId).lambdaFunctionArn(lambdaArn).events(Event.fromValue(eventName)).build()).build()));
         }
         return row("kind","s3_notification","bucket",bucket,"lambda_arn",lambdaArn,"event",eventName,"state","active");
+    }
+
+    /** Issue a bounded SigV4 PUT URL for an object in a run-owned bucket. */
+    Map<String,String> s3PresignPut(String bucket,String key,long size,String contentType,int expiry,String runId) {
+        requireScenarioWrite(); requireRunId(runId); requireName(bucket); requireObjectKey(key);
+        if (!bucket.matches("lmaws-[a-z0-9-]{1,48}")) throw new IllegalArgumentException("presigned upload bucket must use lmaws- prefix");
+        if (size < 1 || size > 10L * 1024L * 1024L) throw new IllegalArgumentException("presigned upload size must be 1..10485760 bytes");
+        if (expiry < 1 || expiry > 900) throw new IllegalArgumentException("presigned upload expiry must be 1..900 seconds");
+        if (contentType == null || !contentType.matches("image/(?:png|jpeg|webp|gif)")) throw new IllegalArgumentException("content type must be a supported image type");
+        if (demo) return row("kind","s3_presigned_put","bucket",bucket,"key",key,"url","https://"+bucket+".s3.local/"+key,"expires_in",Integer.toString(expiry),"content_length",Long.toString(size),"content_type",contentType,"run_id",runId,"signed","true");
+        if (!owned("bucket",bucket,runId)) throw new SecurityException("bucket ownership mismatch");
+        var request = software.amazon.awssdk.services.s3.model.PutObjectRequest.builder().bucket(bucket).key(key).contentLength(size).contentType(contentType).build();
+        var signerBuilder = S3Presigner.builder().region(region);
+        if (endpoint != null) signerBuilder.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")));
+        else signerBuilder.credentialsProvider(ProfileCredentialsProvider.builder().profileName(profileName).build());
+        try (S3Presigner signer = register(signerBuilder.build())) {
+            PresignedPutObjectRequest signed = signer.presignPutObject(x -> x.signatureDuration(Duration.ofSeconds(expiry)).putObjectRequest(request));
+            return row("kind","s3_presigned_put","bucket",bucket,"key",key,"url",signed.url().toString(),"expires_in",Integer.toString(expiry),"content_length",Long.toString(size),"content_type",contentType,"run_id",runId,"signed","true");
+        }
+    }
+
+    Map<String,String> tableItemConditional(String table,String key,String value,String condition,String runId) {
+        requireScenarioWrite(); requireName(table); requireRunId(runId);
+        if (condition == null || !(condition.equals("attribute_not_exists(pk)") || condition.equals("attribute_exists(pk)"))) throw new IllegalArgumentException("condition must be attribute_exists(pk) or attribute_not_exists(pk)");
+        if (key == null || key.isBlank() || key.length() > 1024 || value == null || value.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 65536) throw new IllegalArgumentException("bounded item key/value required");
+        if (!demo) { if (!owned("table",table,runId)) throw new SecurityException("table ownership mismatch"); ddb().putItem(x -> x.tableName(table).item(Map.of("pk",AttributeValue.builder().s(key).build(),"value",AttributeValue.builder().s(value).build())).conditionExpression(condition)); }
+        return row("kind","dynamodb_item_conditional","table",table,"pk",key,"condition",condition,"value",value,"run_id",runId);
     }
 
     public void update(String kind, String id, String key, String value) {

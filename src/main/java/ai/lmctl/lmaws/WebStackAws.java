@@ -101,6 +101,15 @@ public final class WebStackAws implements AutoCloseable {
         for(;;)try{return cloudfront.createDistributionWithTags(req).distribution();}
         catch(InvalidViewerCertificateException pending){if(certArn==null||System.nanoTime()>deadline)throw pending;sleep(5000);}
     }
+    /** Static cache TTLs are bounded; API behaviours always stay uncached. */
+    public void configureCache(String id,long ttl,long maxTtl) {
+        if(ttl<0||ttl>300||maxTtl<ttl||maxTtl>3600)throw new IllegalArgumentException("cache TTL must be 0..300, max TTL between default and 3600");
+        tagged(id);var g=dist(id);var config=g.distribution().distributionConfig();
+        var def=config.defaultCacheBehavior();
+        if(def.targetOriginId().startsWith("lambda-api-")&&ttl!=0)throw new SecurityException("API responses must remain uncached");
+        var updated=config.toBuilder().defaultCacheBehavior(def.toBuilder().minTTL(0L).defaultTTL(ttl).maxTTL(maxTtl).build()).build();
+        cloudfront.updateDistribution(x->x.id(id).ifMatch(g.eTag()).distributionConfig(updated));
+    }
     private ViewerCertificate viewerCertificate(String alias,String arn) {
         if(!alias.equals("lmaws-site-"+runId+"."+domain))throw new SecurityException("certificate alias outside this run");
         var detail=certificate(arn);

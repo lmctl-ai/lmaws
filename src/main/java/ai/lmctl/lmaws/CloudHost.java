@@ -14,6 +14,7 @@ public final class CloudHost implements AutoCloseable {
     private final List<Ec2Compute.SpotRun> spots=new ArrayList<>();
     private final List<WebRun> webRuns=new ArrayList<>();
     private final List<LambdaFunction> lambdaFunctions=new ArrayList<>();
+    private final List<QueueWorker> queueWorkers=new ArrayList<>();
     private final List<EventRule> eventRules=new ArrayList<>();
     private final List<ServerlessRun> serverlessRuns=new ArrayList<>();
     private boolean closed;
@@ -138,6 +139,10 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","dynamodb_ttl",List.of("string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.tableTtl(text(a[0]),text(a[1]),text(a[2]))));
         r.method("Cloud","dynamodb_item",List.of("string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.tableItem(text(a[0]),text(a[1]),text(a[2]),session(s).cost.runId())));
         r.method("Cloud","dynamodb_item",List.of("string","string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.tableItem(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
+        r.method("Cloud","dynamodb_item_conditional",List.of("string","string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.tableItemConditional(text(a[0]),text(a[1]),text(a[2]),text(a[3]),session(s).cost.runId())));
+        r.method("Cloud","dynamodb_item_conditional",List.of("string","string","string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.tableItemConditional(text(a[0]),text(a[1]),text(a[2]),text(a[3]),text(a[4]))));
+        r.method("Cloud","s3_presigned_put",List.of("string","string","int","string","int"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3PresignPut(text(a[0]),text(a[1]),a[2].asInt(),text(a[3]),Math.toIntExact(a[4].asInt()),session(s).cost.runId())));
+        r.method("Cloud","s3_presigned_put",List.of("string","string","int","string","int","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3PresignPut(text(a[0]),text(a[1]),a[2].asInt(),text(a[3]),Math.toIntExact(a[4].asInt()),text(a[5]))));
         r.method("Cloud","s3_notification",List.of("string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3Notification(text(a[0]),text(a[1]),text(a[2]),session(s).cost.runId())));
         r.method("Cloud","s3_notification",List.of("string","string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3Notification(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
         r.method("Lambda","status",List.of(),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).status()));
@@ -145,6 +150,14 @@ public final class CloudHost implements AutoCloseable {
         r.method("Lambda","wait_active",List.of("int"),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).waitActive(Math.toIntExact(a[0].asInt()))));
         r.method("Lambda","invoke",List.of("string"),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).invoke(text(a[0]))));
         r.method("Lambda","delete",List.of(),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).delete()));
+        r.method("Cloud","sqs_event_source_mapping",List.of("string","string","int"),"QueueWorker",(c,s,a)->{ Session v=session(s); QueueWorker w=v.backend.createEventSourceMapping(text(a[0]),text(a[1]),Math.toIntExact(a[2].asInt()),v.cost.runId()); queueWorkers.add(w); return Value.object("QueueWorker",w); });
+        r.method("Cloud","sqs_event_source_mapping",List.of("string","string","int","string"),"QueueWorker",(c,s,a)->{ Session v=session(s); QueueWorker w=v.backend.createEventSourceMapping(text(a[0]),text(a[1]),Math.toIntExact(a[2].asInt()),text(a[3])); queueWorkers.add(w); return Value.object("QueueWorker",w); });
+        r.method("Cloud","sqs_event_source_mapping_get",List.of("string","string"),"QueueWorker",(c,s,a)->{ Session v=session(s); return Value.object("QueueWorker",v.backend.resumeEventSourceMapping(text(a[0]),text(a[1]))); });
+        r.method("Cloud","sqs_event_source_mappings",List.of("string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.findEventSourceMappings(text(a[0])),c)));
+        r.method("Cloud","sqs_redrive",List.of("string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.setSqsRedrive(text(a[0]),text(a[1]),session(s).cost.runId())));
+        r.method("Cloud","sqs_redrive_clear",List.of("string"),"Row",(c,s,a)->rowValue(c,session(s).backend.clearSqsRedrive(text(a[0]),session(s).cost.runId())));
+        r.method("QueueWorker","status",List.of(),"Row",(c,s,a)->rowValue(c,((QueueWorker)s.asObject()).status()));
+        r.method("QueueWorker","delete",List.of(),"Row",(c,s,a)->rowValue(c,((QueueWorker)s.asObject()).delete()));
         r.method("EventRule","status",List.of(),"Row",(c,s,a)->rowValue(c,((EventRule)s.asObject()).status()));
         r.method("EventRule","target",List.of("string"),"Row",(c,s,a)->rowValue(c,((EventRule)s.asObject()).target(text(a[0]))));
         r.method("EventRule","delete",List.of(),"Row",(c,s,a)->rowValue(c,((EventRule)s.asObject()).delete()));
@@ -295,6 +308,7 @@ public final class CloudHost implements AutoCloseable {
     public Context context(long budget) {Context c=new Context();c.memoryLimitBytes=budget;c.setObject("aws","Cloud",new Object());return c;}
     void emergencyWebCleanup() {
         try(AutoCloseable scope=billing==null?null:billing.cleanupScope()) {
+        for(var worker:queueWorkers.reversed())try{worker.delete();}catch(RuntimeException e){System.err.println("queue worker cleanup incomplete; inspect private ledger");}
         for(var rule:eventRules.reversed())try{rule.delete();}catch(RuntimeException e){System.err.println("event cleanup incomplete; inspect private ledger");}
         for(var function:lambdaFunctions.reversed())try{function.delete();}catch(RuntimeException e){System.err.println("Lambda cleanup incomplete; inspect private ledger");}
         for(var run:serverlessRuns.reversed())try{run.down();}catch(RuntimeException e){System.err.println("serverless cleanup incomplete; inspect private state");}
