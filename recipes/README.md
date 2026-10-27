@@ -15,9 +15,8 @@
 Reusable LMScript recipes for audits, inventory, spend review and safely owned sandboxes.
 The access column describes AWS permissions; local reports are written only when a recipe is called.
 Each generated entry is self-contained and runnable directly. Import the paired library from its raw URL when composing recipes; entry scripts perform the execution step.
-Use `lmaws`, never the `aws` CLI. Read-only recipes use `default`; lifecycle writes use
-`AWS_PROFILE=lmaws`, the ownership prefix/tag, a ledger and teardown. The upload check uses
-`default` only for its conditional PUT, with `lmaws` sandbox creation/cleanup.
+Use `lmaws`, never the `aws` CLI. Read-only recipes use `default`; writes require
+`AWS_PROFILE=lmaws`, the ownership prefix/tag, a ledger and teardown.
 
 All executable recipes default to synthetic fixtures. Use `--preview` for a no-call plan,
 or the runner's `lmctl script --dry-run recipes/<name>.lms`. Live inventory needs `--live`;
@@ -54,8 +53,6 @@ println("matched rows:",len(report.rows));
 
 | File | What it does | Access | Arguments | Typical cost |
 |---|---|---|---|---|
-| [`check_s3_upload.lms`](check_s3_upload.lms) | Simulate default S3 permissions and verify one conditional upload with owned cleanup | Write with default | --policy-file POLICY.json [--bucket NAME --key KEY] [--managed-policy ARN --account-id ID] [--live --run-id HEX] [--allow-leave-object] [--cap 0.05] [--output PRIVATE_PATH] | $0.00 offline; tiny live S3 request estimate, cap $0.05 |
-| [`fleet_roles.lms`](fleet_roles.lms) | Plan, lint, apply (one instance at a time) and roll back least-privilege operational IAM roles and mandatory permissions boundary for fleet instances | Write with the admin profile | --profile default --output data/fleet_roles [--live] [--apply --profile admin --i-am-the-admin-human] [--rollback FILE] | $0.00 synthetic plan; live read-only discovery uses default; apply requires AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1, --apply and --i-am-the-admin-human |
 | [`grant_lambda_role.lms`](grant_lambda_role.lms) | Preview or apply the pre-built lmaws_lambda_exec execution role with the mandatory boundary and scoped data access | Write with the admin profile | --role lmaws_lambda_exec --profile admin [--live] [--apply] [--output .lmaws-local/iam-role/report] | $0.00 synthetic; live IAM metadata only; apply requires AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1 and --apply |
 | [`grant_session_policy.lms`](grant_session_policy.lms) | Preview statement-level diff or grant the lmaws_session customer-managed IAM policy | Write with the admin profile | --policy lmaws_session --file POLICY.json --profile admin --top 20 --output data/grant_session_policy [--live] [--apply] | $0.00 IAM metadata; live apply requires AWS_PROFILE=admin and LMAWS_ADMIN_GRANT=1 |
 | [`inventory_identity.lms`](inventory_identity.lms) | Inspect bounded identity metadata (synthetic only; federated IAM cases skipped live) | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_identity [--live] | $0.00 synthetic; live capped request estimate in ledger |
@@ -184,24 +181,6 @@ println("matched rows:",len(report.rows));
 ## Picture-first examples
 
 Each recipe points at an offline synthetic example so its output can be previewed safely.
-
-### check_s3_upload
-
-![Simulate default S3 permissions and verify one conditional upload with owned cleanup](../docs/images/recipe_check_s3_upload.png)
-
-`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_check_s3_upload.lms`
-
-Example: [`examples/recipe_check_s3_upload.lms`](../examples/recipe_check_s3_upload.lms).
-Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/s3_upload.lms`; function `recipe_check_s3_upload`.
-
-### fleet_roles
-
-![Plan, lint, apply (one instance at a time) and roll back least-privilege operational IAM roles and mandatory permissions boundary for fleet instances](../docs/images/recipe_fleet_roles.png)
-
-`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_fleet_roles.lms`
-
-Example: [`examples/recipe_fleet_roles.lms`](../examples/recipe_fleet_roles.lms).
-Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/fleet_roles.lms`; function `recipe_fleet_roles`.
 
 ### grant_lambda_role
 

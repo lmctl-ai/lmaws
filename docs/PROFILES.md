@@ -8,7 +8,6 @@ needs no AWS account at all.
 |---|---|---|---|
 | See pictures, try recipes, read examples | none | (none) | Synthetic fixtures; no AWS calls, no credentials |
 | Read-only inventory, audits, spend reports | `default` | `--live` | Describe/List/Get only; spend reports require `default` |
-| Verify one conditional S3 upload | `default` for HEAD/PUT; `lmaws` controller for sandbox create/delete | `check_s3_upload.lms --policy-file FILE --live` | Own-account only, unique key, If-None-Match; existing bucket requires --allow-leave-object and leaves the object |
 | Create and tear down service sandboxes (queue, topic, table, bucket, parameter, log group), cleanup by prefix | `lmaws` | `--live --apply` | Names `lmaws_<run>_...` / `lmaws-<run>-...`, tag `lmaws_test=<run>`, us-east-1 |
 | Web and serverless scenarios (lmweblab) | `lmaws` | `--live --apply` | Run-owned resources only, us-east-1 |
 | EC2 spot nano sandbox, latest AMI lookup | `lmaws-ec2` | `--live` (`--apply` for the sandbox) | t4g.nano/t3.nano, 8 GiB gp3, no public IPv4, us-east-1 |
@@ -27,4 +26,7 @@ Rules enforced by the host (not only by IAM):
 Check your setup without changing anything: `lmctl recipes/session_doctor.lms --live` (synthetic
 without `--live`). See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for the common error messages.
 
-The t3wsl default federated session has an additional own-account S3 upload allowance: PutObject, AbortMultipartUpload and ListMultipartUploadParts, conditioned on s3:ResourceAccount. It explicitly denies Delete*, CreateBucket, PutBucket* and PutObjectAcl. It cannot clean up its uploads. This is not general default-profile write support: other mutators retain their lmaws/lmaws-ec2 guards. The upload-check backend uses separate, explicit profile clients and keeps default out of deletion paths. [Procedure, private journal and policy recommendation](S3_UPLOAD_CHECK.md).
+
+Account-specific permission verification and fleet role scripts live in the private `lmctlhq/admin` repository. Generic conditional-upload APIs retain explicit per-client profile routing and owned cleanup; ordinary default mutators remain blocked. Agents require explicit user approval for each specific admin action, including dry runs.
+
+Private fleet-role wrappers pass `LMAWS_FLEET_ROLES_SPEC` explicitly to the child host. The private runbook owns the mapping and grant rationale; public tests use synthetic fixtures.

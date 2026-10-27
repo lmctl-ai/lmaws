@@ -60,5 +60,3 @@ Read-only Spend reports are an explicit paid-query exception: Cost Explorer
 $0.01/page and CloudWatch metrics are admitted before dispatch, including failed
 attempts. Billing estimates are not hidden as $0.00 merely because no resource
 was created. See [spend safety](09-spend-reports.md).
-
-The dedicated S3 upload check is a narrow exception: default performs a one-byte conditional PUT through an explicit client; lmaws creates/cleans its sandbox. See 17-s3-upload-check.md. Ordinary default mutators remain blocked.

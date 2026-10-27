@@ -63,7 +63,7 @@ class RecipeExecutionTests(unittest.TestCase):
             entry = self.work / "imports.lms"
             entry.write_text(
                 f'import "{base}/common.lms"; import "{base}/inventory.lms"; '
-                f'import "{base}/lifecycle.lms"; import "{base}/prefix.lms"; import "{base}/audits.lms"; import "{base}/spend.lms"; import "{base}/iam_policy.lms"; import "{base}/policy_builder.lms"; import "{base}/fleet_roles.lms";\n',
+                f'import "{base}/lifecycle.lms"; import "{base}/prefix.lms"; import "{base}/audits.lms"; import "{base}/spend.lms"; import "{base}/iam_policy.lms"; import "{base}/policy_builder.lms";\n',
                 encoding="utf-8",
             )
             result = self.run_script(entry)
@@ -288,53 +288,6 @@ class RecipeExecutionTests(unittest.TestCase):
         )
         self.assertNotEqual(refused_sim.returncode, 0)
         self.assertFalse((self.work / "refused_sim.json").exists())
-
-    def test_fleet_roles_plan_and_five_way_human_admin_guards(self) -> None:
-        fr_out = self.work / "fleet_roles"
-        fr_res = self.run_script(ROOT / "recipes" / "fleet_roles.lms", "--output", str(fr_out))
-        self.assertEqual(fr_res.returncode, 0, fr_res.stdout + fr_res.stderr)
-        fr_report = json.loads(fr_out.with_suffix(".json").read_text(encoding="utf-8"))
-        self.assertEqual(fr_report["mode"], "dry_run_plan")
-        self.assertFalse(fr_report["applied"])
-        self.assertTrue(fr_report["node1_lint_valid"])
-        self.assertTrue(fr_report["node2_lint_valid"])
-        self.assertTrue(fr_report["boundary_lint_valid"])
-        self.assertEqual(len(fr_report["operations_needs"]), 9)
-        self.assertEqual(len(fr_report["removed_capabilities"]), 11)
-        self.assertEqual(len(fr_report["workflow_impacts"]), 5)
-        self.assertTrue(Path(str(fr_out) + ".node1.policy.json").exists())
-        self.assertTrue(Path(str(fr_out) + ".node2.policy.json").exists())
-        self.assertTrue(Path(str(fr_out) + ".boundary.policy.json").exists())
-        self.assertTrue(Path(str(fr_out) + ".trust.policy.json").exists())
-
-        # Missing --i-am-the-admin-human must be rejected even with --live --apply --profile admin and LMAWS_ADMIN_GRANT=1
-        self.env["LMAWS_ADMIN_GRANT"] = "1"
-        refused_no_human = self.run_script(
-            ROOT / "recipes" / "fleet_roles.lms",
-            "--live", "--apply", "--profile", "admin", "--output", str(self.work / "refused_no_human")
-        )
-        self.assertNotEqual(refused_no_human.returncode, 0)
-        self.assertFalse((self.work / "refused_no_human.json").exists())
-
-        # Missing LMAWS_ADMIN_GRANT=1 must be rejected even with --i-am-the-admin-human
-        self.env.pop("LMAWS_ADMIN_GRANT", None)
-        refused_no_grant = self.run_script(
-            ROOT / "recipes" / "fleet_roles.lms",
-            "--live", "--apply", "--profile", "admin", "--i-am-the-admin-human", "--output", str(self.work / "refused_no_grant")
-        )
-        self.assertNotEqual(refused_no_grant.returncode, 0)
-        self.assertFalse((self.work / "refused_no_grant.json").exists())
-
-        # Non-admin profile must be rejected even with --i-am-the-admin-human
-        self.env["LMAWS_ADMIN_GRANT"] = "1"
-        refused_bad_profile = self.run_script(
-            ROOT / "recipes" / "fleet_roles.lms",
-            "--live", "--apply", "--profile", "lmaws", "--i-am-the-admin-human", "--output", str(self.work / "refused_bad_profile")
-        )
-        self.assertNotEqual(refused_bad_profile.returncode, 0)
-        self.assertFalse((self.work / "refused_bad_profile.json").exists())
-        self.env.pop("LMAWS_ADMIN_GRANT", None)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

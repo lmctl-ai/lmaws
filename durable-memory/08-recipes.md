@@ -29,9 +29,9 @@ reported as compliant, and stopped state alone does not establish idle duration.
 
 `test.sh` checks index/header/image contracts and actual import/composition/
 preview/profile behavior without cloud credentials. The native gallery stage
-runs every recipe example. There are 86 recipe/example pairs across all nine task groups,
+runs every recipe example. There are 84 recipe/example pairs across all nine task groups,
 including the account spend detail, seven per-topic spend reports, seven EC2 compute
-recipes, five IAM/session/role recipes (`policy_lint`, `grant_session_policy`, `session_doctor`, `grant_lambda_role`, and `fleet_roles`),
+recipes, four IAM/session/role recipes (`policy_lint`, `grant_session_policy`, `session_doctor`, `grant_lambda_role`),
 and 28 permission builder & IAM analysis recipes (`recipes/lib/policy_builder.lms`). The spend
 functions use the concurrent Spend API; their hosted commands require its
 spend-capable native release. Preview works without querying AWS.
@@ -48,3 +48,5 @@ change dates). Docs: [PROFILES](../docs/PROFILES.md), [TROUBLESHOOTING](../docs/
 Every argument check in `recipes/lib/common.lms` now fails with a message naming the flag and its
 valid range instead of a bare assertion; `test-recipes.py` fails when the example/recipe counts in
 04-examples.md and 08-recipes.md drift from the files.
+
+Account-specific fleet role and S3 permission-check scripts moved to the private administration repository. Public host APIs remain generic: real fleet operations require an explicit `LMAWS_FLEET_ROLES_SPEC`; no deployment layout is selected implicitly. Offline tests use synthetic names and loopback SDK transport, and ordinary session lint remains separate from instance-role lint.

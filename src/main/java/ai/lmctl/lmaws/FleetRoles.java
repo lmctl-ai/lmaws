@@ -91,9 +91,17 @@ public final class FleetRoles {
         public static Spec active() {
             String raw = System.getenv().getOrDefault("LMAWS_FLEET_ROLES_SPEC", "").trim();
             if (!raw.isEmpty()) {
+                if(raw.length()>65536) throw new IllegalArgumentException("fleet spec exceeds 64KiB");
                 Object parsed = Json.parse(raw);
                 if (parsed instanceof Map<?, ?> m) {
                     Map<String, Object> map = (Map<String, Object>) m;
+                    Set<String> expected=Set.of("instance_1","instance_2","role_tag_1","role_tag_2","role_1","role_2","boundary_name","legacy_role","project_tag","deploy_role","asset_bucket","inline_policy_name");
+                    if(!map.keySet().equals(expected)) throw new IllegalArgumentException("fleet spec requires exactly the documented target and scope fields");
+                    for(var entry:map.entrySet()) {
+                        String pattern=entry.getKey().equals("asset_bucket")?"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]":"[A-Za-z0-9][A-Za-z0-9_-]{0,63}";
+                        if(!(entry.getValue() instanceof String value) || !value.matches(pattern)) throw new IllegalArgumentException("invalid fleet spec field: "+entry.getKey());
+                    }
+                    if(map.get("instance_1").equals(map.get("instance_2")) || map.get("role_1").equals(map.get("role_2"))) throw new IllegalArgumentException("fleet targets and roles must differ");
                     return new Spec(
                         str(map, "instance_1", INSTANCE_1),
                         str(map, "instance_2", INSTANCE_2),
@@ -110,6 +118,7 @@ public final class FleetRoles {
                     );
                 }
             }
+            if(!raw.isEmpty()) throw new IllegalArgumentException("fleet spec must be a JSON object");
             return new Spec(
                 INSTANCE_1, INSTANCE_2, ROLE_TAG_1, ROLE_TAG_2,
                 ROLE_NODE_1, ROLE_NODE_2, BOUNDARY_NAME, CURRENT_ADMIN_ROLE,
@@ -653,7 +662,13 @@ public final class FleetRoles {
 
     // --- 3. Read-Only Discovery ---
 
+    private static void requireLiveSpec(AwsBackend backend) {
+        if(!backend.isDemo() && !backend.fixtureEndpoint() && System.getenv().getOrDefault("LMAWS_FLEET_ROLES_SPEC","").isBlank()) throw new IllegalStateException("real fleet operations require an explicit private LMAWS_FLEET_ROLES_SPEC");
+        Spec.active();
+    }
+
     public static List<Map<String, String>> discover(AwsBackend backend) {
+        requireLiveSpec(backend);
         Spec s = Spec.active();
         if (backend.isDemo()) {
             return List.of(
@@ -1005,6 +1020,7 @@ public final class FleetRoles {
     }
 
     public static Map<String, String> plan(AwsBackend backend) {
+        requireLiveSpec(backend);
         Spec s = Spec.active();
         PolicyBuilder node1Builder = buildNode1Policy();
         PolicyBuilder node2Builder = buildNode2Policy();
@@ -1098,6 +1114,7 @@ public final class FleetRoles {
     // --- 5. Apply & One-Command Rollback (Sequential 1-by-1 Instance Swap) ---
 
     public static Map<String, String> apply(AwsBackend backend, boolean applyFlag, boolean humanConfirmed) {
+        requireLiveSpec(backend);
         if (!applyFlag && !humanConfirmed) {
             return plan(backend);
         }
@@ -1202,6 +1219,7 @@ public final class FleetRoles {
             String rollbackReceiptJson,
             boolean applyFlag,
             boolean humanConfirmed) {
+        requireLiveSpec(backend);
         if (rollbackReceiptJson == null || rollbackReceiptJson.isBlank()) {
             throw new IllegalArgumentException("Rollback requires a non-empty rollback receipt JSON");
         }
