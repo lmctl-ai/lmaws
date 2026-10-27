@@ -109,6 +109,8 @@ final class WebRun implements AutoCloseable {
             }
             case "lambda_distribution"->{
                 String url=arg(a,"lambda_url",""); boolean mixed="true".equalsIgnoreCase(arg(a,"mixed","false"));
+                String fn=arg(a,"function_name",""); if(fn.isBlank()||!fn.startsWith("lmaws-")&&!fn.startsWith("lmaws_"))throw new SecurityException("function_name must be the run-owned lmaws Lambda");
+                if(!backend.isDemo())backend.requireLambdaUrlOwned(fn,url,run);
                 String alias=val("site"); String bucket=mixed?val("bucket"):""; String oac=mixed?val("oac"):""; String cert=state.get("cert");
                 var d=aws().createLambdaDistribution(bucket,alias,url,oac,cert,mixed); state.put("distribution",d.id());state.put("distribution_arn",d.arn());state.put("cf_domain",d.domainName());state.put("lambda_distribution","true");persist();aws().waitDeployed(val("distribution"),Duration.ofMinutes(20));
             }

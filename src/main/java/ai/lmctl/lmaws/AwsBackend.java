@@ -516,6 +516,16 @@ public final class AwsBackend implements AutoCloseable {
         lambda().addPermission(x->x.functionName(arn).statementId("lmaws-invoke-url").action("lambda:InvokeFunction").principal("*").invokedViaFunctionUrl(true));
         var r=lambda().createFunctionUrlConfig(x -> x.functionName(arn).authType("NONE")); return r.functionUrl();
     }
+    /** Verify a Lambda URL belongs to the tagged function before CloudFront adopts it. */
+    void requireLambdaUrlOwned(String functionName,String expectedUrl,String runId) {
+        requireRunId(runId); requireName(functionName);
+        if (expectedUrl==null||expectedUrl.isBlank()) throw new IllegalArgumentException("Lambda URL is required");
+        if (demo) { if(!expectedUrl.matches("https://"+java.util.regex.Pattern.quote(functionName)+"\\.lambda-url\\.local/?")) throw new SecurityException("fixture Lambda URL mismatch"); return; }
+        var fn=lambda().getFunction(x->x.functionName(functionName)).configuration();
+        if(fn==null||fn.functionArn()==null||lambda().listTags(x->x.resource(fn.functionArn())).tags().entrySet().stream().noneMatch(e->"lmaws_test".equals(e.getKey())&&runId.equals(e.getValue()))) throw new SecurityException("Lambda function is not owned by this run");
+        var cfg=lambda().getFunctionUrlConfig(x->x.functionName(functionName));
+        if(!"NONE".equalsIgnoreCase(cfg.authTypeAsString())||!expectedUrl.equals(cfg.functionUrl())) throw new SecurityException("Lambda URL does not match the owned NONE-auth configuration");
+    }
     Map<String,String> putEventRule(String name,String schedule,String runId) {
         requireWriteEnabled(); requireName(name); if(demo)return row("kind","event_rule","name",name,"id","arn:aws:events:local:rule/"+name,"run_id",runId,"state","active");
         if(eventRuns.containsKey(name)) throw new IllegalStateException("EventBridge rule already exists in this host"); try { events().describeRule(x->x.name(name)); throw new IllegalStateException("refusing to overwrite existing EventBridge rule"); } catch (software.amazon.awssdk.services.eventbridge.model.ResourceNotFoundException absent) { }
