@@ -1738,6 +1738,8 @@ public final class AwsBackend implements AutoCloseable {
     DynamoDbClient ddbClientForDoctor() { return ddb(); }
     SsmClient ssmClientForDoctor() { return ssm(); }
     Ec2Client ec2ClientForDoctor() { return ec2(); }
+    SecretsManagerClient secretsClientForDoctor() { return secrets(); }
+    String profileName() { return profileName; }
 
     public List<Map<String, String>> sessionDoctor() {
         return CredentialProcess.sessionDoctor(this);

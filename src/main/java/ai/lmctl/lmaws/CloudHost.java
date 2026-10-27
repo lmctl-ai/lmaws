@@ -175,6 +175,9 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","policy_document",List.of("string"),"string",(c,s,a)->Value.ofString(session(s).backend.managedPolicyDocument(text(a[0]))));
         r.method("Cloud","s3_upload_cleanup",List.of("string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3UploadCleanup(text(a[0]),Path.of(text(a[1])))));
         r.method("Cloud","s3_upload_check",List.of("string","string","bool","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3UploadCheck(text(a[0]),text(a[1]),a[2].asBool(),Path.of(text(a[3])))));
+        r.method("Cloud","publish_grant_probe",List.of("string","string","string"),"Row",(c,s,a)->rowValue(c,PublishGrantProbes.runSingle(session(s).backend,text(a[0]),text(a[1]),text(a[2]))));
+        r.method("Cloud","publish_grant_probes",List.of("string"),"Rows",(c,s,a)->rows(PublishGrantProbes.runBatch(session(s).backend,text(a[0])),c));
+        r.method("Cloud","publish_grant_probe_kinds",List.of(),"Rows",(c,s,a)->rows(PublishGrantProbes.describeKinds(),c));
         r.method("Cloud","s3_notification",List.of("string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3Notification(text(a[0]),text(a[1]),text(a[2]),session(s).cost.runId())));
         r.method("Cloud","s3_notification",List.of("string","string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3Notification(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
         r.method("Lambda","status",List.of(),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).status()));
