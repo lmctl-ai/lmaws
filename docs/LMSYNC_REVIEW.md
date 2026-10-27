@@ -298,3 +298,25 @@ However, cross-checking the design against the **actual implementations** of `lm
 5. **[Assumption 5 — MEDIUM] Multi-process coordination via a per-request filesystem mailbox (`temp file` + `fsync` + `rename` + polling) can sustain parallel worker throughput without lock/inode thrashing (lines 429–455).**
    - *Why it is risky*: Per-claim or per-completion file creation + `fsync` + `rename` in a shared directory serializes all workers on directory inode locks and disk flush latency.
    - *Mitigation*: Keep the single-process batch architecture (`state_program` -> `transfer_program` -> `record_program`, Section 7) as the default execution model, and require coarse batching (>=32–256 items per request file) whenever the filesystem mailbox is used.
+
+
+## Revision disposition (design follow-up)
+
+The canonical design has been revised against all nine findings. Original review
+text above remains as the audit record; its line numbers refer to the reviewed
+revision, not the current document. This follow-up changes documentation only.
+
+| Finding | Disposition | Resolution / reason |
+|---|---|---|
+| F1 | Accepted | Core API now uses scalar JSON strings, standard handles when useful, and five lifetime host handles. `registry` context distinguishes DB work from local file I/O. Removed invented value-struct signatures/inline relational DSL syntax; bounded strings/files and reusable Rows avoid per-item arena growth |
+| F2 | Accepted | Documented that current send throws before Response/receipt code; outer process failure leaves work unconfirmed. Argon2 is adding non-throwing request behavior. Persistent worker Session + bounded manifest is the scalable path; one-request snippets are API illustrations, not per-item production process plans |
+| F3 | Accepted | Caller-declared materialized sparse difference indexes update transactionally per affected item/revision. Ready steady-state reads enumerate pending entries plus bounded seeks; full O(N) index build/backfill is separate. `require_index` forbids silent scan fallback; change cursors remain another incremental path |
+| F4 | Accepted layout; qualified numeric claim | Dense u64 IDs, interned IDs, raw/shared digests, co-located stage summaries, prefix/delta runs produce an **unmeasured 750–1,050 B/item lean target** (75–105 GB/100M). Rejected treating it as a universal bound for the earlier arbitrary metadata workload: unique 5×128 B stage + 6×96 B event payloads already total 1,216 B/item before any identity/index. Both profiles and all blob bytes must be benchmarked |
+| F5 | Accepted | apply_records requires plan, rejects out-of-plan/digest mismatch/conflicting completion lines. Added tagged UTF-8/Base64 path bytes, hard 64 KiB managed-line cap, and group fsync with durable acknowledgments only after flush. Expired claims return fenced-or-expired; explicit audit-only old receipts cannot overwrite newer success. lmssh quoting fix is tracked as Argon2's existing-product work |
+| F6 | Accepted evidence, limited qualification claim | Record Argon2's five-target lmdb H2/MVStore native-image evidence and exact pom/reflection configuration. Mandate positional pread/pwrite, no mmap under 4 GiB reserved-space/6 GiB test limit. Rejected calling a future custom sorted store already verified merely because its JDK primitives work elsewhere; registry-scale codecs/recovery still require qualification |
+| F7 | Accepted gaps; safe ledger qualification | Added expected_sha256 PUT option/non-throwing data-plane receipt, standalone explicit-path/idempotent CloudFront invalidation, and per-key delete outcomes for chosen retention. Documented Web invalidate's hardcoded wildcard, repeat no-op and down-on-error. Track current lmssh quoting/lmcurl error-mode fixes without redesign. Ledger fsync optimization is conditional on durable pre-request worst-case reservation; rejected simply buffering admission charges until after billable calls because a crash could lose cap accounting |
+| F8 | Accepted | Default remains one owner process per coarse state/transfer/record batch; mailbox is later optional. Template requests group 32–256 items, with filesystem/latency measurement and durable dedup; no assumed per-file RPC throughput |
+| F9 | Accepted | Context is registry; lmfiles remains proposed product name. Milestones split 1A core/crash harness, 1B local fake two-host job, 1C optional scan/archive/mailbox/scale; live testing requires later explicit authorization |
+
+No architectural finding is left unanswered. No transport or registry implementation,
+benchmark, remote call or workflow dispatch was performed for this revision.
