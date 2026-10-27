@@ -512,16 +512,20 @@ public final class AwsBackend implements AutoCloseable {
         if (reason==null||reason.isBlank()) throw new IllegalArgumentException("public Function URL auth NONE requires an explicit reason");
         if (!demo && !lambdaRuns.containsKey(arn)) throw new IllegalStateException("Lambda is not owned by this run");
         if (demo) return "https://"+last(arn)+".lambda-url.local/";
+        lambda().addPermission(x->x.functionName(arn).statementId("lmaws-url").action("lambda:InvokeFunctionUrl").principal("*").functionUrlAuthType("NONE"));
+        lambda().addPermission(x->x.functionName(arn).statementId("lmaws-invoke-url").action("lambda:InvokeFunction").principal("*").invokedViaFunctionUrl(true));
         var r=lambda().createFunctionUrlConfig(x -> x.functionName(arn).authType("NONE")); return r.functionUrl();
     }
     Map<String,String> putEventRule(String name,String schedule,String runId) {
         requireWriteEnabled(); requireName(name); if(demo)return row("kind","event_rule","name",name,"id","arn:aws:events:local:rule/"+name,"run_id",runId,"state","active");
-        if(eventRuns.containsKey(name)) throw new IllegalStateException("EventBridge rule already exists in this host"); var out=events().putRule(x->x.name(name).scheduleExpression(schedule).state("ENABLED").tags(software.amazon.awssdk.services.eventbridge.model.Tag.builder().key("lmaws_test").value(runId).build())); eventRuns.put(name,runId);
+        if(eventRuns.containsKey(name)) throw new IllegalStateException("EventBridge rule already exists in this host"); try { events().describeRule(x->x.name(name)); throw new IllegalStateException("refusing to overwrite existing EventBridge rule"); } catch (software.amazon.awssdk.services.eventbridge.model.ResourceNotFoundException absent) { }
+        var out=events().putRule(x->x.name(name).scheduleExpression(schedule).state("ENABLED").tags(software.amazon.awssdk.services.eventbridge.model.Tag.builder().key("lmaws_test").value(runId).build())); eventRuns.put(name,runId);
         return row("kind","event_rule","name",name,"id",out.ruleArn(),"arn",out.ruleArn(),"run_id",runId,"state","active");
     }
     Map<String,String> putEventTarget(String rule,String lambdaArn,String runId) {
         requireWriteEnabled(); if(!demo && !eventRuns.containsKey(rule)) throw new IllegalStateException("EventBridge rule is not owned by this run"); if(demo)return row("kind","event_target","rule",rule,"target",lambdaArn,"state","active");
-        events().putTargets(x->x.rule(rule).targets(software.amazon.awssdk.services.eventbridge.model.Target.builder().id("lmaws-target").arn(lambdaArn).build()));
+        if(!lambdaRuns.containsKey(lambdaArn)) throw new IllegalStateException("EventBridge target Lambda is not owned by this run");
+        var response=events().putTargets(x->x.rule(rule).targets(software.amazon.awssdk.services.eventbridge.model.Target.builder().id("lmaws-target").arn(lambdaArn).build())); if(response.failedEntryCount()!=null&&response.failedEntryCount()>0) throw new IllegalStateException("EventBridge target was rejected");
         return row("kind","event_target","rule",rule,"target",lambdaArn,"state","active");
     }
     Map<String,String> deleteEventRule(String name,String runId) { requireWriteEnabled(); if(!demo && !runId.equals(eventRuns.get(name))) throw new IllegalStateException("EventBridge rule is not owned by this run"); if(!demo)events().removeTargets(x->x.rule(name).ids("lmaws-target")); if(!demo)events().deleteRule(x->x.name(name)); eventRuns.remove(name); return row("kind","event_rule","name",name,"state","deleted","run_id",runId); }
