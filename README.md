@@ -1,6 +1,19 @@
 # lmaws
 AWS read-only inventory and safely owned test resources for lmscript, powered by the AWS SDK for Java v2.
 
+## Quickstart
+
+One command from an empty directory to a picture (synthetic data; no AWS account needed):
+
+```text
+lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_quickstart.lms
+```
+
+<img src="docs/images/recipe_quickstart.png" width="640" alt="Synthetic account snapshot: resources per service">
+
+Then the same recipe against your account, read-only: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/quickstart.lms --live` (profile `default`).
+[Which profile do I need?](docs/PROFILES.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [All recipes](recipes/README.md)
+
 
 ## Detailed spend report — read-only
 
@@ -136,8 +149,11 @@ println("matched rows:",len(report.rows));
 | [`inventory_identity.lms`](recipes/inventory_identity.lms) | Inspect bounded identity metadata (synthetic only; federated IAM cases skipped live) | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_identity [--live] | $0.00 synthetic; live capped request estimate in ledger |
 | [`inventory_roles.lms`](recipes/inventory_roles.lms) | Inspect bounded roles metadata (synthetic only; federated IAM cases skipped live) | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_roles [--live] | $0.00 synthetic; live capped request estimate in ledger |
 | [`inventory_security_groups.lms`](recipes/inventory_security_groups.lms) | Inspect bounded security groups metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_security_groups [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`open_ports.lms`](recipes/open_ports.lms) | Security groups open to the internet, by port, with admin/database ports flagged | Read-only | --region us-east-1 --profile default --output data/open_ports [--live] | $0.00 synthetic; live Describe/List calls are free; cap $0.05 |
 | [`policy_lint.lms`](recipes/policy_lint.lms) | Validate and lint an IAM managed policy JSON document offline against lmaws guardrails | Read-only | --file POLICY.json --top 20 --output data/policy_lint | $0.00 offline lint |
+| [`secret_age.lms`](recipes/secret_age.lms) | Secrets not changed for 90+ days (values are never read) | Read-only | --region us-east-1 --profile default --output data/secret_age [--live] | $0.00 synthetic; live Describe/List calls are free; cap $0.05 |
 | [`session_doctor.lms`](recipes/session_doctor.lms) | Inspect profile session types, 0600 credential cache expiry and dry-run/read-only permission probes | Read-only | --profile lmaws --region us-east-1 --top 20 --output data/session_doctor [--live] | $0.00 synthetic; live read and EC2 DryRun probes create no resources; cap $0.05 |
+| [`which_profile.lms`](recipes/which_profile.lms) | Which AWS profile and flags each kind of recipe needs | Read-only | --output data/which_profile | $0.00 synthetic and offline |
 
 ### Permission builder and IAM analysis
 
@@ -189,6 +205,7 @@ println("matched rows:",len(report.rows));
 | [`inventory_topics.lms`](recipes/inventory_topics.lms) | Inspect bounded topics metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_topics [--live] | $0.00 synthetic; live capped request estimate in ledger |
 | [`inventory_vpcs.lms`](recipes/inventory_vpcs.lms) | Inspect bounded vpcs metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_vpcs [--live] | $0.00 synthetic; live capped request estimate in ledger |
 | [`inventory_zones.lms`](recipes/inventory_zones.lms) | Inspect bounded zones metadata | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/inventory_zones [--live] | $0.00 synthetic; live capped request estimate in ledger |
+| [`quickstart.lms`](recipes/quickstart.lms) | Quickstart: one command to an account snapshot picture (resources per service) | Read-only | --region us-east-1 --profile default --output data/quickstart [--live] | $0.00 synthetic; live Describe/List calls are free; cap $0.05 |
 
 ### Cost and spend
 
@@ -208,6 +225,9 @@ println("matched rows:",len(report.rows));
 | File | What it does | Access | Arguments | Typical cost |
 |---|---|---|---|---|
 | [`idle_instances.lms`](recipes/idle_instances.lms) | Flag stopped-instance state for further review; never delete | Read-only | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/idle_instances [--live] | $0.00 synthetic; live request cap $0.05 |
+| [`log_retention_audit.lms`](recipes/log_retention_audit.lms) | Log groups that never expire, grouped by retention | Read-only | --region us-east-1 --profile default --output data/log_retention_audit [--live] | $0.00 synthetic; live Describe/List calls are free; cap $0.05 |
+| [`public_ipv4_cost.lms`](recipes/public_ipv4_cost.lms) | Every billed public IPv4 address (Elastic and auto-assigned) and its monthly cost | Read-only | --region us-east-1 --profile default --output data/public_ipv4_cost [--live] | $0.00 synthetic; live Describe/List calls are free; cap $0.05 |
+| [`unattached_volumes.lms`](recipes/unattached_volumes.lms) | Unattached EBS volumes with size and monthly cost (never deletes) | Read-only | --region us-east-1 --profile default --output data/unattached_volumes [--live] | $0.00 synthetic; live Describe/List calls are free; cap $0.05 |
 
 ### Tag and naming compliance
 
@@ -297,6 +317,15 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 Example: [`examples/recipe_inventory_security_groups.lms`](examples/recipe_inventory_security_groups.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/inventory.lms`; function `recipe_inventory`.
 
+#### open_ports
+
+![Security groups open to the internet, by port, with admin/database ports flagged](docs/images/recipe_open_ports.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_open_ports.lms`
+
+Example: [`examples/recipe_open_ports.lms`](examples/recipe_open_ports.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/hygiene.lms`; function `recipe_open_ports`.
+
 #### policy_lint
 
 ![Validate and lint an IAM managed policy JSON document offline against lmaws guardrails](docs/images/recipe_policy_lint.png)
@@ -306,6 +335,15 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 Example: [`examples/recipe_policy_lint.lms`](examples/recipe_policy_lint.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/iam_policy.lms`; function `recipe_policy_lint`.
 
+#### secret_age
+
+![Secrets not changed for 90+ days (values are never read)](docs/images/recipe_secret_age.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_secret_age.lms`
+
+Example: [`examples/recipe_secret_age.lms`](examples/recipe_secret_age.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/hygiene.lms`; function `recipe_secret_age`.
+
 #### session_doctor
 
 ![Inspect profile session types, 0600 credential cache expiry and dry-run/read-only permission probes](docs/images/recipe_session_doctor.png)
@@ -314,6 +352,15 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 Example: [`examples/recipe_session_doctor.lms`](examples/recipe_session_doctor.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/iam_policy.lms`; function `recipe_session_doctor`.
+
+#### which_profile
+
+![Which AWS profile and flags each kind of recipe needs](docs/images/recipe_which_profile.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_which_profile.lms`
+
+Example: [`examples/recipe_which_profile.lms`](examples/recipe_which_profile.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/hygiene.lms`; function `recipe_which_profile`.
 
 #### policy_billing_viewer
 
@@ -684,6 +731,15 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 Example: [`examples/recipe_inventory_zones.lms`](examples/recipe_inventory_zones.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/inventory.lms`; function `recipe_inventory`.
 
+#### quickstart
+
+![Quickstart: one command to an account snapshot picture (resources per service)](docs/images/recipe_quickstart.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_quickstart.lms`
+
+Example: [`examples/recipe_quickstart.lms`](examples/recipe_quickstart.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/hygiene.lms`; function `recipe_quickstart`.
+
 #### bandwidth
 
 ![Break down billed transfer categories and network counters](docs/images/recipe_bandwidth.png)
@@ -764,6 +820,33 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 Example: [`examples/recipe_idle_instances.lms`](examples/recipe_idle_instances.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/audits.lms`; function `recipe_idle`.
+
+#### log_retention_audit
+
+![Log groups that never expire, grouped by retention](docs/images/recipe_log_retention_audit.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_log_retention_audit.lms`
+
+Example: [`examples/recipe_log_retention_audit.lms`](examples/recipe_log_retention_audit.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/hygiene.lms`; function `recipe_log_retention_audit`.
+
+#### public_ipv4_cost
+
+![Every billed public IPv4 address (Elastic and auto-assigned) and its monthly cost](docs/images/recipe_public_ipv4_cost.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_public_ipv4_cost.lms`
+
+Example: [`examples/recipe_public_ipv4_cost.lms`](examples/recipe_public_ipv4_cost.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/hygiene.lms`; function `recipe_public_ipv4_cost`.
+
+#### unattached_volumes
+
+![Unattached EBS volumes with size and monthly cost (never deletes)](docs/images/recipe_unattached_volumes.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_unattached_volumes.lms`
+
+Example: [`examples/recipe_unattached_volumes.lms`](examples/recipe_unattached_volumes.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/hygiene.lms`; function `recipe_unattached_volumes`.
 
 #### naming_compliance
 
@@ -1002,7 +1085,7 @@ the six resource operations plus $0.00000130 for their verification reads. All
 resources were deleted with **zero leftovers**. This is price-table accounting
 from observed SDK requests and lifetimes, not an AWS invoice measurement.
 
-All 30 examples have [lmcloud/OpenTofu equivalents and results](compare/RESULTS.md).
+The original 30 examples have [lmcloud/OpenTofu equivalents and results](compare/RESULTS.md).
 With released **lmcloud v0.1.10** and AWS provider 5.100.0, all **26 live pairs
 completed**: **8 matching comparisons and 18 explicit differences** in supported
 outputs or local-state semantics. Four IAM cases are skipped. The SDK
