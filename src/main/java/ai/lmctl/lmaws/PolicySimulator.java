@@ -460,13 +460,15 @@ public final class PolicySimulator {
         }
 
         // 2. Check Resource or NotResource
+        String pa = getCaseInsensitive(context == null ? Map.of() : context, "aws:PrincipalAccount");
+        String principalAcct = pa != null ? pa : "000000000000";
         if (stmt.containsKey("NotResource")) {
             List<String> notRes = PolicyAnalyzer.stringList(stmt.get("NotResource"));
-            boolean anyMatch = notRes.stream().anyMatch(pat -> wildcardMatches(pat, resource));
+            boolean anyMatch = notRes.stream().anyMatch(pat -> resourceMatches(pat, resource, principalAcct));
             if (anyMatch) return false;
         } else {
             List<String> res = PolicyAnalyzer.stringList(stmt.get("Resource"));
-            boolean anyMatch = res.stream().anyMatch(pat -> wildcardMatches(pat, resource));
+            boolean anyMatch = res.stream().anyMatch(pat -> resourceMatches(pat, resource, principalAcct));
             if (!anyMatch) return false;
         }
 
@@ -488,6 +490,17 @@ public final class PolicySimulator {
         return true;
     }
 
+    private static boolean resourceMatches(String pattern, String resource, String principalAccount) {
+        String resolved = pattern.replace("${aws:PrincipalAccount}", principalAccount);
+        if (wildcardMatches(resolved, resource)) {
+            return true;
+        }
+        if (pattern.contains("${aws:PrincipalAccount}") && resource != null && resource.contains(":*:")) {
+            return wildcardMatches(pattern.replace("${aws:PrincipalAccount}", "*"), resource);
+        }
+        return false;
+    }
+
     private static boolean evaluateConditionClause(
             String operator,
             String key,
@@ -495,11 +508,15 @@ public final class PolicySimulator {
             Map<String, String> context) {
         Map<String, String> ctx = context == null ? Map.of() : context;
         String actual = getCaseInsensitive(ctx, key);
+        String pa = getCaseInsensitive(ctx, "aws:PrincipalAccount");
+        String principalAcct = pa != null ? pa : "000000000000";
         List<String> expectedVals = new ArrayList<>(rawExpectedVals.size());
         for (String v : rawExpectedVals) {
-            if ("${aws:PrincipalAccount}".equals(v)) {
-                String pa = getCaseInsensitive(ctx, "aws:PrincipalAccount");
-                expectedVals.add(pa != null ? pa : "000000000000");
+            if (v.contains("${aws:PrincipalAccount}")) {
+                expectedVals.add(v.replace("${aws:PrincipalAccount}", principalAcct));
+                if (actual != null && actual.contains(":*:")) {
+                    expectedVals.add(v.replace("${aws:PrincipalAccount}", "*"));
+                }
             } else {
                 expectedVals.add(v);
             }
@@ -524,13 +541,13 @@ public final class PolicySimulator {
         }
 
         return switch (baseOp) {
-            case "stringequals", "bool", "ipaddress" ->
+            case "stringequals", "arnequals", "bool", "ipaddress" ->
                 expectedVals.stream().anyMatch(e -> e.equalsIgnoreCase(actual));
-            case "stringnotequals", "notipaddress" ->
+            case "stringnotequals", "arnnotequals", "notipaddress" ->
                 expectedVals.stream().noneMatch(e -> e.equalsIgnoreCase(actual));
-            case "stringlike" ->
+            case "stringlike", "arnlike" ->
                 expectedVals.stream().anyMatch(e -> wildcardMatches(e, actual));
-            case "stringnotlike" ->
+            case "stringnotlike", "arnnotlike" ->
                 expectedVals.stream().noneMatch(e -> wildcardMatches(e, actual));
             case "numericgreaterthan" -> {
                 try {

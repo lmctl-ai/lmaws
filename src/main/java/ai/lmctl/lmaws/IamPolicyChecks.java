@@ -315,6 +315,28 @@ public final class IamPolicyChecks {
         };
         require(IamPolicies.lint("{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"iam:GetRole\",\"iam:ListAttachedRolePolicies\",\"iam:GetPolicy\"],\"Resource\":[\"arn:aws:iam::123456789012:role/lmaws_*\",\"arn:aws:iam::*:policy/lmaws_*\"]}]}").valid(), "scoped mixed role/policy reads with concrete account pass");
         for (String doc : badReads) require(!IamPolicies.lint(doc).valid(), "unsafe scoped IAM read must fail");
+
+        String esmPolicy = """
+            {"Version":"2012-10-17","Statement":[
+              {"Sid":"EsmCreate","Effect":"Allow","Action":"lambda:CreateEventSourceMapping","Resource":"*","Condition":{"ArnLike":{"lambda:FunctionArn":"arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:function:lmaws_*"},"StringLike":{"aws:RequestTag/lmaws_test":"?*"},"ForAllValues:StringEquals":{"aws:TagKeys":["lmaws_test"]}}},
+              {"Sid":"EsmTag","Effect":"Allow","Action":"lambda:TagResource","Resource":"arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:event-source-mapping:*","Condition":{"StringLike":{"aws:RequestTag/lmaws_test":"?*"},"ForAllValues:StringEquals":{"aws:TagKeys":["lmaws_test"]}}},
+              {"Sid":"EsmOwn","Effect":"Allow","Action":["lambda:GetEventSourceMapping","lambda:DeleteEventSourceMapping","lambda:ListTags"],"Resource":"arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:event-source-mapping:*","Condition":{"StringLike":{"aws:ResourceTag/lmaws_test":"?*"}}}
+            ]}
+            """;
+        IamPolicies.LintResult esmRes = IamPolicies.lint(esmPolicy);
+        require(esmRes.valid(), "Scoped Lambda event-source-mapping statements (EsmCreate, EsmTag, EsmOwn) must pass lint: " + esmRes.findings());
+
+        String[] badEsm = {
+            esmPolicy.replace("function:lmaws_*", "function:*"),
+            esmPolicy.replace("\"StringLike\":{\"aws:RequestTag/lmaws_test\":\"?*\"},", ""),
+            esmPolicy.replace(",\"ForAllValues:StringEquals\":{\"aws:TagKeys\":[\"lmaws_test\"]}", ""),
+            esmPolicy.replace("\"Action\":\"lambda:CreateEventSourceMapping\"", "\"Action\":[\"lambda:CreateEventSourceMapping\",\"lambda:DeleteEventSourceMapping\"]")
+        };
+        for (String bad : badEsm) {
+            IamPolicies.LintResult badRes = IamPolicies.lint(bad);
+            require(!badRes.valid() && badRes.findings().toString().contains("LAMBDA_ESM_CREATE_SCOPED"),
+                "Unsafe EsmCreate variant must fail with LAMBDA_ESM_CREATE_SCOPED: " + badRes.findings());
+        }
     }
 
     private static void checkPassRolePolicyContext() {

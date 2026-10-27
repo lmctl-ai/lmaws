@@ -303,6 +303,7 @@ public final class CloudHost implements AutoCloseable {
         r.method("Policy","static_site_stack",List.of("string","string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).staticSiteStack(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
         r.method("Policy","billing_viewer",List.of(),"Policy",(c,s,a)->policyVal(policy(s).billingViewer()));
         r.method("Policy","lambda_deployer_by_name",List.of("string"),"Policy",(c,s,a)->policyVal(policy(s).lambdaDeployerByName(text(a[0]))));
+        r.method("Policy","lambda_event_source_mapping",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).lambdaEventSourceMapping(text(a[0]),text(a[1]),text(a[2]))));
         r.method("Policy","pass_role_to_service",List.of("string","string"),"Policy",(c,s,a)->policyVal(policy(s).passRoleToService(text(a[0]),text(a[1]))));
         r.method("Policy","pass_role_to_service",List.of("string","string","string"),"Policy",(c,s,a)->policyVal(policy(s).passRoleToService(text(a[0]),text(a[1]),text(a[2]))));
         r.method("Policy","ci_bucket_deployer",List.of("string","string"),"Policy",(c,s,a)->policyVal(policy(s).ciBucketDeployer(text(a[0]),text(a[1]))));

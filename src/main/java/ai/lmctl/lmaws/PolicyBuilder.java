@@ -321,14 +321,12 @@ public final class PolicyBuilder {
             "logs:DescribeLogGroups",
             "ssm:DescribeParameters",
             "route53:List*",
+            "route53:Get*",
             "cloudfront:List*",
             "cloudfront:Get*",
-            "acm:ListCertificates",
+            "acm:List*",
             "acm:DescribeCertificate",
-            "acm:ListTagsForCertificate",
-            "route53:GetHostedZone",
-            "route53:GetChange",
-            "lambda:ListFunctions"
+            "lambda:List*"
         ), "*");
     }
 
@@ -470,8 +468,47 @@ public final class PolicyBuilder {
 
     public PolicyBuilder lambdaDeployerByName(String prefix) {
         requirePrefix(prefix);
-        allow("Fn", "lambda:*", "arn:aws:lambda:*:*:function:" + prefix + "_*");
-        allow("Ev", "events:*", "arn:aws:events:*:*:rule/" + prefix + "_*");
+        allow("Fn", "lambda:*,events:*",
+            "arn:aws:lambda:*:*:function:" + prefix + "_*,arn:aws:events:*:*:rule/" + prefix + "_*");
+        return this;
+    }
+
+    /**
+     * Adds tightly-scoped Lambda event-source-mapping statements (EsmCreate, EsmTag, EsmOwn):
+     * - EsmCreate: lambda:CreateEventSourceMapping on '*' gated by ArnLike lambda:FunctionArn
+     *   (arn:aws:lambda:<region>:${aws:PrincipalAccount}:function:<prefix>_*), StringLike
+     *   aws:RequestTag/<tagKey>=?*, and ForAllValues:StringEquals aws:TagKeys=[<tagKey>].
+     * - EsmTag: lambda:TagResource on arn:aws:lambda:<region>:${aws:PrincipalAccount}:event-source-mapping:*
+     *   gated by StringLike aws:RequestTag/<tagKey>=?* and ForAllValues:StringEquals aws:TagKeys=[<tagKey>].
+     * - EsmOwn: lambda:GetEventSourceMapping, lambda:DeleteEventSourceMapping, lambda:ListTags on
+     *   arn:aws:lambda:<region>:${aws:PrincipalAccount}:event-source-mapping:* gated by StringLike
+     *   aws:ResourceTag/<tagKey>=?*.
+     */
+    public PolicyBuilder lambdaEventSourceMapping(String prefix, String tagKey, String region) {
+        requirePrefix(prefix);
+        requireTagKey(tagKey);
+        String reg = (region == null || region.isBlank()) ? "us-east-1" : region.trim();
+        String fnArn = "arn:aws:lambda:" + reg + ":${aws:PrincipalAccount}:function:" + prefix + "_*";
+        String esmArn = "arn:aws:lambda:" + reg + ":${aws:PrincipalAccount}:event-source-mapping:*";
+
+        Map<String, Object> createCond = new LinkedHashMap<>();
+        createCond.put("ArnLike", Map.of("lambda:FunctionArn", fnArn));
+        createCond.put("StringLike", Map.of("aws:RequestTag/" + tagKey, "?*"));
+        createCond.put("ForAllValues:StringEquals", Map.of("aws:TagKeys", List.of(tagKey)));
+        addStatementMap("EsmCreate", "Allow", false,
+            List.of("lambda:CreateEventSourceMapping"), List.of("*"), createCond);
+
+        Map<String, Object> tagCond = new LinkedHashMap<>();
+        tagCond.put("StringLike", Map.of("aws:RequestTag/" + tagKey, "?*"));
+        tagCond.put("ForAllValues:StringEquals", Map.of("aws:TagKeys", List.of(tagKey)));
+        addStatementMap("EsmTag", "Allow", false,
+            List.of("lambda:TagResource"), List.of(esmArn), tagCond);
+
+        Map<String, Object> ownCond = new LinkedHashMap<>();
+        ownCond.put("StringLike", Map.of("aws:ResourceTag/" + tagKey, "?*"));
+        addStatementMap("EsmOwn", "Allow", false,
+            List.of("lambda:GetEventSourceMapping", "lambda:DeleteEventSourceMapping", "lambda:ListTags"),
+            List.of(esmArn), ownCond);
         return this;
     }
 
@@ -531,7 +568,7 @@ public final class PolicyBuilder {
     }
 
     /**
-     * Composes the complete 23-statement lmaws_session customer-managed policy from the
+     * Composes the complete 25-statement lmaws_session (v7) customer-managed policy from the
      * reusable building blocks in exact statement order.
      */
     public PolicyBuilder lmawsSessionPolicy(
@@ -552,6 +589,7 @@ public final class PolicyBuilder {
         regionLock("OnlyUsEast1", region, "sts:GetCallerIdentity,cloudfront:*,route53:*");
         lambdaDeployerByName(prefix);
         passRoleToService("LambdaPassRole", prefix, "lambda.amazonaws.com");
+        lambdaEventSourceMapping(prefix, tagKey, region);
         return this;
     }
 

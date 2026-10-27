@@ -62,14 +62,14 @@ public final class PolicyBuilderChecks {
         String builtCompact = session.compactJson();
         IamPolicies.LintResult lint = IamPolicies.lint(builtPretty);
         require(lint.valid(), "Built lmaws_session policy must pass lint: " + lint.findings());
-        require(lint.statementCount() == 23, "Built lmaws_session must have 23 statements, got " + lint.statementCount());
+        require(lint.statementCount() == 25, "Built lmaws_session must have 25 statements, got " + lint.statementCount());
 
         String baseline = new PolicyBuilder("lmaws_session")
             .lmawsSessionPolicy("lmaws", "lmaws_test", "example.com", "us-east-1", "t4g.nano,t3.nano", 8)
             .json();
         IamPolicies.DiffResult diff = IamPolicies.diff(baseline, builtPretty);
-        require(!diff.changed() && diff.unchangedCount() == 23,
-            "Built lmaws_session must match 23/23: " + diff.summary() + "\n" + diff.formattedLines());
+        require(!diff.changed() && diff.unchangedCount() == 25,
+            "Built lmaws_session must match 25/25: " + diff.summary() + "\n" + diff.formattedLines());
         require(builtCompact.equals(IamPolicies.compactJson(PolicyAnalyzer.parseDoc(baseline))),
             "Built lmaws_session compact JSON must match baseline byte-for-byte");
 
@@ -87,8 +87,12 @@ public final class PolicyBuilderChecks {
             "pass_role_to_service to ec2.amazonaws.com must be rejected by PASS_ROLE_LAMBDA_ONLY");
 
         // If the local snapshot file exists, extract its domain dynamically and verify 100% byte-for-byte equivalence
-        Path localSnapshot = Path.of(System.getProperty("user.home", ""),
-            ".aws", "session-tools", "tasks", "iam-snapshots", "lmaws-managed-policy.json");
+        Path v7Snapshot = Path.of(System.getProperty("user.home", ""),
+            ".aws", "session-tools", "tasks", "iam-snapshots", "lmaws-managed-policy.v7.json");
+        Path localSnapshot = Files.isRegularFile(v7Snapshot)
+            ? v7Snapshot
+            : Path.of(System.getProperty("user.home", ""),
+                ".aws", "session-tools", "tasks", "iam-snapshots", "lmaws-managed-policy.json");
         // Opt-in only: --self-test must not depend on the operator's private ~/.aws files (they drift independently).
         if ("1".equals(System.getenv("LMAWS_CHECK_LOCAL_POLICY_SNAPSHOT")) && Files.isRegularFile(localSnapshot)) {
             try {
@@ -98,12 +102,12 @@ public final class PolicyBuilderChecks {
                 PolicyBuilder fromBuilder = new PolicyBuilder("lmaws_session")
                     .lmawsSessionPolicy("lmaws", "lmaws_test", snapshotDomain, "us-east-1", "t4g.nano,t3.nano", 8);
                 IamPolicies.DiffResult snapDiff = IamPolicies.diff(rawSnapshot, fromBuilder.json());
-                require(!snapDiff.changed() && snapDiff.unchangedCount() == 23,
-                    "Built policy must match local lmaws-managed-policy.json 23/23: " + snapDiff.summary());
+                require(!snapDiff.changed() && snapDiff.unchangedCount() == 25,
+                    "Built policy must match local snapshot 25/25: " + snapDiff.summary());
                 require(fromBuilder.compactJson().equals(IamPolicies.compactJson(PolicyAnalyzer.parseDoc(rawSnapshot))),
-                    "Built policy compact JSON must match local lmaws-managed-policy.json byte-for-byte");
+                    "Built policy compact JSON must match local snapshot byte-for-byte");
                 require(fromBuilder.json().trim().equals(rawSnapshot.trim()),
-                    "Built policy pretty JSON must match local lmaws-managed-policy.json byte-for-byte");
+                    "Built policy pretty JSON must match local snapshot byte-for-byte");
             } catch (java.io.IOException ex) {
                 throw new IllegalStateException("Failed reading local snapshot", ex);
             }
@@ -161,7 +165,7 @@ public final class PolicyBuilderChecks {
         PolicyBuilder session = new PolicyBuilder("lmaws_session")
             .lmawsSessionPolicy("lmaws", "lmaws_test", "lmnature.com", "us-east-1", "t4g.nano,t3.nano", 8);
         List<Map<String, String>> explained = session.explain();
-        require(explained.size() == 24, "explain returns 23 statements + 1 POLICY_POSTURE summary");
+        require(explained.size() == 26, "explain returns 25 statements + 1 POLICY_POSTURE summary");
         Map<String, String> posture = explained.get(explained.size() - 1);
         require("POLICY_POSTURE".equals(posture.get("sid")), "last row is POLICY_POSTURE");
         require(posture.get("plain_english").contains("region_lock=true"), "posture detects region_lock");
@@ -173,7 +177,7 @@ public final class PolicyBuilderChecks {
         List<Map<String, String>> sizeRows = session.sizeReport();
         long stmtSizeCount = sizeRows.stream().filter(r -> "statement_size".equals(r.get("kind"))).count();
         long compSuggestionCount = sizeRows.stream().filter(r -> "compaction_suggestion".equals(r.get("kind"))).count();
-        require(stmtSizeCount == 23, "sizeReport must return 23 statement_size rows, got " + stmtSizeCount);
+        require(stmtSizeCount == 25, "sizeReport must return 25 statement_size rows, got " + stmtSizeCount);
         require(compSuggestionCount >= 3, "sizeReport must return >= 3 compaction suggestions, got " + compSuggestionCount);
         for (Map<String, String> r : sizeRows) {
             if ("compaction_suggestion".equals(r.get("kind"))) {
@@ -183,8 +187,8 @@ public final class PolicyBuilderChecks {
         }
         Map<String, String> sizeSummary = sizeRows.get(sizeRows.size() - 1);
         require("size_summary".equals(sizeSummary.get("kind")), "Last sizeReport row is size_summary");
-        require("5292".equals(sizeSummary.get("compact_bytes")),
-            "lmaws_session (lmnature.com) must be 5292 compact bytes, got " + sizeSummary.get("compact_bytes"));
+        require("6032".equals(sizeSummary.get("compact_bytes")),
+            "lmaws_session v7 (lmnature.com) must be 6032 compact bytes, got " + sizeSummary.get("compact_bytes"));
 
         // IAM cheat sheet for lmaws
         List<Map<String, String>> cheatRows = session.cheatSheet();
@@ -196,7 +200,7 @@ public final class PolicyBuilderChecks {
                     && !cr.get("missing_failure").isBlank() && !cr.get("minimal_builder_patch").isBlank(),
                 "Cheat sheet row must populate all fields: " + cr);
         }
-        require(totalCheatStmts == 23, "Cheat sheet rows must cover all 23 statements, got " + totalCheatStmts);
+        require(totalCheatStmts == 25, "Cheat sheet rows must cover all 25 statements, got " + totalCheatStmts);
 
         Map<String, String> denial1 = PolicyAnalyzer.explainDenial(
             "User: arn:aws:sts::123456789012:federated-user/awsspot-local-lmaws is not authorized to perform: "
@@ -257,7 +261,7 @@ public final class PolicyBuilderChecks {
         }
 
         Map<String, String> imported = PolicyAnalyzer.importJson(session.json());
-        require("23".equals(imported.get("statement_count")), "importJson parses all 23 statements");
+        require("25".equals(imported.get("statement_count")), "importJson parses all 25 statements");
         require(imported.get("builder_program").contains(".require_tag_on_create("), "importJson recognizes require_tag_on_create");
         require(imported.get("builder_program").contains(".only_tagged("), "importJson recognizes only_tagged");
         require(imported.get("builder_program").contains(".pass_role_to_service("), "importJson recognizes pass_role_to_service");
@@ -270,6 +274,24 @@ public final class PolicyBuilderChecks {
         require(offline.size() == 8, "8 default probes evaluated offline");
         for (Map<String, String> row : offline) {
             require("true".equals(row.get("passed")), "Default probe must pass against lmaws_session: " + row);
+        }
+
+        // Verify Scenario 07 Lambda event-source-mapping probes offline
+        String esmProbes = String.join(";",
+            "lambda:CreateEventSourceMapping|*|aws:RequestedRegion=us-east-1,lambda:FunctionArn=arn:aws:lambda:us-east-1:000000000000:function:lmaws_s07_worker_r1,aws:RequestTag/lmaws_test=r1,aws:TagKeys=lmaws_test|allowed",
+            "lambda:CreateEventSourceMapping|*|aws:RequestedRegion=us-east-1,lambda:FunctionArn=arn:aws:lambda:us-east-1:000000000000:function:prod_worker,aws:RequestTag/lmaws_test=r1,aws:TagKeys=lmaws_test|implicitDeny",
+            "lambda:CreateEventSourceMapping|*|aws:RequestedRegion=us-east-1,lambda:FunctionArn=arn:aws:lambda:us-east-1:000000000000:function:lmaws_s07_worker_r1|implicitDeny",
+            "lambda:TagResource|arn:aws:lambda:us-east-1:000000000000:event-source-mapping:00000000-0000-0000-0000-000000000001|aws:RequestedRegion=us-east-1,aws:RequestTag/lmaws_test=r1,aws:TagKeys=lmaws_test|allowed",
+            "lambda:GetEventSourceMapping|arn:aws:lambda:us-east-1:000000000000:event-source-mapping:00000000-0000-0000-0000-000000000001|aws:RequestedRegion=us-east-1,aws:ResourceTag/lmaws_test=r1|allowed",
+            "lambda:DeleteEventSourceMapping|arn:aws:lambda:us-east-1:000000000000:event-source-mapping:00000000-0000-0000-0000-000000000001|aws:RequestedRegion=us-east-1,aws:ResourceTag/lmaws_test=r1|allowed",
+            "lambda:DeleteEventSourceMapping|arn:aws:lambda:us-east-1:000000000000:event-source-mapping:00000000-0000-0000-0000-000000000001|aws:RequestedRegion=us-east-1|implicitDeny",
+            "lambda:ListTags|arn:aws:lambda:us-east-1:000000000000:event-source-mapping:00000000-0000-0000-0000-000000000001|aws:RequestedRegion=us-east-1,aws:ResourceTag/lmaws_test=r1|allowed",
+            "lambda:ListEventSourceMappings|*|aws:RequestedRegion=us-east-1|allowed"
+        );
+        List<Map<String, String>> esmEval = PolicySimulator.evaluateOffline(session.json(), PolicySimulator.parseProbes(esmProbes));
+        require(esmEval.size() == 9, "9 ESM probes evaluated offline");
+        for (Map<String, String> row : esmEval) {
+            require("true".equals(row.get("passed")), "ESM probe must match expected decision: " + row);
         }
 
         // Test simulate_run_instances across all 6 sub-resources

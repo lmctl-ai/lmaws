@@ -30,7 +30,7 @@ public final class PolicyAnalyzer {
     private static final Pattern PRINCIPAL_IN_ERROR = Pattern.compile(
         "User:\\s+(\\S+)\\s+is\\s+not\\s+authorized", Pattern.CASE_INSENSITIVE);
     private static final Pattern CONDITION_KEY_IN_ERROR = Pattern.compile(
-        "\\b((?:aws|ec2|iam|s3|route53):(?:RequestTag/[A-Za-z0-9_.-]+|ResourceTag/[A-Za-z0-9_.-]+|RequestedRegion|ResourceAccount|PrincipalAccount|MultiFactorAuthPresent|SourceIp|CurrentTime|TagKeys|InstanceType|VolumeSize|CreateAction|PassedToService|LocationConstraint|ChangeResourceRecordSets[A-Za-z]+))\\b",
+        "\\b((?:aws|ec2|iam|s3|route53|lambda):(?:RequestTag/[A-Za-z0-9_.-]+|ResourceTag/[A-Za-z0-9_.-]+|RequestedRegion|ResourceAccount|PrincipalAccount|MultiFactorAuthPresent|SourceIp|CurrentTime|TagKeys|InstanceType|VolumeSize|CreateAction|PassedToService|FunctionArn|LocationConstraint|ChangeResourceRecordSets[A-Za-z]+))\\b",
         Pattern.CASE_INSENSITIVE);
 
     private PolicyAnalyzer() {}
@@ -666,6 +666,31 @@ public final class PolicyAnalyzer {
                 suggestedStmt.put("Condition", Map.of("StringEquals", Map.of(
                     "iam:PassedToService", "lambda.amazonaws.com"
                 )));
+            } else if ("lambda:CreateEventSourceMapping".equalsIgnoreCase(action)
+                    || "lambda:GetEventSourceMapping".equalsIgnoreCase(action)
+                    || "lambda:DeleteEventSourceMapping".equalsIgnoreCase(action)
+                    || "lambda:UpdateEventSourceMapping".equalsIgnoreCase(action)
+                    || ("lambda".equals(service) && rawResource.contains("event-source-mapping:"))) {
+                conditionKeys.add("lambda:FunctionArn");
+                conditionKeys.add("aws:RequestTag/lmaws_test");
+                conditionKeys.add("aws:TagKeys");
+                conditionKeys.add("aws:ResourceTag/lmaws_test");
+                scopedResource = "lambda:CreateEventSourceMapping".equalsIgnoreCase(action)
+                    ? "*"
+                    : "arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:event-source-mapping:*";
+                failedCondition = "lambda:FunctionArn Like function:lmaws_* && aws:RequestTag/lmaws_test == ?* && aws:TagKeys == [lmaws_test] (create/tag) or aws:ResourceTag/lmaws_test == ?* (get/delete/list-tags)";
+                plainEnglish = "No Allow statement matched " + action + " on " + scopedResource
+                    + ": add scoped Lambda event-source-mapping statements (EsmCreate, EsmTag, EsmOwn).";
+                builderSnippet = "policy.lambda_event_source_mapping(\"lmaws\", \"lmaws_test\", \"us-east-1\")";
+                suggestedStmt.put("Sid", "EsmCreate");
+                suggestedStmt.put("Effect", "Allow");
+                suggestedStmt.put("Action", "lambda:CreateEventSourceMapping");
+                suggestedStmt.put("Resource", "*");
+                suggestedStmt.put("Condition", Map.of(
+                    "ArnLike", Map.of("lambda:FunctionArn", "arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:function:lmaws_*"),
+                    "StringLike", Map.of("aws:RequestTag/lmaws_test", "?*"),
+                    "ForAllValues:StringEquals", Map.of("aws:TagKeys", List.of("lmaws_test"))
+                ));
             } else if ("ec2:RunInstances".equalsIgnoreCase(action)) {
                 conditionKeys.add("aws:RequestTag/lmaws_test");
                 if ("*".equals(rawResource)) {
@@ -1383,12 +1408,12 @@ public final class PolicyAnalyzer {
         ));
         rows.add(buildCheatSheetRow(
             "serverless_lambda",
-            List.of("Fn", "Ev", "LambdaPassRole"),
+            List.of("Fn", "LambdaPassRole", "EsmCreate", "EsmTag", "EsmOwn"),
             bytesBySid,
-            "ARN prefix function:lmaws_* & rule/lmaws_*; iam:PassRole on role/lmaws_* with iam:PassedToService == lambda.amazonaws.com",
-            "Lambda functions and EventBridge rules are scoped by lmaws_* name prefix. Creating a Lambda function also requires passing an execution role via iam:PassRole; scoping PassRole to role/lmaws_* and iam:PassedToService == lambda.amazonaws.com prevents privilege escalation to admin roles or other AWS services.",
-            "User: arn:aws:sts::*:federated-user/lmaws is not authorized to perform: iam:PassRole on resource: \"arn:aws:iam::*:role/lmaws_*\" because no session policy allows the iam:PassRole action",
-            "policy.lambda_deployer_by_name(\"lmaws\").pass_role_to_service(\"LambdaPassRole\", \"lmaws\", \"lambda.amazonaws.com\")"
+            "ARN prefix function:lmaws_* & rule/lmaws_*; iam:PassRole on role/lmaws_* with iam:PassedToService == lambda.amazonaws.com; CreateEventSourceMapping on * with lambda:FunctionArn + RequestTag + TagKeys; EsmTag/EsmOwn on event-source-mapping:*",
+            "Lambda functions and EventBridge rules are merged into Fn by lmaws_* name prefix. PassRole is restricted to role/lmaws_* and lambda.amazonaws.com. AWS evaluates CreateEventSourceMapping against Resource: * because the mapping UUID does not exist yet, so EsmCreate binds lambda:FunctionArn to function:lmaws_* and enforces aws:RequestTag/lmaws_test + aws:TagKeys; EsmTag gates creation-time TagResource and EsmOwn gates Get/Delete/ListTags by ResourceTag/lmaws_test.",
+            "User: arn:aws:sts::*:federated-user/lmaws is not authorized to perform: lambda:CreateEventSourceMapping on resource: * because no session policy allows the lambda:CreateEventSourceMapping action",
+            "policy.lambda_deployer_by_name(\"lmaws\").pass_role_to_service(\"LambdaPassRole\", \"lmaws\", \"lambda.amazonaws.com\").lambda_event_source_mapping(\"lmaws\", \"lmaws_test\", \"us-east-1\")"
         ));
         rows.add(buildCheatSheetRow(
             "region_guardrail",
@@ -1673,6 +1698,9 @@ public final class PolicyAnalyzer {
         if (rest.startsWith("function:")) {
             return rest.contains("lmaws-") ? "function:lmaws-*" : "function:lmaws_*";
         }
+        if (rest.startsWith("event-source-mapping:")) {
+            return "event-source-mapping:*";
+        }
         if (rest.startsWith("table/")) {
             return rest.contains("lmaws-") ? "table/lmaws-*" : "table/lmaws_*";
         }
@@ -1750,6 +1778,7 @@ public final class PolicyAnalyzer {
             case "ec2:volumesize" -> "ec2:VolumeSize";
             case "ec2:createaction" -> "ec2:CreateAction";
             case "iam:passedtoservice" -> "iam:PassedToService";
+            case "lambda:functionarn" -> "lambda:FunctionArn";
             case "s3:locationconstraint" -> "s3:LocationConstraint";
             default -> rawKey;
         };

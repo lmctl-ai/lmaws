@@ -1,4 +1,4 @@
-# Synthetic-only: Generate the 23-statement lmaws_session IAM managed policy with the fluent builder, statement size report and optional snapshot diff.
+# Synthetic-only: Generate the 25-statement lmaws_session IAM managed policy with the fluent builder, statement size report and optional snapshot diff.
 # This picture-first example always disables live AWS and apply, even if inherited.
 # Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_session_policy.lms
 # Generated standalone example from recipes/lib/policy_builder.lms

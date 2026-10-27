@@ -25,7 +25,8 @@ and 12 `Cloud` helper methods.
 - Composable building blocks: `read_only_inventory`, `s3_bucket_sandbox`,
   `queue_sandbox`, `topic_sandbox`, `table_sandbox`, `parameter_sandbox`,
   `log_group_sandbox`, `spot_nano_sandbox`, `static_site_stack`,
-  `billing_viewer`, `lambda_deployer_by_name`, `ci_bucket_deployer`,
+  `billing_viewer`, `lambda_deployer_by_name`, `lambda_event_source_mapping`,
+  `pass_role_to_service`, `ci_bucket_deployer`,
   `permission_boundary`, `lmaws_session_policy`, `merge_from`.
 
 ## Compaction, analysis and simulation
@@ -52,12 +53,12 @@ and 12 `Cloud` helper methods.
 
 ## Dogfood and recipes
 
-`recipes/session_policy.lms` generates the 23-statement `lmaws_session` managed
-policy (`5,292` compact chars, including `LambdaPassRole`, `CfCreate`, `AcmOwn`,
-and `size_report()`) byte-for-byte identically (`+0 ~0 -0 =23`,
-`byte_identical=true`) to `~/.aws/session-tools/tasks/iam-snapshots/lmaws-managed-policy.json`
-and `grant_session_policy.lms --live --profile admin` confirms `0` diff against
-the live default policy version. 28 recipes in `recipes/lib/policy_builder.lms`
+`recipes/session_policy.lms` generates the 25-statement `lmaws_session` managed
+policy (`6,032` compact chars, including `LambdaPassRole`, `EsmCreate`, `EsmTag`,
+`EsmOwn`, `CfCreate`, `AcmOwn`, and `size_report()`) byte-for-byte identically
+(`+0 ~0 -0 =25`, `byte_identical=true`) to
+`~/.aws/session-tools/tasks/iam-snapshots/lmaws-managed-policy.v7.json`.
+28 recipes in `recipes/lib/policy_builder.lms`
 (including `recipes/policy_cheat_sheet.lms`) and matching synthetic picture-first
 examples (`examples/recipe_*.lms`) cover all building blocks, compaction,
 splitting, denial/ledger analysis, diffing, 6-sub-resource `RunInstances`

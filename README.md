@@ -186,7 +186,7 @@ println("matched rows:",len(report.rows));
 | [`policy_ssm_sandbox.lms`](recipes/policy_ssm_sandbox.lms) | Build a prefix-scoped SSM Parameter Store sandbox policy with public parameter read access | Read-only | --prefix lmaws --region us-east-1 --output data/policy_ssm_sandbox | $0.00 offline policy compilation |
 | [`policy_tag_operator.lms`](recipes/policy_tag_operator.lms) | Build a tag discovery and tag-gated resource tagging operator policy | Read-only | --prefix lmaws --region us-east-1 --output data/policy_tag_operator | $0.00 offline policy compilation |
 | [`policy_web_stack.lms`](recipes/policy_web_stack.lms) | Build a static site stack policy (S3 bucket + CloudFront OAC + ACM + Route53 record pattern lock) | Read-only | --prefix lmaws --domain example.com --region us-east-1 --output data/policy_web_stack | $0.00 offline policy compilation |
-| [`session_policy.lms`](recipes/session_policy.lms) | Generate the 23-statement lmaws_session IAM managed policy with the fluent builder, statement size report and optional snapshot diff | Read-only | --policy lmaws_session --prefix lmaws --domain example.com --region us-east-1 --types t4g.nano,t3.nano --max-gib 8 [--file SNAPSHOT.json] --output data/session_policy | $0.00 offline policy compilation and diff |
+| [`session_policy.lms`](recipes/session_policy.lms) | Generate the 25-statement lmaws_session IAM managed policy with the fluent builder, statement size report and optional snapshot diff | Read-only | --policy lmaws_session --prefix lmaws --domain example.com --region us-east-1 --types t4g.nano,t3.nano --max-gib 8 [--file SNAPSHOT.json] --output data/session_policy | $0.00 offline policy compilation and diff |
 
 ### Inventory
 
@@ -608,7 +608,7 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 #### session_policy
 
-![Generate the 23-statement lmaws_session IAM managed policy with the fluent builder, statement size report and optional snapshot diff](docs/images/recipe_session_policy.png)
+![Generate the 25-statement lmaws_session IAM managed policy with the fluent builder, statement size report and optional snapshot diff](docs/images/recipe_session_policy.png)
 
 `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_session_policy.lms`
 

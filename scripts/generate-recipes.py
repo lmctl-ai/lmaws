@@ -37,7 +37,7 @@ for name,what,access,cost,args,run in [
 
 PB_ARGS='--prefix lmaws --region us-east-1 --output data/NAME'
 for name,what,access,cost,args,run in [
- ('session_policy','Generate the 23-statement lmaws_session IAM managed policy with the fluent builder, statement size report and optional snapshot diff','Read-only','$0.00 offline policy compilation and diff','--policy lmaws_session --prefix lmaws --domain example.com --region us-east-1 --types t4g.nano,t3.nano --max-gib 8 [--file SNAPSHOT.json] --output data/NAME','--domain example.com'),
+ ('session_policy','Generate the 25-statement lmaws_session IAM managed policy with the fluent builder, statement size report and optional snapshot diff','Read-only','$0.00 offline policy compilation and diff','--policy lmaws_session --prefix lmaws --domain example.com --region us-east-1 --types t4g.nano,t3.nano --max-gib 8 [--file SNAPSHOT.json] --output data/NAME','--domain example.com'),
  ('policy_s3_sandbox','Build a prefix-scoped S3 bucket and object sandbox policy with account-boundary and tagged-delete guardrails','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
  ('policy_sqs_sandbox','Build a prefix-scoped SQS queue sandbox policy with account-boundary and region-lock guardrails','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),
  ('policy_sns_sandbox','Build a prefix-scoped SNS topic sandbox policy with account-boundary and region-lock guardrails','Read-only','$0.00 offline policy compilation',PB_ARGS,'--prefix lmaws'),

@@ -1,5 +1,5 @@
 # Access: Read-only
-# What: Generate the 23-statement lmaws_session IAM managed policy with the fluent builder, statement size report and optional snapshot diff
+# What: Generate the 25-statement lmaws_session IAM managed policy with the fluent builder, statement size report and optional snapshot diff
 # When: When specifying, shrinking, splitting, diffing, explaining or simulating AWS IAM policies without hand-editing raw JSON
 # Run: lmctl recipes/session_policy.lms --domain example.com
 # Preview: lmctl recipes/session_policy.lms --preview

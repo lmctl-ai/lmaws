@@ -28,6 +28,7 @@ public final class IamPolicies {
     public static final String ALLOWLIST_IAM_SCOPED_POLICY_READ = "IAM_SCOPED_POLICY_READ_ALLOWLIST";
     public static final String RULE_TAG_SCOPED_SENSITIVE_READ = "TAG_SCOPED_SENSITIVE_READ";
     public static final String RULE_PASS_ROLE_LAMBDA_ONLY = "PASS_ROLE_LAMBDA_ONLY";
+    public static final String RULE_LAMBDA_ESM_CREATE = "LAMBDA_ESM_CREATE_SCOPED";
     public static final String RULE_FORBIDDEN_BARE_WILDCARD = "FORBIDDEN_BARE_WILDCARD";
     public static final String RULE_FORBIDDEN_STS_WILDCARD = "FORBIDDEN_STS_WILDCARD";
     public static final String RULE_FORBIDDEN_ACTION_PREFIX = "FORBIDDEN_ACTION_PREFIX";
@@ -553,6 +554,18 @@ public final class IamPolicies {
                 && !hasStarResource
                 && resources.stream().allMatch(r -> r.contains(":parameter/aws/service/") || r.contains(":parameter/lmaws"));
 
+            if (hasStarResource && isExactLambdaCreateEventSourceMapping(actions, resources, stmtMap.get("Condition"))) {
+                if (stmtFindings.isEmpty()) {
+                    allowScoped++;
+                    statementChecks.add(new StatementCheck(sid, effect, "allow_scoped_write", actions.size(), resources.size(), true,
+                        "scoped lambda:CreateEventSourceMapping on * by lambda:FunctionArn + aws:RequestTag/lmaws_test + aws:TagKeys (" + RULE_LAMBDA_ESM_CREATE + ")"));
+                } else {
+                    findings.addAll(stmtFindings);
+                    statementChecks.add(new StatementCheck(sid, effect, "violation", actions.size(), resources.size(), false, String.join("; ", stmtFindings)));
+                }
+                continue;
+            }
+
             if (hasStarResource) {
                 if (!allInReadAllowlist) {
                     for (String action : actions) {
@@ -641,7 +654,10 @@ public final class IamPolicies {
                     || condLower.contains("\"ec2:resourcetag/lmaws_test\":\"false\"")
                     || condLower.contains("\"aws:requesttag/lmaws_test\":\"true\"")
                     || condLower.contains("\"aws:resourcetag/lmaws_test\":\"true\"")
-                    || condLower.contains("\"ec2:resourcetag/lmaws_test\":\"true\"")) {
+                    || condLower.contains("\"ec2:resourcetag/lmaws_test\":\"true\"")
+                    || condLower.contains("\"aws:requesttag/lmaws_test\":\"?*\"")
+                    || condLower.contains("\"aws:resourcetag/lmaws_test\":\"?*\"")
+                    || condLower.contains("\"ec2:resourcetag/lmaws_test\":\"?*\"")) {
                 return "scoped by lmaws_test tag condition";
             }
             if (actions.size() == 1 && "ec2:createtags".equalsIgnoreCase(actions.get(0).trim())
@@ -705,6 +721,11 @@ public final class IamPolicies {
     }
 
     private static String explainStarReadRejection(String sid, String action) {
+        if ("lambda:createeventsourcemapping".equalsIgnoreCase(action == null ? "" : action.trim())) {
+            return "statement " + sid + " [rule=" + RULE_LAMBDA_ESM_CREATE + ", rejected_by=" + ALLOWLIST_STAR_READ
+                + "]: lambda:CreateEventSourceMapping on Resource '*' requires Condition ArnLike lambda:FunctionArn=arn:aws:lambda:us-east-1:${aws:PrincipalAccount}:function:lmaws_*, "
+                + "StringLike aws:RequestTag/lmaws_test=?*, and ForAllValues:StringEquals aws:TagKeys=[lmaws_test]";
+        }
         ReadRuleEntry matched = matchReadRule(action);
         if (matched != null) {
             return "statement " + sid + " [rule=" + matched.allowlistId() + ", rejected_by=" + ALLOWLIST_STAR_READ
@@ -713,6 +734,31 @@ public final class IamPolicies {
         }
         return "statement " + sid + " [rule=" + ALLOWLIST_STAR_READ + "]: Resource '*' is not allowed with non-inventory/write action '"
             + action + "' (rejected by " + ALLOWLIST_STAR_READ + ")";
+    }
+
+    private static boolean isExactLambdaCreateEventSourceMapping(
+            List<String> actions,
+            List<String> resources,
+            Object condition) {
+        if (actions.size() != 1 || resources.size() != 1) return false;
+        if (!"lambda:createeventsourcemapping".equalsIgnoreCase(actions.get(0).trim())) return false;
+        if (!"*".equals(resources.get(0).trim())) return false;
+        if (!(condition instanceof Map<?, ?> operators) || operators.size() != 3) return false;
+        Object arnLikeObj = operators.get("ArnLike");
+        Object strLikeObj = operators.get("StringLike");
+        Object tagKeysObj = operators.get("ForAllValues:StringEquals");
+        if (!(arnLikeObj instanceof Map<?, ?> arnLike) || arnLike.size() != 1) return false;
+        if (!(strLikeObj instanceof Map<?, ?> strLike) || strLike.size() != 1) return false;
+        if (!(tagKeysObj instanceof Map<?, ?> tagKeysMap) || tagKeysMap.size() != 1) return false;
+        Object fnArnObj = arnLike.get("lambda:FunctionArn");
+        if (!(fnArnObj instanceof String fnArn)) return false;
+        if (!fnArn.trim().matches("arn:aws:lambda:(?:us-east-1|\\*):(?:\\$\\{aws:PrincipalAccount\\}|\\*):function:lmaws_[a-z0-9_*?-]+")) {
+            return false;
+        }
+        Object reqTagObj = strLike.get("aws:RequestTag/lmaws_test");
+        if (!"?*".equals(reqTagObj)) return false;
+        List<String> tagKeys = stringList(tagKeysMap.get("aws:TagKeys"));
+        return tagKeys.equals(List.of("lmaws_test"));
     }
 
     private static boolean isScopedIamRead(List<String> actions, List<String> resources) {

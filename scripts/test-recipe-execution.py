@@ -245,11 +245,11 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertEqual(sp_res.returncode, 0, sp_res.stdout + sp_res.stderr)
         sp_report = json.loads(sp_out.with_suffix(".json").read_text(encoding="utf-8"))
         self.assertTrue(sp_report["lint_valid"])
-        self.assertEqual(sp_report["statement_count"], 23)
+        self.assertEqual(sp_report["statement_count"], 25)
         self.assertTrue(sp_report["fits_managed"])
-        self.assertGreaterEqual(len(sp_report["extra_rows"]), 25)
+        self.assertGreaterEqual(len(sp_report["extra_rows"]), 27)
 
-        # Compare generated policy against itself via --file -> 23 unchanged, byte_identical=True
+        # Compare generated policy against itself via --file -> 25 unchanged, byte_identical=True
         sp_diff_out = self.work / "session_policy_diff"
         sp_diff_res = self.run_script(
             ROOT / "recipes" / "session_policy.lms",
@@ -259,7 +259,7 @@ class RecipeExecutionTests(unittest.TestCase):
         )
         self.assertEqual(sp_diff_res.returncode, 0, sp_diff_res.stdout + sp_diff_res.stderr)
         sp_diff_report = json.loads(sp_diff_out.with_suffix(".json").read_text(encoding="utf-8"))
-        self.assertEqual(sp_diff_report["snapshot_diff"]["unchanged_count"], 23)
+        self.assertEqual(sp_diff_report["snapshot_diff"]["unchanged_count"], 25)
         self.assertTrue(sp_diff_report["snapshot_diff"]["byte_identical"])
 
         cs_out = self.work / "policy_cheat_sheet"
