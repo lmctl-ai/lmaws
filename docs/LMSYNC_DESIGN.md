@@ -1,42 +1,55 @@
-# lmsync: local believed-state manager
+# lmfiles: file lifecycle registry (proposed name)
 
-Status: **design only, brief v2 with current-product API correction**. This is the only current sync design. It
+Status: **design only, brief v2 plus file-lifecycle addendum**. This is the current registry design. It
 consolidates the useful publication examples from root `SYNC_DESIGN.md` at
 `d0f033f`, replacing its integrated sync/policy engine with the boundary below.
-No implementation, AWS command, remote-host test, workflow dispatch, benchmark or repository creation
-is performed here. The future `lmctl-ai/lmsync` repository is not created now.
+No implementation, AWS command, remote-host test, workflow dispatch or benchmark
+is performed here. No product name is final and no repository is created. The
+requested document path remains `docs/LMSYNC_DESIGN.md`; legacy lmsync links point here.
 
 Contents: [boundary](#definition-and-boundary), [API](#1-core-api-and-neutral-data),
 [belief/verification](#2-believed-state-and-verification-scripts),
 [optional logs](#3-optional-planresult-log-glue),
 [durability](#4-durable-db-and-failure-injection),
 [Java stores](#5-java-implementation-and-scale-tier-storage),
-[three example pairings and host gaps](#6-three-pairings-one-script-per-job),
+[lifecycle jobs and host gaps](#6-lifecycle-jobs-using-existing-products),
 [multi-host milestone](#7-one-lmscript-two-hosts-first-milestone),
 [benchmarks](#8-benchmark-plan-proving-the-local-state-claim),
 [implementation](#9-positioning-risks-and-implementation-breakdown).
 
 ## Definition and boundary
 
-lmsync is the local **registry**: a model of believed remote state. It provides a Java
-lmcode host/library for DB access, local scanning, neutral comparisons, recording
-and optional local log helpers. It makes **zero remote calls, ever**: no list,
-remote stat, HEAD, credential resolution, cloud client or SSH connection. A query
-about an arbitrary subset reads local state; it does not enumerate a target tree.
+Recommend **lmfiles**: a **file lifecycle registry**, not a directory sync engine.
+Alternatives: **lmregistry** (emphasizes generic state, less obviously files) and
+**lmtrack** (emphasizes history, less obviously file operations). These are naming
+proposals, not new repositories or renamed existing products.
 
-**One sync job is one user-authored LMScript.** That script calls lmsync for state
-and lmcurl/cloud hosts for actions, then reports the results to lmsync. lmaws keeps
-its existing Java/GraalVM host and SDK v2; lmazure and lmgcp keep their own hosts.
-There is no C++, JNI, native sidecar or full-host rewrite **for the registry**.
-lmcurl, lmssh and lmaws are existing action hosts; lmsync does not implement
-or redesign their transports.
+An item can start as a source URL before a local file exists, become a cleaned
+artifact, and acquire several publication aliases. A law/case ingestion script
+can track millions of such items through its own stages. The registry is a local
+model of observations and reported outcomes, including believed remote state;
+it is neither a downloader nor an uploader. Directory scan is an **optional
+adoption/observation helper**, not the core workflow.
 
-| lmsync owns | The job script owns | The transfer host owns |
+It exposes a Java lmcode host/library for DB access, item/alias and stage queries,
+local observations/hashes, event history, claims, recording and optional local
+log helpers. It makes **zero remote calls, ever**: no list, remote stat, HEAD,
+credential resolution, cloud client or SSH connection. Queries about arbitrary
+paths/URLs/IDs never enumerate a remote directory.
+
+**One job is one user-authored LMScript.** It calls lmfiles for state and existing
+lmcurl, lmaws or lmssh for actions. The script owns download, clean, publish,
+archive and cleanup decisions and reports their outcomes. lmaws keeps its Java/
+GraalVM SDK v2 host; lmazure/lmgcp keep theirs. No C++, JNI or external native
+component is introduced for the registry. Existing action products are used as
+products today, not redesigned here.
+
+| Registry owns | Job script owns | Existing action host owns |
 |---|---|---|
-| DB durability, local file observations, hashes, snapshots, comparisons, set differences, record/forget, import/export, integrity queries | Key mapping; include/exclude choices; what to add/delete; cache/freshness; safety thresholds; budgets; verification sample/rate; when to rebuild; retention; invalidation | Provider/SSH protocol, remote actions explicitly requested by the script, credentials, host-key/ownership checks, service limits, transfer receipts and provider cost ledger |
+| Durable items, aliases, local observations, stage projections, audit events, indexed queries, snapshots, atomic leased claims, optional local logs | Stage names and meaning; pipeline dependencies; retries/skipping gone sources; transforms; local deletion; key mapping; freshness; budgets; verification; retention; invalidation | Explicit HTTP/cloud/SSH actions, credentials, host-key/ownership checks, provider limits, transfer receipts and provider cost ledger |
 
 There is **no config-file-driven rules engine**, automatic upload/delete choice,
-record-age warning, quota policy or cloud-specific target validation in lmsync.
+record-age warning, quota policy or cloud-specific target validation in lmfiles.
 A page may be unchanged for years. Operational tuning parameters (batch size,
 store cache, hash mode, scan globs) are ordinary API arguments, not rules that
 trigger remote work. Script templates may choose defaults; core does not impose
@@ -46,7 +59,7 @@ zero decision requests as zero total requests for a script that chose verificati
 
 ```mermaid
 flowchart LR
-  F[Local files / explicit subsets] --> S[lmsync: local DB + scan + query]
+  F[URLs / IDs / aliases / optional local files] --> S[lmfiles: items + stages + events + claims]
   S --> J[One user LMScript: decisions]
   J --> H[lmcurl / lmssh / lmaws / lmazure / lmgcp]
   H --> R[Remote actions]
@@ -57,61 +70,170 @@ flowchart LR
 
 ## 1. Core API and neutral data
 
-All signatures below are proposed, not existing bindings. The canonical enum is
-`CompareState { UNKNOWN, SAME_AS_RECORDED, CHANGED, RECORDED_BUT_MISSING_LOCALLY }`. Parameters are typed
-lmcode values/handles; enum values are distinct from strings. Streaming cursors
-and bounded batches are the main interface; convenience arrays are size-bounded.
+All registry signatures below are **proposed**, not existing bindings. Example
+stage names `fetched`, `parsed`, `cleaned`, `published`, `archived`, `deleted` are
+user strings: none is built in, ordered, required or interpreted by the core.
+An item need not have a file, URL, hash or any stage yet.
+
+### Schema, identity and revisions
+
+Use stable internal `ItemId` (128-bit, opaque); the caller may additionally supply
+an opaque external ID. An alias is `(kind, namespace, value)` such as URL/local
+root+path/published key. Its bytes are caller supplied, compared exactly; no URL
+canonicalization, path case folding or S3 key rule is hidden in the registry.
+The alias index enforces one active item per alias in that namespace. Adding an
+alias already owned by another item returns a conflict, never an automatic merge.
+Several items may share a content hash; duplicates are not identity. A transform
+may update an item or make a derived item with `derived_from` attributes, as the
+script decides. Conflicting source URLs should use separate source namespaces or
+items if their versions cannot share a coherent content revision.
+
+| Record/key | Value and semantics | Estimated encoded bytes before index duplication |
+|---|---|---:|
+| Item / `item_id` | Current content revision, optional hash algorithm+digest, size, mtime precision, local observation refs, free-form typed attributes, tombstone flag | 240–400 with ~128 B attributes |
+| Alias / `(kind,namespace,value)` | Item ID, added event sequence, removed marker; average value 96 UTF-8 bytes | 140–200 each |
+| Observation / `(item,local-alias)` | Size/mtime, optional ctime/file ID/hash, observed presence and scan coverage | 100–180 per local alias |
+| Stage projection / `(stage,namespace,item,slot)` | Latest attempt plus last-success pointer; status, reported UTC timestamp, source revision/fingerprint, event sequence, metadata | 220–360 with ~128 B metadata |
+| Event / `(db_epoch,sequence)` | Immutable operation ID, item, stage/namespace, timestamp, outcome, source revision, metadata or blob reference | 180–320 with ~96 B metadata |
+| Claim / `(work_namespace,item)` | Token/fence, owner, source revision, selection snapshot, deadline, generation | 100–180 while active |
+| Tombstone / entity key | Removal event sequence and identity; retained until safe compaction/export boundary | 32–64 plus key |
+
+These are **sizing assumptions**, not measured codecs. Arbitrary large attributes,
+URLs or error text increase them; use bounded blobs with digests. Metadata may
+hold ETag, Last-Modified, HTTP status, local artifact alias, remote ID/version,
+error text or failure count. The script supplies these values; secret values do
+not belong in public fixtures or audit output. `status` is the neutral enum
+`ok | failed | gone | skipped`; it does not trigger retry, deletion or suppression.
+`slot` is an optional caller-defined name (default empty), allowing several
+artifacts within one stage/namespace. An event stores the exact reported source
+revision: successful processing of revision R never asserts success for R+1.
+
+Completion may include an explicit observed-item update in the same transaction:
+compare the pre-fetch revision, allocate a new revision only if content changed,
+and bind fetched success to the resulting revision. A transform instead references
+its input revision and separately reported output fingerprint. No implicit hashing
+or adoption of whatever bytes happen to be at a path during completion.
+
+A stage projection retains both latest attempt and most recent successful event,
+so a later failed retry does not erase evidence of an earlier publication.
+Keep the last-success source fingerprint/status/revision summary materialized in
+the projection even if its full event payload is explicitly archived; archive
+availability must not turn a known comparison baseline into a fabricated match.
+Queries explicitly choose latest-attempt or last-success; status alone is not
+current-revision success. Attributes support JSON scalar values, bytes/blob refs
+and bounded maps; indexed scalar fields have explicit type/collation. Unindexed
+nested predicates are allowed only as explicitly requested streaming scans.
+Tombstoning an item/alias/stage never deletes a file or remote object, nor rewrites
+its append-only audit events. No name implies a business transition.
+
+### Typed API
 
 ```text
-sync.open(path: string, namespace: string, options: OpenOptions) -> StateDB
-StateDB.close() -> CloseReceipt
-StateDB.target(namespace: string) -> Target
-StateDB.scan(root: string, options: ScanOptions) -> ScanRun
-StateDB.scan_paths(paths: PathSource, options: ScanOptions) -> ScanRun
-ScanRun.next_batch(max_rows: int) -> ObservationBatch
-ScanRun.finish() -> ScanReceipt
-StateDB.hash_paths(paths: PathSource, algorithm: HashAlgorithm) -> ObservationCursor
-StateDB.query(target: Target, paths: PathSource) -> StateCursor
-StateDB.query_batch(target: Target, paths: PathBatch) -> StateBatch
-StateDB.local_not_recorded(target: Target, scope: PathScope) -> StateCursor
-StateDB.recorded_not_local(target: Target, scope: PathScope) -> StateCursor
-StateDB.records(target: Target, scope: PathScope) -> RecordCursor
-StateDB.record(target: Target, path: PathId, result: RecordMetadata) -> RecordReceipt
-StateDB.forget(target: Target, path: PathId) -> RecordReceipt
-StateDB.mark_suspect(target: Target, paths: PathSource, note: string) -> RecordReceipt
-StateDB.set_suspect(target: Target, paths: PathSource, value: bool, note: string) -> RecordReceipt
-StateDB.begin() -> WriteBatch
-WriteBatch.record / forget / mark_suspect(...) -> WriteBatch
+files.open(path: string, namespace: string, options: OpenOptions) -> Registry
+Registry.close() -> CloseReceipt
+Registry.item_upsert(identity: Identity, fields: ItemFields) -> ItemReceipt
+Registry.alias_add(item: ItemId, alias: Alias) -> AliasReceipt
+Registry.alias_remove(item: ItemId, alias: Alias) -> AliasReceipt
+Registry.observe(item: ItemId, observation: Observation) -> ObservationReceipt
+Registry.get(ids: IdentitySource, snapshot: Snapshot) -> ItemCursor
+Registry.query_subset(namespace: string, ids: IdentitySource, options: CompareOptions) -> StateCursor
+Registry.stage_record(item: ItemId, result: StageResult) -> RecordReceipt
+Registry.stage_forget(item: ItemId, stage: string, namespace: string, slot: string) -> RecordReceipt
+Registry.item_tombstone(item: ItemId, note: string) -> RecordReceipt
+Registry.select(predicate: Query, snapshot: Snapshot) -> ItemCursor
+Registry.stage_difference(a: StageSelector, b: StageSelector, options: JoinOptions) -> ItemCursor
+Registry.by_attribute(name: string, predicate: ScalarPredicate) -> ItemCursor
+Registry.by_hash(algorithm: string, digest: bytes) -> ItemCursor
+Registry.by_timestamp(field: TimeField, range: TimeRange, scope: Query) -> ItemCursor
+Registry.aggregate(query: Query, groups: GroupFields, metrics: AggregateFields) -> AggregateCursor
+Registry.changes(after: EventCursor, filter: EventFilter, max_rows: int) -> EventBatch
+Registry.claim(selection: Query, work_namespace: string, count: int, lease_ms: int,
+               owner: string) -> ClaimBatch
+Registry.renew(token: ClaimToken, lease_ms: int) -> ClaimReceipt
+Registry.release(token: ClaimToken) -> ClaimReceipt
+Registry.complete(token: ClaimToken, result: StageResult, expected_revision: Revision) -> RecordReceipt
+Registry.scan(root: string, options: ScanOptions) -> ScanRun
+Registry.scan_paths(paths: PathSource, options: ScanOptions) -> ScanRun
+Registry.hash_paths(paths: PathSource, algorithm: HashAlgorithm) -> ObservationCursor
+Registry.mark_suspect(items: IdentitySource, stage: string, namespace: string, note: string) -> RecordReceipt
+Registry.set_suspect(items: IdentitySource, stage: string, namespace: string,
+                     value: bool, note: string) -> RecordReceipt
+Registry.snapshot() -> Snapshot
+Registry.begin() -> WriteBatch
+WriteBatch.item_upsert / observe / stage_record / stage_forget / checkpoint(...) -> WriteBatch
 WriteBatch.commit() -> CommitReceipt
 WriteBatch.rollback() -> void
-StateDB.import_records(source: LocalRecordSource, options: ImportOptions) -> ImportReceipt
-StateDB.export_records(target: Target, output: string, options: ExportOptions) -> ExportReceipt
-StateDB.snapshot() -> ReadSnapshot
-StateDB.doctor(options: DoctorOptions) -> IntegrityReport
+Registry.import_records(source: LocalRecordSource, options: ImportOptions) -> ImportReceipt
+Registry.export_records(output: string, options: ExportOptions) -> ExportReceipt
+Registry.doctor(options: DoctorOptions) -> IntegrityReport
 ```
 
-Cursors expose `has_next`, `next_batch`, streaming JSONL/CSV output and `close`.
-Default batches may be 4,096 records, with a caller-provided memory ceiling. Byte budgets can shorten a batch below max_rows; oversized metadata uses bounded
-streaming/blob references. No million-row array is required. Explicit path lists, stdin/NUL lists, globs, git
-changes, manifests and unrelated directories are adapters producing PathSource;
-the core need not run git or understand a build system. The script turns a git
-diff or manifest into paths. scan_paths observes only those local paths.
+Cursors expose `has_next`, `next_batch(max_rows,max_bytes)` and `close`, with
+streaming JSONL/CSV output. Default 4,096 rows is an operational batch parameter;
+a byte ceiling can shorten it. No million-item array or in-memory handle graph
+is required. ScanRun has the same bounded `next_batch` plus `finish` receipt.
+IdentitySource adapters accept explicit aliases/IDs, local stdin/NUL lists, globs,
+manifest records or unrelated roots. The user script obtains git diff paths;
+core never invokes git or fetches a URL. Convenience arrays have explicit limits.
 
-`PathId` is a local root identity plus relative path, or a caller-named logical
-path for non-file events. Multiple roots allow unrelated directories and prevent
-same-basename confusion. Local filesystem paths and caller-supplied target names
-are separate. A Target is an **opaque namespace**, such as `site-production` or
-`sftp-staging`, optionally with a caller-stored descriptor. The core does not
-parse S3 buckets, enforce `lmaws-*`, perform flatten/strip/add-prefix mapping, or
-resolve a hostname. Those choices and their collision checks are script/host work.
-One local path can have a separate record for every target in the same DB.
+A target is an opaque namespace, not necessarily a bucket. It may name an HTTP
+source, S3 bucket/prefix, SFTP host/path or transform version. The core neither
+parses nor validates those descriptors. A local path is root ID+relative path;
+a remote object key is another alias. User code owns their mapping/collisions.
+The earlier path API is a **projection**, not a second DB: `query(target,paths)`
+means query_subset against a caller-selected stage/namespace; `record` means
+stage_record, `forget` means stage_forget, `records` means select, and
+local_not_recorded/recorded_not_local are explicit set predicates over observations
+and stage records. Optional log projections use these abbreviations but must
+carry the stage/namespace/item when ambiguous. No default `published` stage exists.
+`explain(query)` and explicit local `archive_events(range, output)`/consumer
+`checkpoint(name,cursor)` are additional typed administrative data operations;
+archive never deletes unexported history or silently rewinds a consumer.
+
+### Indexed queries and change cursors
+
+Primary items are ordered by ID; maintain alias, hash and caller-declared scalar
+attribute indexes, plus `(stage,namespace,status,item)` membership postings,
+`(stage,namespace,item,slot)` projections, successful-source-revision postings,
+`(time-field,namespace,timestamp,item)` and ordered event sequence indexes.
+Changing a projection updates indexes and appends its event in the same transaction.
+Index definitions are data access choices, not lifecycle rules. `explain(query)`
+returns chosen index, estimated rows and scan requirement; no silent full scan
+for an apparently indexed attribute lookup.
+
+Stage A minus B uses ordered posting merge/anti-join with bounded buffers,
+O(|A|+|B|) sequential reads worst case, or indexed probes from a sparse A. It does
+not loop over all item blobs or make a remote request. Selectors name status,
+namespace, slot and latest-attempt/last-success explicitly. `JoinOptions` specifies
+whether B must match A's source revision/fingerprint; this is a relational
+comparison parameter, not an implied cleaned-before-published rule. For dense
+100M anti-joins even an optimal merge reads millions of IDs; report that cost.
+Do not promise O(output) latency for arbitrary complements. Optional partition
+counts accelerate exact membership counts; snapshot aggregate totals and index
+updates commit together. General grouped aggregates may stream the qualifying
+postings, with external spill when groups exceed memory.
+
+`changes` is ordered committed events with `(db_epoch,sequence)` cursor, never a
+wall-clock guess. It returns the last consumed sequence even when a filter matches
+no rows. Event sequence, decimal in interchange, is 64-bit within an epoch.
+Daily scripts record output plus consumer checkpoint in one transaction, or use
+idempotent operation IDs to close their own crash gap. No scheduler is in core.
+Append-only events are not silently expired; an **explicit** export/archive request
+may move sealed event segments to checksummed local archives. Queries across
+archived history require those segments. A cursor below the online low-watermark
+returns `cursor-history-unavailable` with archive ranges, never an empty success.
+Consumers select their own replay or rebuild procedure. No built-in age rule.
 
 ### Comparison semantics
 
-Query compares the latest local observation with the source fingerprint attached
-to the recorded result; it performs no remote I/O and no implicit local tree scan.
-The script calls scan or scan_paths first when it wants refreshed observations.
-Query returns the local and recorded observations, comparison basis (`stat` or
+CompareOptions names stage, namespace, slot and the exact baseline event or
+last-success projection; success comparison never silently uses a failed attempt
+as confirmed work. Query compares the latest observation (or caller-provided
+subset fingerprint) with the source fingerprint attached to that baseline; it performs no remote I/O and no implicit local tree scan.
+The script supplies observations/fingerprints or optionally calls scan/scan_paths
+when it wants refreshed local-file observations. URL-only items remain valid;
+without a new observed fingerprint their unseen source changes are unknown.
+Query returns observed and recorded fingerprints, the selected stage/status, comparison basis (`stat` or
 `digest`), hash availability, explicit suspect annotation and record metadata.
 
 | Neutral state | Exact meaning |
@@ -161,13 +283,13 @@ same bytes: the action host must report the actual transferred fingerprint.
 
 ### Record and forget
 
-RecordMetadata carries an immutable **source fingerprint for the bytes reported
+StageResult (the earlier RecordMetadata projection) carries an immutable **source fingerprint for the bytes reported
 transferred**, an action/event ID and an opaque result payload. It can hold an
 ETag/version, remote path, content type, Cache-Control, upload ID, SFTP attributes,
 phase/status or arbitrary caller data; core does not interpret these business
 fields. A logical action/event may have no source-file fingerprint.
 
-`record` must not implicitly attach today's local fingerprint to yesterday's
+`stage_record` (or its explicit record projection) must not implicitly attach today's local fingerprint to yesterday's
 transfer. Callers pass the plan/source snapshot or actual transferred hash. If a
 file changed while/after uploading, a subsequent scan must still compare against
 the bytes actually reported uploaded. `forget` removes believed state via a local
@@ -187,10 +309,10 @@ marks suspect, records revised metadata, forgets or does nothing. Sampling rate,
 selection seed, cost cap, checksums and behavior on mismatch all belong to that
 script. A failed sample cannot certify unsampled paths. Multipart/composite ETags,
 metadata changes and encrypted objects need explicit interpretation by the host/
-script, not a content-equivalence rule hidden in lmsync.
+script, not a content-equivalence rule hidden in lmfiles.
 
 A rebuild script can fetch a listing, S3 Inventory or other records with its cloud
-host, then call import_records on a **local** stream. lmsync never fetches a URL or
+host, then call import_records on a **local** stream. lmfiles never fetches a URL or
 creates Inventory. The script chooses prefix fan-out/concurrency, coverage,
 pricing/admission, validation and whether to replace or merge a target snapshot.
 ImportOptions provides mechanical append/upsert/replace and transaction choices;
@@ -207,7 +329,7 @@ the job and action host. Local single-writer locking only protects this DB.
 
 This is a **thin file codec/helper library**, not a mandatory workflow, scheduler
 or executor. A script may use direct record() calls instead. A plan is data the
-script wrote; lmsync never synthesizes upload/delete instructions from a state.
+script wrote; lmfiles never synthesizes upload/delete instructions from a state.
 
 Proposed helpers: `plan_writer`, `result_writer`, `read_instructions`,
 `read_results`, `unconfirmed(plan, results)`, and `apply_records(db, results)`.
@@ -236,14 +358,17 @@ The examples below omit computed checksums for readability; actual helper output
 includes them and each result binds the full instruction digest.
 
 ```json
-{"v":1,"kind":"instruction","job":"example","op":"add-a","payload":{"verb":"add","target":"site","path":"assets/a b \"quoted\".css","source_fingerprint":{"size":"3","mtime_ns":"<decimal-int64>","hash":"<digest>"},"args":{"remote_path":"assets/a.css"},"record_projection":"record"}}
+{"v":1,"kind":"instruction","job":"example","op":"add-a","payload":{"verb":"add","stage":"published","target":"site","item":"<item-id>","source_revision":"7","path":"assets/a b \"quoted\".css","source_fingerprint":{"size":"3","mtime_ns":"<decimal-int64>","hash":"<digest>"},"args":{"remote_path":"assets/a.css"},"record_projection":"record"}}
 {"v":1,"kind":"instruction","job":"example","op":"delete-b","payload":{"verb":"delete","target":"site","path":"old.css","args":{"remote_path":"old.css"},"record_projection":"forget"}}
 {"v":1,"kind":"instruction","job":"example","op":"event-c","payload":{"verb":"cloudfront.invalidate","target":"events","path":"invalidation/event-c","args":{"paths":["/*"]},"record_projection":"record"}}
-{"v":1,"kind":"result","job":"example","op":"add-a","result_id":"add-a-complete","completes_instruction":true,"payload":{"instruction_digest":"<sha256>","confirmed":true,"timestamp":"2026-01-01T00:00:00Z","projection":{"kind":"record","target":"site","path":"assets/a b \"quoted\".css","source_fingerprint":{"hash":"<actually-transferred-digest>"},"metadata":{"remote_path":"assets/a.css","phase":"uploaded","etag":"<opaque>"}}}}
+{"v":1,"kind":"result","job":"example","op":"add-a","result_id":"add-a-complete","completes_instruction":true,"payload":{"instruction_digest":"<sha256>","confirmed":true,"timestamp":"2026-01-01T00:00:00Z","projection":{"kind":"record","stage":"published","target":"site","item":"<item-id>","source_revision":"7","path":"assets/a b \"quoted\".css","source_fingerprint":{"hash":"<actually-transferred-digest>"},"metadata":{"remote_path":"assets/a.css","phase":"uploaded","etag":"<opaque>"}}}}
 ```
 
 `verb` is an arbitrary caller string; `args` and result metadata are caller data.
-The only projection primitives are local `record`, `forget` or `none`. Metadata
+The projection primitives are local `record`/`stage_record`, `forget`/`stage_forget`
+or `none`; item/alias/observation updates must be explicit in a versioned
+transaction projection. `record` uses a caller-supplied item, stage, namespace and
+source revision (the path shorthand below is only an identity adapter). Metadata
 can describe an accepted/pending remote action if that is what the script reports;
 it must not thereby be presented as completed publication. Job/op identifiers and
 instruction digest detect conflicting reuse. Replaying the same confirmed `(job,result_id)` is idempotent; a different
@@ -263,7 +388,7 @@ is single-writer. The helper never executes any verb or invokes a provider.
 Resume means the script re-plans the unconfirmed remainder. Completed results
 replay into the DB even if the process died before its DB update. A transfer that
 completed remotely but crashed **before** producing a durable confirmation remains
-unconfirmed: lmsync cannot infer success without a report. Its instruction is not
+unconfirmed: lmfiles cannot infer success without a report. Its instruction is not
 lost, and the script can safely retry with provider idempotency/conditional writes
 or explicitly reconcile the known path. It may repeat transfer work or cost.
 
@@ -282,13 +407,12 @@ window unless the action host emits its own durable result receipt.
 
 ## 4. Durable DB and failure injection
 
-Logical records: local paths/observations; target namespaces; `(target,path)`
-recorded source fingerprint and opaque metadata; explicit suspect notes; local
-forget tombstones; import provenance; generations/transaction IDs; optional replay
-IDs and offsets. Keep local observations separate from recorded state so scanning
-never overwrites believed transfer success. Provider-specific key/hash indexes,
-quota counters and release catalogs are user data or script-side structures, not
-core business tables.
+Logical records are the item/alias/observation/stage/event/claim schema in section 1,
+plus indexes, import provenance, generations, transaction IDs, replay IDs/offsets
+and consumer checkpoints. Keep observations separate from reported stage results:
+a scan cannot overwrite fetched/cleaned/published history. Hash lookup is generic;
+provider key-mapping logic, quota policies and release catalogs are script data,
+not core business tables.
 
 Use transactional/WAL storage, checksummed pages/records, monotonic committed
 sequence numbers and versioned codecs. On open, validate the manifest, recover
@@ -300,16 +424,66 @@ records/tombstones only when snapshots no longer need them; it never expires a
 path because of age. Export/backup produces a consistent checksummed snapshot;
 import validates it into a staging generation before an explicit local commit.
 
-Single writer uses an OS file lock plus diagnostic PID/process-start/instance data.
-The OS releases the lock after a crash. Stale text in a lock file can be replaced
-only after acquiring the real lock; do not unlink/recreate an actively locked file
-or use a timeout to steal a live writer's lock. Refuse filesystems without the
-required locking/atomic-rename/fsync guarantees. Concurrent readers see stable
-snapshots, not partial writes. Same-process MVCC readers are the first milestone;
-other processes use immutable exported/pinned generations or an explicitly
-qualified snapshot protocol. Do not promise concurrent live MVStore opens across
-processes without testing it. Reader crash releases OS pins/handles; compaction
-never deletes a generation still pinned by a live reader.
+### One writer, many workers and processes
+
+Recommend **one DB writer with transactional batching**, not independently opened
+multi-writer embedded stores. The owner process serializes short mutation batches;
+parallel action workers never hold a DB transaction across HTTP/SSH/CPU work.
+Same-process clients call its writer queue; several processes connect through an
+OS-local filesystem mailbox under the private DB directory: bounded request and
+response files, written to temporary names then atomically renamed, with operation
+IDs and checksums. No socket/TCP listener, remote RPC or native pipe binding is
+needed. This is an optional mode of the Java registry host, not another native
+component. Restrict directory permissions to the owner, reject symlink traversal,
+use backpressure/bounded polling and fsync before acknowledging. Keep completed
+request IDs durably deduplicated before reclaiming reply files. Measure mailbox
+latency and file churn; batch messages to amortize it. A later OS-local IPC
+optimization must preserve this protocol and qualify platform support.
+Clients retry uncertain requests with the same operation ID. Embedded mode remains
+useful for one process; second direct writers get `writer-busy`, not corruption.
+If the owner dies, clients reconnect after a new owner acquires the OS lock and
+recovers WAL. No claim success is acknowledged from a merely queued request.
+
+Writer uses an OS file lock plus diagnostic PID/process-start/instance data. Only
+acquiring the real lock permits stale metadata recovery; never unlink/recreate a
+live locked file or steal a live lock by timeout. Refuse filesystems lacking the
+required lock/rename/fsync guarantees. Snapshot readers run in the owner process
+or consume pinned immutable exports; do not promise independent live MVStore opens
+across processes. Mailbox clients request paged snapshot reads, not DB-file access.
+Reader pins release only after outstanding reads cease and client-liveness
+reconciliation confirms the snapshot is no longer in use; compaction
+cannot delete a still-used generation. Backpressure bounds queues/read snapshots.
+
+Claims select N unclaimed candidates and commit tokens in **one transaction**.
+Work namespace is user supplied, so unrelated tasks may claim the same item
+independently. Claim tokens contain monotonically increasing fencing generation,
+item/source revision and lease deadline. Renew/release/complete compare the token
+atomically; complete appends the stage event, updates indexes and releases the
+claim together. The caller chooses selection, count and positive lease duration;
+expiry makes a claim eligible, not an automatic transfer/retry. Claims are
+coordination data, not a built-in work scheduler or lifecycle pipeline.
+
+Use a monotonic clock while the owner lives, durable UTC expiry plus owner epoch
+for recovery. On restart/clock discontinuity, conservatively block ambiguous
+unexpired leases until their bounded remaining duration or an explicit recovery
+request; expose clock uncertainty and never silently steal work on a wall-clock
+jump. Reissued tokens always fence old owners. The library can reject a late
+complete after expiry/reclaim; it cannot fence a remote upload already executing.
+Scripts use provider preconditions/idempotency where needed and do not claim
+exactly-once effects. A late worker can explicitly append its factual historical
+receipt with the old revision, without replacing a newer successful projection.
+Revision mismatch returns conflict; no false success for newly changed content.
+
+`parallel_map(batch, work, limit)` is the intended one-LMScript worker shape:
+pass owned item/token data, create action-host resources inside each task, close
+them there and return own-data receipts only. **The inspected local lmscript
+checkout currently supports only literal `parallel([call(), ...])`, not
+parallel_map.** Small runner addition needed: `parallel_map(items, fn, limit)`
+with ordered results, bounded concurrency, all tasks settled before first error
+by input order, and existing own-data/resource/task rules. Until available use
+fixed-width literal parallel batches; neither registry nor transports need a new
+parallel-download engine. Separate processes use the same claim primitive through
+the local owner. Re-audit the installed staging runtime before implementation.
 
 Doctor reports local checksum/manifest/sequence/index consistency, dangling
 references, transaction/replay integrity and storage statistics. It performs no
@@ -333,6 +507,12 @@ A deterministic kill-point harness will exercise these boundaries:
 | Corrupt middle log/page/index record | Doctor/open reports corruption; no silent row loss |
 | Stale lock metadata / crashed writer | OS lock can be reacquired safely; live locks cannot be stolen |
 | Reader crash / active snapshot during compaction | No use-after-delete; obsolete files reclaimed only after pin release |
+| Two workers/processes claim overlapping candidates | Exactly one live token per work namespace/item; batched event+claim completion is atomic |
+| Owner crash after claim fsync, before reply | Same operation ID returns committed claim; no second grant |
+| Lease expiry, stale completion, source revision change | Old token cannot overwrite newer success; historical result stays tied to old revision |
+| Clock jump/reboot, worker dies mid-transfer | Conservative lease recovery; no invented result or exactly-once claim |
+| Consumer crash around cursor checkpoint | Atomic stage/checkpoint or deduplicated replay; no silently skipped events |
+| Stage/alias/attribute-index corruption | Doctor detects mismatch to primary records; no silent anti-join omission |
 
 Compare recovered state to an independent model oracle at every kill point.
 Test large offsets, empty DB, duplicate/conflicting operation IDs, arbitrary path
@@ -340,10 +520,10 @@ quoting, many targets and millions of streamed rows in JVM and native-image runs
 
 ## 5. Java implementation and scale-tier storage
 
-Implement lmsync as a Java lmcode host with JDK local I/O/hash primitives. GraalVM
+Implement lmfiles as a Java lmcode host with JDK local I/O/hash primitives. GraalVM
 native-image remains the deployment route; no AWS SDK, SSH client or cloud ledger
 belongs in its dependency graph. TransferManager is an **lmaws** concern. No new C++
-or external native state component is selected for lmsync, and there is no JNI
+or external native state component is selected for lmfiles, and there is no JNI
 fallback. Existing lmcurl/lmssh/lmaws keep their own implementations; this
 design adds no transport dependency to the registry.
 
@@ -359,28 +539,51 @@ design adds no transport dependency to the registry.
 Sources: [MVStore](https://h2database.github.io/html/mvstore.html),
 [iq80](https://github.com/dain/leveldb), [MapDB](https://mapdb.org/doc/),
 [SQLite JDBC](https://github.com/xerial/sqlite-jdbc). These provide feature evidence,
-not measured lmsync results. Check pinned-version reachability and file locking
+not measured lmfiles results. Check pinned-version reachability and file locking
 in the actual GraalVM binary; a working JVM test is not native-image certification.
 No dependency is added by this design.
 
-Sizing model: average path 96 UTF-8 bytes, one local observation plus one target
-record, SHA-256 when known, roughly 128 bytes of opaque result metadata and
-amortized lookup/filter overhead. Estimate **400–700 bytes per path-target pair**;
-long metadata, many targets, snapshots and logs increase it. This is a planning
-model, not measured codec output. Shared local observations amortize across targets.
+### Scale with stages and audit history
 
-| Tier | Proposed store | Estimated live disk at limit | Index working memory target | Proposed pre-observed 1M-query latency on recorded NVMe hardware |
+Baseline workload: three aliases/item (URL, local path, publication key), one
+local observation, **five stage projections and six audit events/item**, SHA-256,
+128 B stage metadata and declared attribute/status/time/hash indexes. Summing the
+section 1 records plus ~0.6–1.0 KiB index/filter/fence overhead gives an estimated
+**3–5 KiB/item**, including those stages/events, not 400–700 B/path-target as in
+the older upload-only model. Events grow without bound unless the script explicitly
+archives them: each extra event adds about 180–320 B plus index overhead, each
+additional stage/target 220–360 B plus postings, alias 140–200 B plus lookup index.
+For example: 300 B item + 3×160 B aliases + 140 B observation + 5×280 B
+stages + 6×220 B events + 700 B indexes = 4,340 B/item (about 4.24 KiB).
+The 3–5 KiB budget describes this workload's average, not a per-item maximum;
+all-long-key/large-metadata populations require a larger measured budget.
+Store-level compression is uncredited. Long legal URLs or retained error payloads
+must be measured with representative synthetic distributions.
+
+| Tier (items, not stage rows) | Store recommendation | Estimated live disk | Working-memory ceiling | Query acceptance goals, not measured results |
 |---|---|---:|---:|---|
-| <=1M paths | Qualified MVStore, sorted-run fallback | 0.4–0.7 GB | 64–192 MiB | <=20 s warm / <=60 s cold |
-| <=100M | Sharded sorted runs/WAL/manifest | 40–70 GB | <=512 MiB | <=20 s warm / <=120 s cold |
-| <=1B | Same, bounded open shards and on-disk index/filter partitions | 400–700 GB | <=1,024 MiB | Target <=30 s warm / <=180 s cold; projection until tested |
+| <=1M (~5M stages + 6M events) | Qualified MVStore; sorted-run fallback | 3–5 GB | 128–256 MiB | 1M subset lookups <=20 s warm / <=60 s cold |
+| <=100M (~500M stages + 600M events) | Partitioned Java sorted runs + WAL | 300–500 GB | 512–768 MiB | 1M subset <=30 s warm / <=180 s cold |
+| <=1B (~5B stages + 6B events) | Same with bounded partitions/caches | 3–5 TB | <=1,024 MiB | Projection: 1M subset <=60 s warm / <=300 s cold |
 
-All latency figures are **acceptance goals, not measurements**. Budget at least
-2x live disk for compaction, plus configured WAL/snapshot/export headroom. At 1B
-this is roughly 0.8–1.4 TB before extra retained data. Report heap, direct buffers,
-RSS and OS page cache separately; no all-RAM object map or hidden unlimited mmap.
-A 10-bit/key Bloom set uses about 1.25 GB at 1B, so filters/fences must be partitioned
-on disk and cached, not all loaded. False positives always check full keys.
+All figures are unmeasured engineering budgets. Reserve at least **2x live disk**
+for compaction, plus WAL, archives and pinned snapshots: 100M needs at least
+0.6–1.0 TB before extra retention, 1B about 6–10 TB. Stage/event indexes may dominate
+bulk ingest and write amplification. Partition by stable item shard and stage/
+namespace, not an inferred directory; directory scan can additionally shard local
+traversal by directory. Use merge cursors across shards. A 10-bit/key filter for
+billions of records cannot reside wholly in RAM: keep filters/fences partitioned
+on disk, cache bounded pages, check full keys on positives. Measure heap, direct
+buffers, RSS and OS page cache separately.
+
+Dense anti-join qualification target: >=1M examined posting IDs/s warm and
+>=250k/s cold on recorded NVMe hardware, bounded memory and correct snapshot;
+these are goals, not a promise of a millisecond 100M-row complement. Attribute and
+hash point queries target <10 ms warm p95 for small result sets; duplicate-heavy
+queries stream. Aggregate latency includes all scanned postings. Report claim
+throughput/latency at batch sizes 1/32/256 and writer saturation under concurrent
+query/record load; never assume network work makes local index throughput free.
+No benchmark has been run for this design.
 
 Cap memtable, block/filter caches, open shards/files and compaction workers through
 plain resource options. Use checksummed blocks, explicit encodings, bounded merge
@@ -392,17 +595,175 @@ existing Java cloud hosts. If Java options fail, present actual evidence and
 native/JNI package-size, platform and maintenance costs before any new decision.
 Do not assert RocksDB is necessary while a viable Java sorted-store design exists.
 
-## 6. Three pairings using existing products
+## 6. Lifecycle jobs using existing products
+
+### Eight lifecycle recipes: one file per job
+
+These are **design sketches**, not executable shipped examples: the registry
+schema does not exist yet. Each future `.lms` contains its orchestration, CONFIG
+constants and product-specific `_lmcode_` blocks; it may import helpers but never
+requires an invisible scheduler. Registry pseudocode below uses the proposed API;
+the existing transfer signatures are audited in the pairing sections below.
+All committed fixtures/pictures are synthetic. No live job or picture generation
+is performed by this documentation task.
+
+Each recipe gets `examples/<name>.lms`, a synthetic image and a picture-first
+caption `lmctl https://raw.githubusercontent.com/lmctl-ai/<chosen-repo>/main/examples/<name>.lms`
+when the product repo actually exists. `<chosen-repo>` is deliberately a placeholder,
+not a created repo or runnable URL today. Captions explain inputs, outputs, stage
+names and cost assumptions. Never commit real legal-source/account/host data or
+credentials. Images show counts/state flow, with the action-host estimated cost
+line for billable scripts; the registry has no cloud-price ledger.
+
+| Recipe | Input -> output | Planned synthetic picture |
+|---|---|---|
+| `ingest_urls.lms` | URL list -> observed artifacts + fetched/gone/failed reports | URL/304/200/404 counts and recorded-stage flow |
+| `clean_fetched.lms` | Fetched revision without matching clean revision -> derived artifact | Before/after synthetic text and revision links |
+| `publish_cleaned.lms` | Cleaned artifacts -> S3 reported publication + result journal | Selected/confirmed/unconfirmed upload flow |
+| `lifecycle_report.lms` | Snapshot queries -> JSON/CSV | Published-but-source-changed, fetched-not-published, failure/gone table |
+| `cleanup_published.lms` | Explicit script-selected local artifacts -> deletion receipts | Local bytes removed vs retained, remote untouched |
+| `daily_incremental.lms` | Event cursor -> affected-item processing/checkpoint | Event N -> N+K, deduplicated work and checkpoint |
+| `publish_sftp.lms` | Selected artifacts -> SFTP temp/final receipts | Known-hosts + selected paths + confirmed rename |
+| `spotcheck_published.lms` | N chosen publication records -> suspect annotations | Sampled/matched/mismatched/unknown counts |
+
+**(a) Ingest URL list, conditional download and record fetched.** Adopt each URL
+as an alias to an item, initially without a local path; URL identity alone is
+sufficient. Query latest fetched attempt/last success in namespace chosen by this
+script. Script policy: skip a previously recorded gone/404 unless its own explicit
+retry option is set; use validators only when it still has a verified local copy.
+This is why recording gone avoids needless re-requests without making that a core
+rule. Failure count is caller data, updated with a compare-and-swap transaction
+or claim, never a registry retry counter policy.
+
+```text
+# Proposed registry pseudocode inside this ONE job's orchestration:
+items = db.item_upsert(each URL alias from bounded input batch)
+claims = db.claim(script_selected(items), "fetch-job", 32, 120000, worker_id)
+receipts = parallel_map(claims, fetch_one, 8)   # runner addition noted in section 4
+# fetch_one builds/executes the current lmcurl block, closes its resources,
+# and returns only own-data {token, response, actual_artifact_fingerprint}.
+for receipt in receipts:
+    db.complete(receipt.token, script_constructed_stage_result, expected_revision)
+```
+
+The actual existing lmcurl calls are `curl.session(base).get(path)`, optional
+`.header("If-None-Match", etag)` or `.header("If-Modified-Since", last_modified)`,
+`.timeout(...)`, `.limit(...)`, `.retry(count,delay)`, `.send()`, then response
+`.status()/.error()/.header(...)` and `.save(path)`. A 200 plus verified complete
+artifact yields observed hash/size/local alias and `fetched/ok`; a 304 preserves
+the validated existing bytes, not a fabricated new download. 404/410 yields
+`fetched/gone` with HTTP status, URL, validators if returned and reported timestamp;
+other failures record `failed`, bounded error and script-updated failure count.
+If local copy is absent, script does unconditional GET instead of treating 304 as
+proof a file exists. Never store a partial response as fetched/ok. Raw binary/large
+artifacts need only the `download_to_file` addition below; bounded synthetic text
+uses the existing redacting sink and hashes the bytes it actually saved.
+Partial offset/validator state can be another caller stage/slot; Range/If-Range
+headers exist, and no resume or skip decision is in core.
+
+**(b) Clean fetched items.** Query `stage_difference(fetched-ok, cleaned-ok)` with
+matching source revision and explicit transform-version namespace. Claim a bounded
+batch under a separate work namespace. User code parses/normalizes synthetic
+text (or invokes an existing parsing host) and writes a temporary local artifact,
+then promotes it with existing LMScript `move_file`. It records cleaned/ok with
+input revision/hash, transform ID, output alias/hash and actual size; failed
+transform records failed without erasing the prior successful output. In-place
+transforms increment content revision; retaining both raw and cleaned content
+uses a derived item with `derived_from` ID+revision. Neither approach is built in.
+The script must choose a consistent artifact model in its CONFIG. Claim complete
+compares expected input revision, so late work cannot certify newly changed input.
+No registry clean/delete-files call exists.
+
+**(c) Publish cleaned items with optional plan/result logs.** Select explicit
+cleaned-ok revision minus matching published-ok in the S3 namespace. Script maps
+keys and headers, enforces lmaws name/tag/ledger caps, writes a checksummed plan
+with item ID, source revision, artifact hash, stage/namespace and desired result
+projection. It runs lmaws for only those entries, appends/fsyncs each confirmed
+receipt, then applies stage_record projections plus replay offset transactionally.
+No confirmed log -> no published/ok. Crash resume re-plans the unconfirmed remainder;
+remote success before a durable receipt may repeat work, never invent success.
+The bounded current-host demo uses `Run.bucket/put/cleanup` with string fixtures;
+persistent arbitrary-file publication is explicitly blocked on the small
+`s3_put_file` binding below. Journal `record` projections are explicit
+`stage_record(published, target, item, source_revision, metadata)` here; user verbs
+never select a stage automatically. Recording cleanup/forget for the sandbox is
+separate from its publication receipt. No real S3 operation is run now.
+
+**(d) Lifecycle report.** A single snapshot produces JSON/CSV and a synthetic table:
+
+```text
+published_but_source_changed = published.last_success join items
+    where published.source_revision != items.content_revision
+fetched_not_published = stage_difference(fetched.ok, published.ok,
+    require_matching_source_revision=true)
+failed_gone = aggregate(select(latest_attempt.status in [failed,gone]),
+    groups=[stage,namespace,status], metrics=[count])
+duplicates = by_hash(algorithm, digest)
+```
+
+Those are explicit relational predicates, not hard-coded report functions.
+Derived outputs compare the stored provenance input revision with their source
+item instead of comparing unrelated raw/cleaned hashes. A failed publication retry
+may leave a valid earlier publication; report latest attempt and last success
+separately. A database report does not claim remote existence or freshness.
+
+**(e) Cleanup local downloads already published.** User script chooses published-ok
+records with a matching source/output revision and acceptable local path scope,
+then explicitly deletes selected local files using its local filesystem API.
+After confirmed deletion it calls observe(absent) and records its own
+`local-cleanup/ok` (or `deleted/ok`) stage with removed alias/fingerprint. A failure
+records failed. It does not forget the source URL, fetched history, publication or
+gone state. Choice to retain raw input, require backup or delay cleanup belongs
+entirely to that script. Claiming coordinates cooperating workers only; re-stat
+before deletion and reject changed paths. No portable deletion CAS is promised
+against an unrelated writer; immutable per-revision paths/local writer exclusion
+are script requirements when that risk matters. Registry never deletes files.
+
+**(f) Daily incremental job from change cursor.** This one script requests bounded
+`changes(after=consumer_cursor)` batches, coalesces affected item IDs only within
+the batch, queries their current stages and runs its chosen fetch/clean/publish
+steps using the same action blocks. It tracks origin/operation IDs so its own
+recorded events do not cause an infinite reprocessing loop. It commits checkpoints
+only after durable outcome recording (including explicit failed outcomes if that
+script elects to move on), with dedup IDs for replay. A crash before checkpoint
+repeats harmless local selection; a cursor-history-unavailable result requires an
+explicit script-chosen archive replay or snapshot rebuild. Running every day is
+an external scheduling decision; the registry has no timer or age predicate.
+
+**(g) SFTP publish (and download variant).** Query/claim selected item revisions,
+then use the existing lmssh `ssh.known_hosts(...).strict_host_key("yes")`,
+`.identity(key_path).reuse(true).connect(alias)`, `Session.put(local,temp)` and
+`Session.rename(temp,final)`; record published/ok only after success. For selected
+downloads use `Session.get(remote,temp)` then local `move_file` and record fetched.
+`Session.sftp(batch)` supports explicit `reput/reget` partial resume today. Persist
+source/prefix assumptions and partial paths as metadata; restart if those cannot
+be trusted. Temp parents come from explicit mkdir operations, no directory listing
+or remote checksum comparison. A resume may perform protocol attribute work, not
+a directory diff. Close each task's Session; credentials never appear in events.
+There is no lmssh addition needed for this sketch.
+
+**(h) Spot-check script.** The script chooses N random published records (seed and
+sampling policy explicit), invokes lmaws per-object HEAD, compares expected
+metadata/version/hash using its own rule, then mark_suspect or records revised
+metadata. A mismatch, transport denial and unknown checksum are different reports;
+unsampled items remain unverified. Registry doctor is not this script. Exact HEAD
+binding missing today is named below; fake receipts prove the workflow first.
+
+The existing TTL/hashed/release and invalidation recipes below remain useful
+**publication policies** inside such scripts. They do not become required stages,
+a core configuration engine or a reason to re-query a remote on every run.
+
+### Current transfer-call audit supporting those recipes
 
 **lmcurl, lmssh and lmaws already exist.** Only the registry is the new product.
 One job is one `.lms` containing its choices and typed calls to the registry and
 an existing action host. Do not build another downloader, uploader or SSH transport
-inside lmsync. No libssh2-enablement or Java-SSH proposal is part of this design.
+inside lmfiles. No libssh2-enablement or Java-SSH proposal is part of this design.
 
 The API audit used each product's current README, durable-memory API notes,
 schema/registry and existing examples. Local source references were lmcurl
 `8e65448` and lmssh `68e6159`; lmaws was the current main worktree and its checked
-schema. Five action-host example blocks below were compiled against schemas
+schema. Five action-host example blocks below were checked against schemas
 printed by the local executables (`lmcurl`, `lmssh`, `lmaws`); only compile/check
 was performed, never the block bodies. Metadata-only `--help`/schema queries were
 used where useful; no HTTP request, SSH session or AWS action was run. Native
@@ -414,7 +775,7 @@ synthetic target namespaces for fixtures and never record a dry-run's apparent
 success into production belief. The script knows whether it requested a preview;
 core does not infer provider mode or grant a report more authority.
 
-Registry calls remain proposed until lmsync exists. Every action-host method shown
+Registry calls remain proposed until lmfiles exists. Every action-host method shown
 as available below is a current method. A narrowly missing call is listed once in
 “small additions needed”; the examples must disclose that blocker rather than
 pretend a proposed API already exists. These are design examples, not new runnable
@@ -575,7 +936,7 @@ registry options, automatic size switches or a rules engine.
 
 If the user script chooses invalidation, its path cap, wildcard choice, cost
 preview and ledger handling belong with lmaws/script code. No such rule belongs
-in lmsync. Existing host safety/ownership/profile limits remain in force. This
+in lmfiles. Existing host safety/ownership/profile limits remain in force. This
 note does not change IAM grants or execute any operation.
 
 ### C. RSYNC ALTERNATIVE — registry + existing lmssh
@@ -678,7 +1039,7 @@ The same file invokes its lmcurl block, applies explicit local cleanup/transform
 code (existing lmhtml parsing blocks can help), invokes its lmaws block, and can
 mirror selected output with its lmssh block. It calls registry record/replay
 between phases. Import-only user helper functions are allowed; they are not new
-products or separately scheduled jobs. Clean is user code, not lmsync.clean.
+products or separately scheduled jobs. Clean is user code, not lmfiles.clean.
 
 Use separate namespaces for download/partial/transform/S3/SFTP data. Do not publish
 private registry files or credentials. Abort or continue after partial inputs only
@@ -695,7 +1056,7 @@ each compiled against its own `cli="host"` schema. `savedsl` writes bytecode;
 `dsl_cli(program)` returns the matching executable argv; `system(argv, timeout)`
 runs it. `${...}` interpolation supplies scalar strings/numbers/bools, so a file
 path can bridge blocks. Schema-bound handles belong to their host process: do not
-pass a StateDB/S3 handle to another host, merge schemas blindly or assume that
+pass a Registry/provider handle to another host, merge schemas blindly or assume that
 printing/serializing a compiled block transfers its live objects.
 
 The existing lmweblab report scripts already demonstrate lmdraw and lmplot in one
@@ -706,19 +1067,19 @@ used, with no workflow dispatch. General orchestration is therefore available;
 a new universal multi-host VM or cross-language JNI bridge is not required.
 
 Illustrative orchestration shape, using existing runner mechanics but future
-lmsync/provider APIs inside the marked bodies:
+lmfiles/provider APIs inside the marked bodies:
 
 ```text
 # === CONFIG ===
-let DB_PATH = ".lmsync-local/site.db";
-let PLAN_PATH = ".lmsync-local/plan.jsonl";
-let RESULT_PATH = ".lmsync-local/results.jsonl";
+let DB_PATH = ".lmfiles-local/site.db";
+let PLAN_PATH = ".lmfiles-local/plan.jsonl";
+let RESULT_PATH = ".lmfiles-local/results.jsonl";
 # === END CONFIG ===
-state_program = _lmcode_ cli="lmsync";
+state_program = _lmcode_ cli="lmfiles";
   # future local scan/query API; user-written if/loop chooses instructions
 end _lmcode_
-savedsl(state_program, ".lmsync-local/state.dslb");
-let a = system(concat(dsl_cli(state_program), ["--dsl", ".lmsync-local/state.dslb"]), 120000);
+savedsl(state_program, ".lmfiles-local/state.dslb");
+let a = system(concat(dsl_cli(state_program), ["--dsl", ".lmfiles-local/state.dslb"]), 120000);
 assert(a.code == 0);
 
 transfer_program = _lmcode_ cli="lmcurl";
@@ -726,14 +1087,14 @@ transfer_program = _lmcode_ cli="lmcurl";
 end _lmcode_
 # save and run the transfer host only if this script selected actions
 
-record_program = _lmcode_ cli="lmsync";
+record_program = _lmcode_ cli="lmfiles";
   # future local record/log-replay API consumes confirmed RESULT_PATH projections
 end _lmcode_
 # save and run, check every exit code, close resources, report this job's result
 ```
 
-This is a mechanism sketch, not a currently executable lmsync script. Markers/
-`cli` are supported aliases, but lmsync does not yet exist and has no installed
+This is a mechanism sketch, not a currently executable lmfiles script. Markers/
+`cli` are supported aliases, but lmfiles does not yet exist and has no installed
 schema. Current `read_lines` returns an array: do not load a million-line plan
 through it. Use the registry's proposed local bounded-batch helpers, or partition files into
 bounded batches consumed with existing file APIs. Shared codec fixtures belong
@@ -745,10 +1106,10 @@ lmazure and lmgcp use exactly the same local state/query/record data contract.
 Replace the transfer block with their typed blob/object API and receipts; native
 .NET/Go/Java implementations can read the versioned files without sharing live
 objects or linking the DB. Provider names and Azure/GCP safety/cost rules remain
-in those hosts/scripts. No lmsync provider plugin or cloud credential is needed.
+in those hosts/scripts. No lmfiles provider plugin or cloud credential is needed.
 SFTP uses a separate explicit `cli="lmssh"` block with the same reported-result
 contract. A pipeline can call existing lmcurl, lmaws and lmssh in one script,
-with lmsync handling local data only.
+with lmfiles handling local data only.
 
 ### What actually needs implementation
 
@@ -761,9 +1122,10 @@ required to demonstrate the jobs. The few blocked variants are named in section 
 
 ### Smallest useful milestone
 
-1. Java lmcode skeleton and a qualified small crash-safe store: open/close, local
-   scan/scan_paths, hash-on-change/on-demand, neutral query, set differences,
-   record/forget, bounded iteration and transactions.
+1. Java lmcode skeleton and qualified crash-safe store: item/alias identity,
+   observations, stage projections and events, indexed subset/stage-difference
+   queries, record/forget, claims, bounded iteration and transactions. Add optional
+   local scan/scan_paths and hash helpers; URL-first ingestion needs no tree.
 2. Thin optional plan/result codec with direct-call alternative, idempotent
    confirmed replay, local import/export, doctor and the kill-point tests.
 3. One complete `publish_ttl.lms` containing its own choices and two-host glue,
@@ -784,13 +1146,15 @@ required to demonstrate the jobs. The few blocked variants are named in section 
 
 No need to finish every script policy, large-store tier or inventory importer
 before this local state primitive is useful. Existing lmssh already provides SFTP. The repo is created later;
-this document does not create `lmctl-ai/lmsync` or dispatch any build/release job.
+this document creates no registry repository and dispatches no build/release job.
 
 ## 8. Benchmark plan proving the local-state claim
 
-No measurements are fabricated here. Use deterministic synthetic fixtures and a
+Measure pure read queries separately from mutation operations: claim, renew,
+complete, scan, observe and record intentionally change local state, although all
+remain remote-side-effect free. No measurements are fabricated here. Use deterministic synthetic fixtures and a
 local protocol-recording fake endpoint first. A network-denying harness must prove
-that all lmsync operations, including doctor/import/recovery, make **zero network
+that all lmfiles operations, including doctor/import/recovery, make **zero network
 calls**. Benchmark transfer scripts separately, counting every host request,
 security check, retry and byte. Emulator timing is not AWS timing.
 
@@ -800,7 +1164,7 @@ Measure 1M queried paths as index-only lookups with existing local observations,
 then separately end-to-end local scan/stat/hash + query. Include random and
 localized sets, hits/misses, multiple targets, dirty stat records, unrelated roots
 and streaming output. Compare HEAD-per-file and explicit list-and-compare via the
-fake action host, not new network methods in lmsync. An arbitrary subset of M paths
+fake action host, not new network methods in lmfiles. An arbitrary subset of M paths
 need not correspond to a remote directory; enumerating N remote keys still leaves
 the application to compare that subset. An existing local DB answers directly.
 
@@ -810,7 +1174,7 @@ directory shape, short pages, retries and baseline options can add requests.
 
 | No-change decision method | 10k files | 200k files | 1M queried paths with a 1B-object target |
 |---|---|---|---|
-| lmsync local query | 0 remote calls | 0 remote calls | 0 remote calls; 1M local comparisons |
+| lmfiles local query | 0 remote calls | 0 remote calls | 0 remote calls; 1M local comparisons |
 | HEAD/stat per file baseline | 10k HEAD/stat | 200k HEAD/stat | 1M HEAD/stat |
 | Flat list-and-compare | About 10 LIST | About 200 LIST | At least 1M LIST pages if enumerating the whole target |
 | AWS CLI `s3 sync` tree workflow | Expect about 10 LIST plus measured extras | Expect about 200 LIST plus extras | Destination enumeration scales with the compared namespace |
@@ -830,8 +1194,8 @@ its own explicit authorization; loopback/fake comparisons need no real account.
 ListObjectsV2 returns at most 1,000 keys/page. A billion keys implies at least a
 million LIST requests, roughly $5 under an illustrative $0.005/1,000 request rate,
 before other costs. At illustrative $0.0004/1,000 read requests, 1M HEADs cost $0.40;
-lmsync's local query costs $0 in remote requests. These are arithmetic examples,
-not invoices, performance measurements or hardcoded lmsync prices. Pricing belongs
+lmfiles's local query costs $0 in remote requests. These are arithmetic examples,
+not invoices, performance measurements or hardcoded lmfiles prices. Pricing belongs
 to the script/action host. [ListObjectsV2](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html),
 [AWS pricing example](https://docs.aws.amazon.com/solutions/latest/automated-security-response-on-aws/cost.html).
 
@@ -861,14 +1225,21 @@ cost disclosure and authorization, not a silent cap raise.
 
 ### 100M-entry local index test
 
-Generate **100M local index path records**, realistic target records/opaque metadata
-and required lookup families on disk, not 100M real local files or S3 objects.
-Check free disk/headroom first (the sizing model calls for at least 200 GB for this
-test plus extra retention as configured). Measure actual bytes per family, WAL,
+Generate **100M synthetic items**, three aliases, five stages and six events per
+item with the section 5 metadata distribution, plus all required indexes, on local
+disk: not 100M actual downloaded files or remote objects. Check free space first:
+the revised model needs at least 0.6–1.0 TB compaction headroom, plus archives/WAL.
+If unavailable, report the limitation and run a smaller measured scale; never
+claim a 1M-only benchmark proved 100M behavior. Measure actual bytes per family, WAL,
 filters/fences, compaction amplification, bulk ingest, open/recovery time and
 1M-query warm/cold latency under fixed memory limits. Include 90/10 hit/miss mix,
 localized/uniform random queries, multiple targets, 1% updates, forget tombstones,
-concurrent snapshot readers and forced-kill recovery. Use 64-bit offsets and files
+concurrent snapshot readers, stage A-not-B (dense and sparse), revision-aware
+anti-joins, scalar attribute predicates, duplicate hash buckets, time ranges,
+aggregates and event cursor replay. Measure lease claim/renew/complete contention
+with many workers/process clients and the forced-kill cases in section 4.
+Report bytes separately for items, aliases, stage projections, events, claims,
+indexes and WAL; report per-event growth and full write amplification. Use 64-bit offsets and files
 larger than 4 GiB. Compare JVM and shipped GraalVM binaries.
 
 Publish measured size/lookup/RSS results before selecting the 100M tier as stable.
@@ -887,16 +1258,31 @@ no remote listing or checksum-comparison round trips. Explicit revalidation,
 retries and transfer protocol work still cause requests. Safe resume has the
 source/checkpoint guarantees described above; the registry does not create them.
 
-lmsync itself remains a reusable remembered-state primitive, not an all-in-one
+lmfiles itself remains a reusable remembered-state primitive, not an all-in-one
 transport or policy product. aws s3 sync/rclone combine comparison and transfer workflows; rsync can
 exchange remote file metadata and exploit transfer deltas. Those are useful
-capabilities that lmsync does not replace. Its distinct contract is arbitrary
+capabilities that lmfiles does not replace. Its distinct contract is arbitrary
 subset questions against a local believed model with zero remote calls, while
 user scripts own policy and choose cloud/SFTP actions. Optimized no-traverse
 baselines matter; do not pretend they cannot avoid directory enumeration.
 
+Unlike aria2/wget-style download managers, the registry remembers provenance and
+arbitrary named stages across download, parsing, cleaning, publication and local
+cleanup; it is not a replacement HTTP transport. A script may skip a recorded
+404 forever or revalidate it tomorrow—both are its choice. Unlike make-like state
+trackers, it does not infer a dependency DAG, freshness rule, target recipe or
+build scheduler. Scripts explicitly compare revisions and name transforms; event
+cursors support incremental work without making a pipeline mandatory. Its file
+manager role is tracking identities and lifecycle facts, not browsing remote
+directories or moving/deleting files itself.
+
 | Risk/failure | Boundary and mitigation |
 |---|---|
+| Alias collision or hash treated as identity | Unique alias index returns conflict; duplicate hashes remain separate items |
+| Failed retry hides prior publication / new source mistaken for published | Latest attempt and last-success distinct; compare explicit source revisions |
+| Dense anti-join/index explosion | Sorted posting merge, declared indexes and measured stage/event amplification |
+| Lease fencing mistaken for remote exactly-once | Fenced local completion only; script/host idempotency and version preconditions |
+| Archived cursor range unavailable | Explicit error with low-watermark/archive ranges; never silently skip events |
 | Outside writer or years-old belief | No age heuristic or hidden query; script chooses explicit verification/reconciliation |
 | Same-size preserved-mtime edit | Disclosed stat basis; caller can request hashing/immutable inputs |
 | Script records wrong success/current instead of transferred fingerprint | Library must never auto-attach current fingerprint; retain reported source snapshot and test races; user reports remain the trust boundary |
@@ -908,14 +1294,16 @@ baselines matter; do not pretend they cannot avoid directory enumeration.
 | Huge output or cached filter growth | Bounded cursors/spills/caches; no unbounded arrays or all-in-memory 1B map |
 | Registry native-image/store compatibility | Qualify the new registry/store; reuse existing action products and label exact small API blockers |
 | Incorrect free-quota assumptions | Script tracks known events, discloses incomplete history and uses host pricing/admission |
-| Policy creeping into core | Review rejects auto-upload/delete/age/rebuild/cache/provider/ledger decisions in lmsync |
+| Policy creeping into core | Review rejects auto-upload/delete/age/rebuild/cache/provider/ledger decisions in lmfiles |
 
 Implementation steps for registry coders:
 
-1. Freeze the neutral types, target/path identities, comparison basis and reported
-   confirmation semantics. Keep every provider/policy concept out of the core.
+1. Freeze item/alias/revision, stage/namespace/slot, event cursor and fenced claim
+   types, comparison basis and reported-confirmation semantics. Keep user-defined
+   stage meaning and all provider/policy concepts out of core.
 2. Qualify the Java store and implement durable DB operations, snapshots, local
-   scan/query/set differences, record/forget, transactions and doctor.
+   item/alias/stage/event indexes, subset/anti-join queries, stage_record/forget,
+   claims and batching, transactions and doctor; scan is an optional ingestion helper.
 3. Add bounded cursors/import/export and optional log replay. Run the crash/kill
    harness with no network client in the registry.
 4. Author one-script examples using the current calls audited above. Bind/compile
@@ -936,6 +1324,6 @@ Implementation steps for registry coders:
 Acceptance: core tests prove zero network attempts; every query returns neutral
 state plus provenance; every reported confirmation survives a crash; uncertain
 work never becomes unchanged; scripts can implement different policies without
-changing lmsync. No default freshness, retention, invalidation, age or delete rule
+changing lmfiles. No default stage order, retry, gone-source skip, cleanup, freshness, retention, invalidation, age or delete rule
 is added to the core. This document is the consolidated design; root
 `SYNC_DESIGN.md` is only a pointer.
