@@ -10,7 +10,10 @@ public final class RemainingChecks {
   try(var backend=new AwsBackend("us-east-1",true,cost)) {
    Path state=dir.resolve("state.json");
    try(var run=new ServerlessRun(backend,cost,"cafe07","example.com",state.toString())) {
-    run.step("table","{}");run.step("queues","{}");run.step("lambda",config);run.step("worker",config);
+    run.step("table","{}");
+    String code=ServerlessExtras.workerSource(run,source);
+    if(!code.contains("os.environ['RUN_ID']=\"cafe07\"")||!code.contains("os.environ['TABLE_NAME']=\"lmaws_cafe07_table\""))throw new AssertionError("worker source lost its run/table environment");
+    run.step("queues","{}");run.step("lambda",config);run.step("worker",config);
     if(run.leftovers().size()!=8)throw new AssertionError("expected table, queues, two functions/logs and mapping receipts: "+run.leftovers());
    }
    try(var run=new ServerlessRun(backend,cost,"cafe07","example.com",state.toString())) {

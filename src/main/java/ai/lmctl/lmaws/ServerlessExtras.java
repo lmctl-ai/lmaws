@@ -40,8 +40,7 @@ final class ServerlessExtras {
             if(!s.containsKey("queue")||!s.containsKey("table"))throw new IllegalStateException("worker requires queues and table");
             String name="lmaws_"+run.run+"_worker",log="lmaws_s07_worker_logs_"+run.run;
             Path source=Path.of(String.valueOf(args.get("source_file")));
-            if(!Files.isRegularFile(source)||Files.size(source)>196608)throw new IllegalArgumentException("bounded worker source required");
-            String code="import os\nos.environ['TABLE_NAME']="+Jsons.encodeRaw(s.get("table"))+"\n"+Files.readString(source);
+            String code=workerSource(run,source);
             String role=String.valueOf(args.getOrDefault("role","lmaws_lambda_exec"));
             String runtime=String.valueOf(args.getOrDefault("runtime","python3.12"));
             String handler=String.valueOf(args.getOrDefault("handler","worker.handler"));
@@ -53,6 +52,10 @@ final class ServerlessExtras {
             var mapping=b.createEventSourceMapping(s.get("queue"),arn,1,run.run);
             s.put("mapping",mapping.status().get("id"));run.persist();
         }
+    }
+    static String workerSource(ServerlessRun run,Path source) throws java.io.IOException {
+        if(!Files.isRegularFile(source)||Files.size(source)>196608)throw new IllegalArgumentException("bounded worker source required");
+        return "import os\nos.environ['RUN_ID']="+Jsons.encodeRaw(run.run)+"\nos.environ['TABLE_NAME']="+Jsons.encodeRaw(run.state.get("table"))+"\n"+Files.readString(source);
     }
     private static int integer(Map<String,Object> args,String key,int fallback,int max) {
         Object raw=args.getOrDefault(key,fallback);double n=raw instanceof Number v?v.doubleValue():Double.parseDouble(raw.toString());
