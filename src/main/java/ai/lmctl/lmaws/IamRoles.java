@@ -138,7 +138,7 @@ public final class IamRoles {
         if(deleting&&!old.get("permissions_boundary").equals(existing.spec.get("permissions_boundary")))throw new IllegalStateException("refusing to delete a role outside lmaws_boundary");
     }
     private static Map<String,String> output(String name,Snapshot snapshot) {
-        Map<String,String> out=new LinkedHashMap<>();out.put("kind","iam_role");out.put("name",name);out.put("exists",String.valueOf(snapshot!=null));
+        Map<String,String> out=new LinkedHashMap<>();out.put("kind","iam_role");out.put("name",safe(name));out.put("exists",String.valueOf(snapshot!=null));
         if(snapshot!=null){out.put("arn",safe(snapshot.arn));out.put("document",safe(encoded(snapshot.spec)));out.put("tags",safe(encoded(snapshot.tags)));
             snapshot.spec.forEach((key,value)->out.put(key,safe(value instanceof String s?s:encoded(value))));}
         return out;
@@ -158,7 +158,7 @@ public final class IamRoles {
         if(old!=null)requireOwned(name,old,accountId,false);
         if(!demo)iam.get().getPolicy(r->r.policyArn((String)desired.get("permissions_boundary")));
         List<String> changes=differences(old,desired);boolean changed=!changes.isEmpty();
-        System.out.println("IAM role diff ("+name+"): "+changes.size()+" changed fields");for(String line:changes)System.out.println("  "+line);
+        System.out.println("IAM role diff ("+safe(name)+"): "+changes.size()+" changed fields");for(String line:changes)System.out.println("  "+line);
         if(apply&&changed) {
             if(demo)demoRoles.put(name,new Snapshot("arn:aws:iam::000000000000:role/"+name,desired,Map.of("lmaws_test","lambda_exec","lmaws_role","lambda_execution")));
             else {
@@ -195,6 +195,9 @@ public final class IamRoles {
                 client.deleteRole(r->r.roleName(name));
             }
         }
-        Map<String,String> out=output(name,old);out.put("applied",String.valueOf(apply&&old!=null));out.put("action",old==null?"absent":apply?"deleted":"dry_run");return out;
+        Map<String,String> out=output(name,old);out.put("applied",String.valueOf(apply&&old!=null));out.put("action",old==null?"absent":apply?"deleted":"dry_run");
+        out.put("existed_before",String.valueOf(old!=null));out.put("exists",String.valueOf(old!=null&&!apply));out.put("changed",String.valueOf(old!=null));
+        out.put("diff_lines",old==null?"[]":safe(encoded(List.of("- role "+name,"- managed_policies: "+encoded(old.spec.get("managed_policies")),"- inline_policies: "+encoded(old.spec.get("inline_policies"))))));
+        return out;
     }
 }

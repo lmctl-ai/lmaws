@@ -43,8 +43,8 @@ public final class IamRoleChecks {
         var created=manager.put("lmaws_lambda_exec",json(spec()),true);check("created".equals(created.get("action")),"demo created role");
         check("true".equals(manager.get("lmaws_lambda_exec").get("exists")),"created role exists");
         var identical=manager.put("lmaws_lambda_exec",json(spec()),true);check("unchanged".equals(identical.get("action"))&&"false".equals(identical.get("applied")),"identical role does not mutate");
-        manager.delete("lmaws_lambda_exec",false);check("true".equals(manager.get("lmaws_lambda_exec").get("exists")),"delete preview keeps role");
-        manager.delete("lmaws_lambda_exec",true);check("false".equals(manager.get("lmaws_lambda_exec").get("exists")),"explicit delete removed role");
+        var deletePreview=manager.delete("lmaws_lambda_exec",false);check(!"[]".equals(deletePreview.get("diff_lines")),"delete preview exposes its removals");check("true".equals(manager.get("lmaws_lambda_exec").get("exists")),"delete preview keeps role");
+        var removed=manager.delete("lmaws_lambda_exec",true);check("false".equals(removed.get("exists")),"delete result reports absence");check("false".equals(manager.get("lmaws_lambda_exec").get("exists")),"explicit delete removed role");
         var foreign=spec();foreign.put("permissions_boundary","arn:aws:iam::999999999999:policy/lmaws_boundary");reject(()->manager.put("lmaws_lambda_exec",json(foreign),true));
         var foreignPolicy=spec();foreignPolicy.put("managed_policies",List.of("arn:aws:iam::999999999999:policy/lmaws_lambda_data"));reject(()->manager.put("lmaws_lambda_exec",json(foreignPolicy),true));
         check(accesses[0]>0,"guard callback invoked");
