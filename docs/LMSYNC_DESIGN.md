@@ -1,9 +1,9 @@
 # lmsync: local believed-state manager
 
-Status: **design only, brief v2**. This is the only current sync design. It
+Status: **design only, brief v2 + addendum 2**. This is the only current sync design. It
 consolidates the useful publication examples from root `SYNC_DESIGN.md` at
 `d0f033f`, replacing its integrated sync/policy engine with the boundary below.
-No implementation, AWS command, workflow dispatch, benchmark or repository creation
+No implementation, AWS command, remote-host test, workflow dispatch, benchmark or repository creation
 is performed here. The future `lmctl-ai/lmsync` repository is not created now.
 
 Contents: [boundary](#definition-and-boundary), [API](#1-core-api-and-neutral-data),
@@ -11,23 +11,25 @@ Contents: [boundary](#definition-and-boundary), [API](#1-core-api-and-neutral-da
 [optional logs](#3-optional-planresult-log-glue),
 [durability](#4-durable-db-and-failure-injection),
 [Java stores](#5-java-implementation-and-scale-tier-storage),
-[example jobs and host gaps](#6-example-jobs-scripts-own-every-decision),
+[three example pairings and host gaps](#6-three-pairings-one-script-per-job),
 [multi-host milestone](#7-one-lmscript-two-hosts-first-milestone),
 [benchmarks](#8-benchmark-plan-proving-the-local-state-claim),
 [implementation](#9-positioning-risks-and-implementation-breakdown).
 
 ## Definition and boundary
 
-lmsync stores a **local model of believed remote state**. It provides a Java
+lmsync is the local **registry**: a model of believed remote state. It provides a Java
 lmcode host/library for DB access, local scanning, neutral comparisons, recording
 and optional local log helpers. It makes **zero remote calls, ever**: no list,
 remote stat, HEAD, credential resolution, cloud client or SSH connection. A query
 about an arbitrary subset reads local state; it does not enumerate a target tree.
 
 **One sync job is one user-authored LMScript.** That script calls lmsync for state
-and a cloud/SFTP host for actions, then reports the results to lmsync. lmaws keeps
+and lmcurl/cloud hosts for actions, then reports the results to lmsync. lmaws keeps
 its existing Java/GraalVM host and SDK v2; lmazure and lmgcp keep their own hosts.
-There is no C++, JNI, native sidecar or full-host rewrite in this design.
+There is no C++, JNI, native sidecar or full-host rewrite **for the registry**.
+The existing native lmcurl transport can add libssh2 inside its own build, without
+adding native code or transport dependencies to lmsync.
 
 | lmsync owns | The job script owns | The transfer host owns |
 |---|---|---|
@@ -46,7 +48,7 @@ zero decision requests as zero total requests for a script that chose verificati
 flowchart LR
   F[Local files / explicit subsets] --> S[lmsync: local DB + scan + query]
   S --> J[One user LMScript: decisions]
-  J --> H[lmaws / lmazure / lmgcp / SFTP host]
+  J --> H[lmcurl HTTP or SFTP / lmaws / lmazure / lmgcp]
   H --> R[Remote actions]
   H --> C[Confirmed result data]
   C --> J
@@ -340,8 +342,10 @@ quoting, many targets and millions of streamed rows in JVM and native-image runs
 
 Implement lmsync as a Java lmcode host with JDK local I/O/hash primitives. GraalVM
 native-image remains the deployment route; no AWS SDK, SSH client or cloud ledger
-belongs in its dependency graph. TransferManager is an **lmaws** concern. No C++
-or external native component is selected, and there is no JNI fallback at runtime.
+belongs in its dependency graph. TransferManager is an **lmaws** concern. No new C++
+or external native state component is selected for lmsync, and there is no JNI
+fallback. Existing native lmcurl may add libssh2 inside its own transport; that
+does not change the registry implementation language or dependencies.
 
 | Store | Primary-source evidence / uncertainty | Recommendation |
 |---|---|---|
@@ -388,18 +392,125 @@ existing Java cloud hosts. If Java options fail, present actual evidence and
 native/JNI package-size, platform and maintenance costs before any new decision.
 Do not assert RocksDB is necessary while a viable Java sorted-store design exists.
 
-## 6. Example jobs: scripts own every decision
+## 6. Three pairings: one script per job
 
-The following are **design sketches of seven standalone `.lms` jobs**, not new
-runnable examples in this change. Each future file contains editable CONFIG values,
-its policy code and calls to state and transfer hosts. Import-only helpers may
-avoid boilerplate; there is no central rules/config engine or second job file.
-All examples get picture-first READMEs, a synthetic architecture picture and an
-assertion/request-count chart made with lmdraw/lmplot, a short `lmctl <raw-url>.lms`
-caption, cost assumptions and fake-mode assertions. The real pictures/scripts
-are implementation deliverables, not fabricated evidence in this design.
+(A) DOWNLOAD MANAGER is registry + lmcurl; (B) UPLOAD MANAGER is registry +
+lmaws; (C) RSYNC ALTERNATIVE is registry + lmcurl SFTP. Each job is **one .lms**
+using typed host registries/API only. All decisions remain user script code;
+there is no rules engine in core and no protocol/credential dependency in lmsync.
+The full pipeline below composes stages in one file, not several independent jobs.
 
-### (a) `publish_ttl.lms`: static site with lmaws
+These are design sketches, not new runnable files. Future examples follow the
+existing CONFIG/import-only-helper conventions, picture-first README, lmdraw
+architecture and lmplot result/request-count pictures, and short
+`lmctl <raw-url>.lms` captions. All pictures/evidence use synthetic fixtures.
+
+### A. DOWNLOAD MANAGER — registry + lmcurl
+
+`download_http.lms` is one script, with its own URL manifest, destination mapping,
+retry/parallel settings and trust/revalidation choices. lmsync stores only what
+that script reports. It has no downloader, URL scheduler or re-request rule.
+
+The script can skip a recorded complete download when its local file still agrees
+with the recorded fingerprint: **zero re-requests for those trusted items**.
+It cannot detect unseen upstream changes that way. If the script chooses explicit
+revalidation, it issues a conditional GET with recorded ETag (`If-None-Match`) or
+Last-Modified (`If-Modified-Since`); a 304 is still one remote request, not zero.
+Prefer ETag when both are available. If 304 arrives but the local complete file is
+missing or invalid, the script requests the body instead of recording success.
+No mandatory HEAD-before-GET or pre-download remote listing is introduced.
+
+The same script handles 200/full replacement, 206/resume, 304/validated local copy,
+404/410/gone, redirects, retries and failures explicitly. A gone response is
+recorded as data with time/status; it does not imply a local delete or a permanent
+no-retry rule in core. The script chooses whether to keep an old file and when to
+request a gone URL again. Neither a failed request nor a partial body becomes a
+complete-download record.
+
+Proposed one-job control flow (future file APIs; not runnable current bindings):
+
+```text
+# download_http.lms: one user-owned job
+let work = registry_read_download_records(URL_MANIFEST);
+for (item in work) {
+  if (user_trusts_complete_local_copy(item)) { continue; }
+  if (user_can_resume_recorded_partial(item)) {
+    queue_lmcurl_download(item.url, item.partial_path, item.durable_offset,
+                         item.strong_validator, item.expected_hash);
+  } else {
+    queue_lmcurl_conditional_get(item.url, item.recorded_etag,
+                               item.recorded_last_modified, item.temp_path);
+  }
+}
+let results = run_bounded_lmcurl_downloads();
+# In this same .lms: record confirmed complete, partial, validated or gone data;
+# retain unconfirmed work, and implement any retry/revalidation choices here.
+registry_record_reported_results(results);
+```
+
+Use stable job/item IDs, an ignored sibling `.part` file, confirmed byte offsets,
+local prefix digest and remote validator/expected size in the registry metadata.
+Fsync a checkpoint before reporting its offset durable. HTTP resume sends Range
+and a valid If-Range validator, requests an identity representation, and validates
+206/Content-Range start and total size. A 200 response to a resume request restarts
+the file; **never append it to an old partial**. Treat 416 by explicit size/validator
+logic, not automatic completion. A weak ETag does not establish If-Range identity;
+without a usable validator or immutable-source/expected-hash contract, restart.
+
+On completion verify the script's expected hash when provided, fsync and atomically
+rename the local temp file, then record the actual local fingerprint. A crash after
+rename but before record remains unconfirmed and is reconciled by the script.
+Progress uses distinct result IDs without a complete-file fingerprint until final
+success; the registry stores offset/phase data without interpreting it. Retries
+must roll back to a confirmed prefix rather than append duplicate failed bytes.
+Bound concurrent files, connections, buffers, retries and backoff; honor redirects
+without leaking auth across origins. Destination names come from the script, not
+untrusted Content-Disposition paths. Logs redact secret headers/query values. Registry/log receipts store URL identity
+or templates plus auth references, not userinfo, signed tokens, cookies or other
+credential values; resolve those transiently in the action host.
+
+The pictured example compares complete-skipped / conditional-304 / resumed-206 /
+gone / failed cases, plus request counts. An interruption fixture proves restart
+on changed validator, correct Range offsets and no false complete record. This is
+aria2 / `wget -c` style orchestration with a persistent registry, not a claim to
+replace their torrent/metalink/delta feature sets.
+
+#### A: current lmcurl status and missing work
+
+| Need | Available today | Additive work in lmcurl |
+|---|---|---|
+| Conditional GET | Request.header, Response.header/status can already express and inspect ETag/Last-Modified conditions | Typed conditional helper/result classification, safe 304 handling and persisted validator receipts; no mandatory HEAD |
+| Retry and timeout | Request.retry and timeout already exist | Download-aware backoff/cancel/checkpoint behavior, retry receipts and byte bounds |
+| File download | Response.save writes the already buffered body | Binary-safe streaming-to-file, bounded buffers, durable progress and temp-to-final rename receipts |
+| Resume | No exposed durable file/range/If-Range resume contract | Explicit offset/validator options and 206/200/416 tests; registry-supplied checkpoint metadata |
+| Parallel downloads | Suite.parallel and Curl.load serve tests/load; they are not a bounded multi-file downloader | Streaming DownloadBatch/cursor with bounded file/connection counts and per-file receipts, using libcurl multi or bounded independent handles |
+| Gone objects | Status/headers available | Script records 404/410 data; helper must not erase files or hide negative outcomes |
+
+Proposed additive lmcode surface in lmcurl (not implemented):
+
+```text
+Request.conditional(headers: ConditionalHeaders) -> Request
+Request.download_to(temp_path: string, options: DownloadOptions) -> DownloadTransfer
+Curl.download_batch(items: DownloadSource, options: ParallelOptions) -> DownloadCursor
+DownloadTransfer.checkpoint() -> DownloadCheckpoint
+DownloadTransfer.result() -> DownloadReceipt
+DownloadCursor.next_batch(max_rows: int) -> DownloadReceiptBatch
+DownloadCursor.close() -> CloseReceipt
+```
+
+ConditionalHeaders carries the script-supplied ETag/date; DownloadOptions carries
+its offset/If-Range, expected digest, byte/deadline/retry/buffer choices. Receipts
+return status, validators, actual bytes, durable offset and completion/partial
+facts. The script chooses skip/revalidate/retry/gone handling and final promotion;
+these APIs do not query the registry or decide which URLs belong in a job.
+
+No change to lmsync is needed to recognize HTTP status: it simply records caller
+metadata. lmcurl's HTTP protocol/redirect whitelist stays HTTP/HTTPS; enabling SFTP
+must not allow an HTTP redirect to silently switch to SFTP/SCP.
+
+### B. UPLOAD MANAGER — registry + lmaws
+
+#### B1. `publish_ttl.lms`: static site with lmaws
 
 Illustrative policy in one user script:
 
@@ -503,7 +614,7 @@ skips lmaws; core and job decision work make zero remote queries. Live lmaws may
 perform its mandatory security checks when the script requests a transfer; count
 them separately. The picture shows scan/query -> chosen PUTs -> recorded receipts.
 
-### (b) `publish_hashed.lms`: content-hashed assets
+#### B2. `publish_hashed.lms`: content-hashed assets
 
 This script hashes and transforms a supported reference graph, prepares immutable
 asset paths and rewritten entries, then feeds those exact derived files/paths
@@ -535,7 +646,7 @@ Here `rewrite_and_hash_supported_graph` and `put_with_lmaws_and_record` are expl
 user-owned `.lms` helpers implementing that job's policy/host calls, not lmsync
 functions. They stream/batch rather than build an unbounded in-memory graph.
 
-### (c) `publish_release.lms`: prefix activation and rollback
+#### B3. `publish_release.lms`: prefix activation and rollback
 
 The script stages a complete manifest under a release prefix, records each action,
 then asks lmaws to conditionally switch an owned CloudFront origin path or an
@@ -569,7 +680,7 @@ record_user_activation_event(release, before.release, switched);
 These helpers are policy-bearing script code. lmsync only stores/retrieves the
 reported per-file and activation-event metadata; it does not understand release IDs.
 
-### Freshness policies retained from the earlier design
+#### B3.1. Freshness policies retained from the earlier design
 
 These are selectable **script templates/options**, not core enums/rules. A script
 may expose flags or variables named `ttl`, `hashed`, `release`, `invalidate`, or
@@ -597,7 +708,7 @@ that host's implementation work if adopting this example policy. No policy is
 changed by this design. Existing explicit host APIs remain compatible through a
 properly guarded/costed implementation; no default job invalidates implicitly.
 
-### (d) `publish_git_diff.lms`: arbitrary cherry-pick
+#### B4. `publish_git_diff.lms`: arbitrary cherry-pick
 
 The script obtains a NUL-delimited git diff against its chosen deployed revision,
 or accepts an explicit list/manifest/stdin paths, observes only those local paths,
@@ -623,51 +734,7 @@ let candidates = parse_git_diff_as_paths(".lmsync-local/git-paths.nul");
 NUL parsing preserves whitespace/quotes; the job handles rename/deletion statuses.
 The git invocation is illustrative and was not executed for this design.
 
-### (e) `publish_sftp.lms`: transfer-host sketch
-
-Keep SSH/SFTP in a transfer host, outside lmsync. Proposed calls:
-`connect(host, port, auth_ref, known_hosts_or_pin)`, `put_file(local, temp_remote)`,
-`fsync_if_supported(temp_remote)`, `rename(temp_remote, final_remote, options)`,
-`remove(path)`, optional explicit `stat(path)` and `close`. The script chooses
-remote paths, temporary names, overwrite policy and any verification. Transfer
-to a sibling temp name and rename only after success; record final-path success
-only after rename acknowledgment. Cross-filesystem/non-atomic rename or missing
-server extensions must be reported, not presented as atomic. Interrupted temp
-files stay unconfirmed; the script chooses cleanup/retry. A successful SFTP
-rename is not proof of storage fsync unless the server supports and acknowledges it.
-
-Evaluate [SSHJ](https://github.com/hierynomus/sshj) and maintained
-[JSch fork](https://github.com/mwiede/jsch) first; also consider
-[Apache MINA SSHD](https://github.com/apache/mina-sshd). These Java libraries provide
-SSH/SFTP capabilities, but the selected algorithms, crypto providers, key formats,
-resources and exact GraalVM native-image configuration require a prototype. Do not
-assert blanket native-image compatibility from JVM use. Choose a pinned patched
-version with JDK/pure-Java providers; do not introduce JNI for SSH agents/crypto.
-
-Host-key verification is mandatory via known_hosts or an explicit trusted pin;
-no accept-all verifier or automatic trust-on-first-use. Credentials come from
-private references/approved agents, never literals or logs. Key mismatch fails
-before transfer. No credentials, real server names or real fingerprints enter
-committed evidence. Test with a local fake/test SFTP server, key mismatch and
-rename failure. The picture shows temp -> confirmed rename -> local record.
-
-Single-job sketch, with the same state/transfer host phases:
-
-```text
-let selected = user_selects_from_state_and_local_files();
-for (item in selected) {
-  let temporary = user_temp_name_next_to(item.remote_path);
-  # SFTP HOST: verified connection, PUT temporary, fsync if supported, RENAME final.
-  let result = sftp_put_then_rename(item.local_path, temporary, item.remote_path);
-  # LMSYNC: record only the source fingerprint and final-path result reported confirmed.
-  record_result(item.path, result);
-}
-```
-
-No remote stat is needed by lmsync; a script that requests one does so through the
-SFTP host. This sketch is not a runnable SFTP implementation or library choice.
-
-### (f) `verify_sample.lms`: user-chosen verification
+#### B5. `verify_sample.lms`: user-chosen verification
 
 The script selects N random recorded objects with a visible seed and sampling
 policy, calls lmaws HEAD with its own ledger allowance, compares metadata/checksum
@@ -692,7 +759,7 @@ for (path in selected) {
 The sample helper, N, seed and comparison are user script code. lmsync provides
 record iteration and mark_suspect, not a sampling schedule or verification policy.
 
-### (g) `track_invalidations.lms`: user actions and monthly quota
+#### B6. `track_invalidations.lms`: user actions and monthly quota
 
 This job obtains paths from its own logic, chooses exact vs wildcard, counts
 submitted paths (a wildcard counts as one), prints cost, admits it through lmaws,
@@ -728,7 +795,7 @@ lmsync_record_event("invalidation/" + STABLE_CALLER_REFERENCE,
 The host ledger still admits the request. The user may expose cap/override flags
 in this script; none of those helpers or constants becomes lmsync business logic.
 
-### Exact lmaws actions needed and current gaps
+#### B: exact lmaws actions needed and current gaps
 
 This audit uses the checked `schema/lmaws.dsl.json`, CloudHost registry and
 WebStackAws implementation. Names in the proposed column are design names,
@@ -761,6 +828,211 @@ prefix/profile/cap rule lives in lmsync. TransferManager, its Java async transpo
 resumable-state tests and the generic file APIs are missing integration work,
 not a reason to replace the Java host. [Java multipart client](https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/s3-async-client-multipart.html),
 [TransferManager](https://docs.aws.amazon.com/java/api/latest/software/amazon/awssdk/transfer/s3/S3TransferManager.html).
+
+### C. RSYNC ALTERNATIVE — registry + lmcurl SFTP
+
+**Replace the former Java SSH-library proposal.** SFTP/SCP transport belongs in
+existing libcurl-based lmcurl through **libssh2**, not SSHJ/JSch/MINA or JNI in
+lmsync. `sftp_copy.lms` is one job, selecting upload or download over SFTP. It
+compares a chosen local/manifest subset to recorded state and performs only its
+selected transfers: no remote tree enumeration and no remote checksum-comparison
+round trips. Files can come from unrelated directories; a directory mirror is
+one possible user policy, not the required input shape.
+
+A known-complete unchanged item can be skipped without reconnecting. This trusts
+the recorded belief; outside SFTP edits remain invisible until a user-chosen
+verification. Do not claim rsync's remote delta algorithm or automatic detection
+of unseen remote edits. SSH handshake, opens, write acknowledgments, rename and
+any libcurl-required file metadata are protocol work, not a claim of zero packets.
+Optional explicit stat/list APIs exist for verification scripts, not normal
+comparison. Count any stat used to reconcile a partial separately.
+
+Single-job sketch, with the same registry/action/record phases:
+
+```text
+# sftp_copy.lms: DIRECTION, chosen paths, mapping, auth refs and resume policy here
+let work = user_selects_from_registry_and_local_manifest();
+let connection = lmcurl_sftp_connect(USER_HOST_ENV, KNOWN_HOSTS_FILE, AUTH_REFS);
+for (item in work) {
+  if (DIRECTION == "upload") {
+    let temp = user_unique_sibling_temp_name(item.remote_path, item.op_id);
+    lmcurl_sftp_mkdir_parents(item.remote_parent);
+    let receipt = lmcurl_sftp_put(item.local_path, temp, item.recorded_checkpoint);
+    lmcurl_sftp_rename(temp, item.remote_path, USER_RENAME_OPTIONS);
+    registry_record_confirmed_final_result(item, receipt);
+  } else {
+    let receipt = lmcurl_sftp_get(item.remote_path, item.local_part_path,
+                                item.recorded_checkpoint, item.expected_hash);
+    user_verify_fsync_and_rename_local_file(receipt);
+    registry_record_confirmed_final_result(item, receipt);
+  }
+}
+```
+
+These are proposed host/user-helper names, not current runnable APIs. Upload uses
+a private unique temp file, mkdir-p semantics for only the requested parents, then
+rename after confirmed transfer. No remote shell `mkdir -p` or arbitrary SSH shell
+is needed. The API implements SFTP operations with correct path escaping; reject
+paths it cannot represent instead of interpolating quote commands unsafely. Expose
+atomic-rename/fsync support as capabilities; fail or explicitly report a weaker
+operation if the server lacks the required extension. A cross-filesystem move is
+not silently called atomic. Missing files, denied mkdir and rename collisions
+must remain distinct from success.
+
+Download writes a local `.part`, uses the registry's durable offset and expected
+source identity, then verifies and renames locally. Upload resume uses a recorded
+source snapshot and a private operation-specific remote temp, not blind append to
+the published path. SFTP has no universal HTTP-style content validator. Safe resume
+requires a trusted immutable source/checkpoint or a strong expected final digest;
+otherwise the script restarts or explicitly verifies. A remembered offset alone
+cannot prove that a remote prefix survived or was not changed. Never seek past a
+missing/truncated temp and create a hole. A requested stat/reconciliation or restart
+is safer than inventing remote prefix integrity. No checksum round trip is required
+by the registry; expected-hash validation is local after receiving bytes.
+
+Store confirmed progress, temp paths, direction, source snapshot/digest and phase
+as opaque registry metadata. Do not attach a completed-file fingerprint while
+progress is partial. Acknowledged writes are not proof of server fsync; require its
+extension when relying on a durable remote checkpoint. The script handles uncertain
+rename outcomes and cleanup/retry. The picture shows both directions, checkpointed
+temps, final rename and zero remote traversal/checksum comparison requests.
+
+#### C: lmcurl implementation, crypto and packaging
+
+At the source audit (`lmcurl` commit `8e65448`, relevant files clean),
+CMakeLists.txt has `CURL_USE_LIBSSH=OFF` at CMakeLists.txt line 150 and
+`CURL_USE_LIBSSH2=OFF` at line 155. Therefore lmcurl has **no SFTP today**. Its HTTP
+request path also hard-restricts protocols to HTTP/HTTPS. Enabling a build option
+alone does not add the typed API, authentication, safe resume or streaming files.
+
+The implementation step is to pin a libssh2 release/archive hash in lmcurl's
+existing dependency lock/sync/verify mechanism, build it static like other
+application libraries, set `CURL_USE_LIBSSH2=ON`, and keep libssh disabled. Add its
+BSD-3-Clause copyright/license text to THIRD_PARTY_NOTICES and embedded notices;
+record any crypto/compression dependency notices as well. Do not select libgcrypt
+or another backend by accidental autodetection. [libssh2 license](https://libssh2.org/license.html),
+[libssh2 build backends](https://github.com/libssh2/libssh2/blob/master/CMakeLists.txt).
+
+| Platform | Existing inspected state | Planned SSH crypto / status |
+|---|---|---|
+| Linux x64/arm64 | Full host, pinned static OpenSSL, dynamic glibc | Link static libssh2 to the **same** pinned OpenSSL libcrypto; reuse zlib only if enabled. No extra libssh2/libcrypto shared-library deployment; preserve the existing dynamic-glibc rule, not fully static glibc or musl |
+| macOS x64/arm64 | Metadata-only no-network stubs currently return before full dependency setup; full-client CMake intent is SecureTransport | libssh2 has no SecureTransport crypto backend. When the full host is implemented, retain HTTPS SecureTransport and use bundled/pinned static OpenSSL libcrypto for SSH; do not invent a SecureTransport SSH backend. Qualify both architectures before claiming SFTP support |
+| Windows x64 | Metadata-only stub currently; full-client CMake intent is Schannel | Prefer libssh2 WinCNG to align with native Windows crypto. Qualify key/agent/algorithm coverage and remaining full-host dependencies; unsupported algorithms/auth must fail clearly. Stub is not a successful transfer implementation |
+
+The Java-only restriction applies to the registry; this is a dependency inside the
+already native C++ lmcurl transport, not a new component or JNI bridge in lmsync.
+Linux linkage tests must reject unintended libssh2/OpenSSL shared dependencies and
+retain the current glibc compatibility floor. Expose compiled protocol/capability
+metadata and report unsupported platforms/features honestly.
+
+Planning budget, **not measured**: libssh2 plus wrappers may add roughly 0.3–2 MiB
+to a stripped full Linux executable and 15–120 seconds to a warm two-core build,
+when existing crypto archives are reused. A newly bundled macOS libcrypto could
+add several MiB and additional minutes; measure the entire full-host transition
+separately from SSH. Windows WinCNG reuses system crypto, but the stub-to-full-host
+size/time delta is not yet known. Capture before/after stripped size, clean and
+incremental build time, dependency graph and linkage on each real build. Do not
+present estimates as release results or weaken host-key checks to meet a size goal.
+
+#### C: host verification, authentication and API
+
+Mandatory known_hosts or an explicitly trusted SHA-256 host-key pin is checked
+before credentials/data are sent. Unknown/mismatched keys fail; no accept-all or
+automatic TOFU fallback, and HTTP Request.insecure must not disable SSH verification.
+Select one mandatory known-host/pin policy; conflicting verification inputs are
+an error, not a trust fallback. Use libcurl's interfaces and test hashed
+known_hosts as well. Pool
+connections by host/port, user/auth reference and verification policy/digest; a
+changed known_hosts/pin policy must force fresh verification, not reuse a connection
+vetted under old settings. [known-host behavior](https://curl.se/libcurl/c/CURLOPT_SSH_KNOWNHOSTS.html),
+[SHA-256 pin option](https://curl.se/libcurl/c/CURLOPT_SSH_HOST_PUBLIC_KEY_SHA256.html).
+
+Support private/public key-file authentication and SSH agent authentication where
+the backend/platform supports it. User, passphrase/password and agent-socket
+settings use private environment references or approved key-file paths; never
+literal secrets in script argv, URLs, logs, pictures, registry metadata or recorded receipts. Examples
+name environment variables/key paths only. Redact credential values, verbose SSH/
+curl traces, URL userinfo and sensitive query/header values. Agent support failures
+must be explicit, not silently downgraded to password or trust-all auth.
+
+Proposed typed API in **lmcurl**, all additive and capability-checked:
+
+```text
+curl.sftp_session(host_env, port, HostVerification, AuthReferences) -> SftpSession
+SftpSession.put_file(local_path, remote_temp, TransferOptions) -> FileTransfer
+SftpSession.get_file(remote_path, local_part, TransferOptions) -> FileTransfer
+SftpSession.rename(source, destination, RenameOptions) -> ActionReceipt
+SftpSession.mkdir(path, parents: bool) -> ActionReceipt
+SftpSession.delete_file(path) -> ActionReceipt
+SftpSession.stat(path) -> RemoteAttributes             # explicit optional verify/reconcile
+SftpSession.list(path, ListOptions) -> RemoteCursor    # explicit verify only
+SftpSession.close() -> CloseReceipt
+FileTransfer.checkpoint() / result() -> TransferReceipt
+```
+
+TransferOptions exposes supplied offsets, expected source identity/digest, bounded
+stream buffers, deadline/retry/cancel and progress-result output. Add bounded
+parallel file/connection helpers with independent easy handles or libcurl multi;
+do not share a mutable easy handle between threads. Separate HTTP and SFTP session
+factories and keep HTTP redirects from switching protocols. File methods accept
+literal file paths, not automatic wildcard expansion or trailing-directory URLs
+that would trigger a listing. Listing is a separate explicit verify call. SCP capability may
+exist in the bundled backend, but this milestone exposes/tests SFTP first rather
+than silently accepting all new protocols.
+
+Known-offset resume may use libcurl seek/resume facilities, but qualify actual
+SFTP behavior, including missing/truncated remote temps and required stat calls.
+Do not assume an HTTP resume option resumes HTTP PUT or implements SFTP state
+validation. Parent creation, rename/delete/mkdir quoting and any protocol-required
+attributes need operation-specific tests. [resume option](https://curl.se/libcurl/c/CURLOPT_RESUME_FROM_LARGE.html),
+[parent creation](https://curl.se/libcurl/c/CURLOPT_FTP_CREATE_MISSING_DIRS.html).
+
+#### C: local-only transport test plan
+
+The implementer changes lmcurl directly—no owner hunting or handoff-only bug list.
+Use an isolated local sshd/test container on a loopback high port, disposable
+fixture users/keys/known_hosts, private temp directories and no real remote hosts.
+Test put/get, both resume directions, mkdir parents, exact delete, rename, optional
+stat/list (only in an explicit verify test), spaces/quotes/Unicode paths, unknown
+and changed host key, hashed known_hosts, wrong pin, key and agent auth, missing
+agent, permission denial, missing/truncated temp, connection loss, server restart,
+source mutation, fsync/rename unsupported, bounded parallelism and cancellation.
+
+Kill between transfer, rename, result-log fsync and registry record. Verify that
+partial/uncertain work never becomes complete and that confirmed results replay.
+Instrument protocol actions: normal subset comparison performs no remote listing
+or checksum-comparison command; count transfer/resume metadata honestly. Check
+redaction of all auth references' values, dependency pins/notices and Linux linkage.
+Keep existing HTTP tests green. macOS/Windows stub tests must report unsupported;
+full-platform SFTP tests become mandatory when those full transports are built.
+No local sshd, build, cloud call or remote-host test is executed by this design task.
+
+### Full pipeline — A, then clean, then B, optionally C, in one script
+
+`download_clean_publish.lms` contains the orchestration and policy for all stages:
+
+```text
+# One .lms job; helpers are import-only functions, not independent scheduled jobs.
+let acquired = A_download_with_lmcurl_and_record(REGISTRY, INPUT_URL_MANIFEST);
+assert(user_required_inputs_are_complete(acquired));
+let cleaned = user_clean_transform_locally(acquired, TRANSFORM_VERSION);
+record_local_transform_results(REGISTRY, cleaned);  # generic local reported data
+let uploaded = B_publish_with_lmaws_and_record(REGISTRY, cleaned, SITE_POLICY);
+if (USER_WANTS_SFTP_MIRROR) {
+  C_sftp_put_with_lmcurl_and_record(REGISTRY, cleaned, SFTP_TARGET);
+}
+```
+
+A C-download source can feed the same clean/B path too. “Clean” is user-authored
+local transformation/selection, optionally calling existing local parsing tools;
+there is no lmsync.clean rule or implicit remote cleanup. Use separate target/event
+namespaces for downloads, partial checkpoints, transformations, S3 publication and
+SFTP. Store source/transform fingerprints so the script can skip work it trusts.
+Only cleaned approved artifacts reach B/C, never credentials, private registry
+files or arbitrary server-supplied paths. Import each phase's confirmed results
+before reporting failure; a partial A does not automatically publish an incomplete
+site unless the user explicitly programmed that policy. Picture the full graph
+and per-stage request/record counts with synthetic fixtures.
 
 ## 7. One LMScript, two hosts; first milestone
 
@@ -820,7 +1092,23 @@ Replace the transfer block with their typed blob/object API and receipts; native
 .NET/Go/Java implementations can read the versioned files without sharing live
 objects or linking the DB. Provider names and Azure/GCP safety/cost rules remain
 in those hosts/scripts. No lmsync provider plugin or cloud credential is needed.
-SFTP is another explicit transfer block with the same reported-result contract.
+SFTP uses a separate explicit `cli="lmcurl"` block with the same reported-result
+contract as its HTTP downloads. Both are action-host functions, never registry
+methods. A pipeline can reuse lmcurl in multiple phases and lmaws in another.
+
+### Per-pairing integration gaps
+
+| Pairing | lmcurl work | lmaws work | LMScript/core glue |
+|---|---|---|---|
+| A: download | Existing headers/retry/status are usable; add streaming-to-file, validator/conditional helpers, safe durable resume and bounded parallel file downloads | None for generic HTTP acquisition | Existing multi-host block runner works; add bounded record/receipt file helpers. Registry stores reported HTTP/partial data only |
+| B: upload | Optional A precursor only | Generic binary PUT/COPY/DELETE and persistent targets; TransferManager/multipart resume receipts, release-switch and chosen invalidation APIs as detailed above | Same file/record glue; user script supplies key/cache/spot-check policies |
+| C: SFTP | Enable/pin libssh2, platform crypto/notices, verified auth, typed put/get/rename/mkdir/delete, explicit stat/list and safe resume/parallelism | None for SFTP transport | Existing lmcurl block runner; opaque checkpoint/results pass through registry. No Java SSH library |
+| A -> clean -> B (+ C) | A/C capabilities above | B capabilities above | One script orchestrates phases and explicit local clean helpers; no new scheduler or policy engine |
+
+There is no missing fundamental ability to call two hosts today. What is missing
+is the future lmsync schema/implementation and transport/streaming APIs identified
+in the table, plus bounded file-codec helpers; do not claim these examples already
+run with today's binaries.
 
 ### Smallest useful milestone
 
@@ -938,8 +1226,16 @@ choice, not automatic JNI adoption or a full C++ rewrite.
 
 ## 9. Positioning, risks and implementation breakdown
 
-lmsync is a reusable remembered-state primitive, not another all-in-one cloud sync
-product. aws s3 sync/rclone combine comparison and transfer workflows; rsync can
+The scripts provide three compositions: an aria2/`wget -c`-style download manager
+with persistent complete/partial registry data and no needless repeat requests;
+an upload manager comparable to aws s3 sync/rclone workflows without normal
+remote enumeration; and an SFTP alternative to basic rsync transfer jobs with
+no remote listing or checksum-comparison round trips. Explicit revalidation,
+retries and transfer protocol work still cause requests. Safe resume has the
+source/checkpoint guarantees described above; the registry does not create them.
+
+lmsync itself remains a reusable remembered-state primitive, not an all-in-one
+transport or policy product. aws s3 sync/rclone combine comparison and transfer workflows; rsync can
 exchange remote file metadata and exploit transfer deltas. Those are useful
 capabilities that lmsync does not replace. Its distinct contract is arbitrary
 subset questions against a local believed model with zero remote calls, while
@@ -957,7 +1253,7 @@ baselines matter; do not pretend they cannot avoid directory enumeration.
 | Multi-target/shared-key collisions | Script maps/checks physical destinations; core keeps separate namespace/path records |
 | Disk full, checksum corruption, stale lock | Crash-safe commit, doctor, OS locking and validated backup/import; no silent empty-store fallback |
 | Huge output or cached filter growth | Bounded cursors/spills/caches; no unbounded arrays or all-in-memory 1B map |
-| Native-image/store/SSH compatibility | Qualify exact pinned binaries/providers; no implicit JNI/native transport fallback |
+| Native-image/store/SSH compatibility | Qualify registry/store binaries and explicit lmcurl/libssh2 builds separately; no implicit JNI dependency or untested transport fallback |
 | Incorrect free-quota assumptions | Script tracks known events, discloses incomplete history and uses host pricing/admission |
 | Policy creeping into core | Review rejects auto-upload/delete/age/rebuild/cache/provider/ledger decisions in lmsync |
 
@@ -971,14 +1267,17 @@ Implementation steps for coders:
    import/export. Test empty/missing/unobserved states and arbitrary subsets.
 4. Add optional generic plan/result codecs and replay offsets. Run the complete
    kill-point/model-oracle harness; no provider dependency is permitted.
-5. Build example (a) as **one LMScript** with a fake executor and pictures. Add the
+5. Build pairing B1 (`publish_ttl.lms`) as **one LMScript** with a fake executor and pictures. Add the
    minimal lmaws file/receipt APIs, then later the explicitly authorized test-bucket
    milestone. Do not create the lmsync repo or execute that milestone in this task.
-6. Add example jobs (b)–(g) and provider/SFTP capabilities separately, keeping their
-   choices in script source and costs/security in their hosts. Preserve all
+6. Implement pairings A/B/C and the one-script pipeline. The implementer directly
+   updates lmcurl's dependency lock/CMake/notices and API for libssh2 SFTP plus the
+   HTTP download/resume/parallel helpers; do not defer through owner hunting.
+   Keep choices in script source and costs/security in their action hosts. Preserve all
    existing examples and host APIs. No config-driven policy engine is introduced.
-7. Implement/qualify sorted-run large tiers, local 100M benchmark and format
-   migration. Record measurements and limits; enable advertised tiers only after
+7. Execute lmcurl's local-sshd test plan (no real remote hosts) and the local HTTP
+   range/conditional/retry fixtures. Implement/qualify sorted-run large tiers, the
+   local 100M benchmark and format migration. Record measurements and limits; enable advertised tiers only after
    durability/memory/lookup evidence, not optimistic extrapolation.
 8. Integrate schema/help/signatures, native-image packaging and repeatable fake
    tests across platforms. Review core purity and existing recipe conventions.
