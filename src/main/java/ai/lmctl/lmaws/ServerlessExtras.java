@@ -8,7 +8,7 @@ final class ServerlessExtras {
     private ServerlessExtras() {}
     static String environment(ServerlessRun run,Map<String,Object> args) {
         var env=new LinkedHashMap<String,String>();
-        env.put("QUEUE_URL",run.state.getOrDefault("queue",""));
+        env.put("QUEUE_URL",run.state.getOrDefault("queue",""));env.put("DLQ_URL",run.state.getOrDefault("dlq",""));
         for(String key:List.of("MAX_UPLOAD_BYTES","UPLOAD_EXPIRY_SECONDS","CONTENT_TYPES")) {
             Object v=args.get(key.toLowerCase(Locale.ROOT));if(v!=null)env.put(key,String.valueOf(v));
         }
@@ -59,14 +59,14 @@ final class ServerlessExtras {
         if(!Double.isFinite(n)||n!=Math.rint(n)||n<1||n>max)throw new IllegalArgumentException("invalid worker "+key);return(int)n;
     }
     static void down(ServerlessRun run,List<RuntimeException> errors) {
-        if(!run.backend.isDemo()&&run.state.containsKey("intent_worker")&&!run.state.containsKey("mapping")) {
+        if(!run.backend.isDemo()&&run.state.containsKey("intent_worker")&&run.state.containsKey("worker_arn")&&!run.state.containsKey("mapping")) {
             try { for(var mapping:run.backend.findEventSourceMappings(run.run)){run.state.put("mapping",mapping.get("id"));run.persist();run.backend.deleteEventSourceMapping(mapping.get("id"),run.run);run.state.remove("mapping");run.persist();} }
             catch(RuntimeException e){errors.add(e);return;}
         }
         cleanup(run,"mapping",()->run.backend.deleteEventSourceMapping(run.state.get("mapping"),run.run),errors);
         // Keep dependent queues/functions if mapping removal fails.
         if(run.state.containsKey("mapping"))return;
-        cleanup(run,"worker_name",()->{if(!run.backend.isDemo()){String arn=run.state.get("worker_arn");if(arn!=null)run.backend.deleteLambda(arn,run.run);}run.state.remove("worker_arn");},errors);
+        cleanup(run,"worker_name",()->{run.backend.deleteOwnedWorker(run.state.get("worker_name"),run.run);run.state.remove("worker_arn");},errors);
         cleanup(run,"worker_logs",()->run.backend.deleteLambdaLogGroup(run.state.get("worker_logs"),run.run),errors);
         for(String key:List.of("queue","dlq"))cleanup(run,key,()->{
             String id=run.state.get(key);

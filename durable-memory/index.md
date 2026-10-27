@@ -39,3 +39,4 @@ Canonical external records: [USER_TEST](../docs/USER_TEST.md),
 Superseded release/candidate notes and evidence are available in Git history.
 
 - [13-lambda-role.md](13-lambda-role.md): bounded admin Lambda execution-role grant, PassRole lint and pending session rollout.
+- [14-remaining-scenarios.md](14-remaining-scenarios.md): queue/worker, conditional writes, presigning, cache bounds and pending live scenario handoff.

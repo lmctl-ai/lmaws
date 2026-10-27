@@ -82,7 +82,7 @@ final class ServerlessRun implements AutoCloseable {
                     String reason=arg(args,"url_reason","ephemeral scenario API with no secrets; bounded requests and explicit teardown");
                     state.put("lambda_url",backend.isDemo()?"https://"+name+".lambda-url.local/":backend.lambdaUrl(arn,reason));persist();
                 }
-                case "queues", "worker" -> ServerlessExtras.step(this,op,args);
+                case "queues", "worker" -> {if(op.equals("worker")){state.put("worker_execution_bound",workerBound(args).toPlainString());persist();}ServerlessExtras.step(this,op,args);}
                 case "event"->{
                     String function=state.get("lambda_arn");if(function==null)throw new IllegalStateException("Lambda prerequisite missing");String name="lmaws_"+run+"_rule",schedule=arg(args,"schedule","rate(1 minute)");new EventRule(name,schedule,run);
                     state.put("event_execution_bound",invokeBound(20).toPlainString());
@@ -117,7 +117,7 @@ final class ServerlessRun implements AutoCloseable {
             cleanup("rule",()->{if(!backend.isDemo())backend.deleteEventRule(state.get("rule"),run);},errors);
             cleanup("lambda_name",()->{if(!backend.isDemo()){backend.deleteLambdaFunctionUrl(state.get("lambda_arn"),run);backend.deleteLambda(state.get("lambda_arn"),run);}state.remove("lambda_arn");state.remove("lambda_url");},errors);
             cleanup("log_group",()->{backend.deleteLambdaLogGroup(state.get("log_group"),run);state.remove("log_group");},errors);
-            cleanup("table",()->{if(!backend.isDemo()&&backend.exists("table",state.get("table"))){if(!backend.owned("table",state.get("table"),run))throw new SecurityException("table tag mismatch");backend.delete("table",state.get("table"));}},errors);
+            if(!state.containsKey("mapping"))cleanup("table",()->{if(!backend.isDemo()&&backend.exists("table",state.get("table"))){if(!backend.owned("table",state.get("table"),run))throw new SecurityException("table tag mismatch");backend.delete("table",state.get("table"));}},errors);
             cleanup("bucket",()->{if(!backend.isDemo()&&backend.exists("bucket",state.get("bucket"))){if(!backend.owned("bucket",state.get("bucket"),run))throw new SecurityException("bucket tag mismatch");backend.emptyServerlessBucket(state.get("bucket"),run);backend.delete("bucket",state.get("bucket"));}},errors);
             if(!errors.isEmpty()){state.put("status","cleanup_failed");state.put("cleanup_errors",Jsons.encodeRaw(errors.stream().map(this::privateError).toList()));persist();var error=new IllegalStateException("serverless cleanup incomplete");errors.forEach(error::addSuppressed);throw error;}
             state.put("status","down");state.put("finished_at",Instant.now().toString());persist();return summary();
@@ -132,14 +132,22 @@ final class ServerlessRun implements AutoCloseable {
         var gb=new java.math.BigDecimal(state.getOrDefault("memory_mb","128")).divide(new java.math.BigDecimal("1024"));
         return java.math.BigDecimal.valueOf(requests).multiply(gb.multiply(new java.math.BigDecimal(state.getOrDefault("timeout_s","10"))).multiply(new java.math.BigDecimal("0.0000166667")).add(new java.math.BigDecimal("0.0000002")).add(new java.math.BigDecimal("16384").multiply(new java.math.BigDecimal("0.50")).divide(new java.math.BigDecimal("1073741824"),16,java.math.RoundingMode.CEILING)));
     }
+    private java.math.BigDecimal workerBound(Map<String,Object> args){
+        int memory=integer(args,"memory_mb",128),timeout=integer(args,"timeout_s",10);
+        if(memory<1||memory>512||timeout<1||timeout>30)throw new IllegalArgumentException("worker execution caps exceeded");
+        var gb=new java.math.BigDecimal(memory).divide(new java.math.BigDecimal("1024"));
+        // 100 admitted API messages, at most three deliveries each, plus queue/log requests.
+        return new java.math.BigDecimal("300").multiply(gb.multiply(new java.math.BigDecimal(timeout)).multiply(new java.math.BigDecimal("0.0000166667")).add(new java.math.BigDecimal("0.0000002")).add(new java.math.BigDecimal("0.000008"))).add(new java.math.BigDecimal("0.00064"));
+    }
     private java.math.BigDecimal httpBound(long requests,long bytes){return invokeBound(requests).add(java.math.BigDecimal.valueOf(requests).multiply(new java.math.BigDecimal("0.000001"))).add(java.math.BigDecimal.valueOf(bytes).multiply(new java.math.BigDecimal("0.09")).divide(new java.math.BigDecimal("1073741824"),16,java.math.RoundingMode.CEILING));}
     private java.math.BigDecimal estimate(){
         if(backend.isDemo())return java.math.BigDecimal.ZERO;
-        return new java.math.BigDecimal(state.getOrDefault("request_cost_prior","0")).add(accounted?java.math.BigDecimal.ZERO:cost.total()).add(new java.math.BigDecimal(state.getOrDefault("http_actual","0"))).add(new java.math.BigDecimal(state.getOrDefault("http_reserved","0"))).add(new java.math.BigDecimal(state.getOrDefault("event_execution_bound","0")));
+        return new java.math.BigDecimal(state.getOrDefault("request_cost_prior","0")).add(accounted?java.math.BigDecimal.ZERO:cost.total()).add(new java.math.BigDecimal(state.getOrDefault("http_actual","0"))).add(new java.math.BigDecimal(state.getOrDefault("http_reserved","0"))).add(new java.math.BigDecimal(state.getOrDefault("event_execution_bound","0"))).add(new java.math.BigDecimal(state.getOrDefault("worker_execution_bound","0")));
     }
     private void enforceBudget(String op,Map<String,Object> args){
         if(backend.isDemo())return;
         var projected=estimate();if(op.equals("reserve_http"))projected=projected.add(httpBound(integer(args,"requests",0),integer(args,"bytes",0)));
+        if(op.equals("worker")&&!state.containsKey("worker_execution_bound"))projected=projected.add(workerBound(args));
         if(op.equals("event"))projected=projected.add(invokeBound(20));
         if(projected.compareTo(new java.math.BigDecimal(state.getOrDefault("cost_cap",cost.cap().toPlainString())))>0)throw new CostLedger.BudgetExceeded("serverless whole-run cap exceeded before "+op);
     }

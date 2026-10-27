@@ -106,7 +106,7 @@ public final class WebStackAws implements AutoCloseable {
         if(ttl<0||ttl>300||maxTtl<ttl||maxTtl>3600)throw new IllegalArgumentException("cache TTL must be 0..300, max TTL between default and 3600");
         tagged(id);var g=dist(id);var config=g.distribution().distributionConfig();
         var def=config.defaultCacheBehavior();
-        if(def.targetOriginId().startsWith("lambda-api-")&&ttl!=0)throw new SecurityException("API responses must remain uncached");
+        if(def.targetOriginId().startsWith("lambda-api-")&&(ttl!=0||maxTtl!=0))throw new SecurityException("API responses must remain uncached");
         var updated=config.toBuilder().defaultCacheBehavior(def.toBuilder().minTTL(0L).defaultTTL(ttl).maxTTL(maxTtl).build()).build();
         cloudfront.updateDistribution(x->x.id(id).ifMatch(g.eTag()).distributionConfig(updated));
     }

@@ -156,6 +156,8 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","sqs_event_source_mappings",List.of("string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.findEventSourceMappings(text(a[0])),c)));
         r.method("Cloud","sqs_redrive",List.of("string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.setSqsRedrive(text(a[0]),text(a[1]),session(s).cost.runId())));
         r.method("Cloud","sqs_redrive_clear",List.of("string"),"Row",(c,s,a)->rowValue(c,session(s).backend.clearSqsRedrive(text(a[0]),session(s).cost.runId())));
+        r.method("Cloud","sqs_redrive",List.of("string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.setSqsRedrive(text(a[0]),text(a[1]),text(a[2]))));
+        r.method("Cloud","sqs_redrive_clear",List.of("string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.clearSqsRedrive(text(a[0]),text(a[1]))));
         r.method("QueueWorker","status",List.of(),"Row",(c,s,a)->rowValue(c,((QueueWorker)s.asObject()).status()));
         r.method("QueueWorker","delete",List.of(),"Row",(c,s,a)->rowValue(c,((QueueWorker)s.asObject()).delete()));
         r.method("EventRule","status",List.of(),"Row",(c,s,a)->rowValue(c,((EventRule)s.asObject()).status()));

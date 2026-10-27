@@ -75,6 +75,7 @@ public final class WebTransportChecks {
             if(cache.defaultTTL()!=30L||cache.maxTTL()!=60L||cache.minTTL()!=0L)throw new AssertionError("bounded cache update missing");
             expect(()->web.configureCache("EDFDVBD6EXAMPLE",301,3600));
             expect(()->web.configureCache("EDFDVBD6EXAMPLE",60,30));
+            seen.put("apiDefault",true);expect(()->web.configureCache("EDFDVBD6EXAMPLE",0,1));seen.remove("apiDefault");
             web.createOac();
             Object oac = seen.get("createOriginAccessControl");
             if (!(oac instanceof CreateOriginAccessControlRequest oacReq)
@@ -241,7 +242,7 @@ public final class WebTransportChecks {
             if (type == CloudFrontClient.class && name.equals("deleteOriginAccessControl"))
                 return DeleteOriginAccessControlResponse.builder().build();
             if (type == CloudFrontClient.class && name.equals("getDistribution"))
-                return GetDistributionResponse.builder().eTag("etag").distribution(Distribution.builder().id("EDFDVBD6EXAMPLE").arn("arn:aws:cloudfront::000000000000:distribution/EDFDVBD6EXAMPLE").domainName("d1234567890.cloudfront.net").status("Deployed").distributionConfig(DistributionConfig.builder().enabled(true).defaultCacheBehavior(DefaultCacheBehavior.builder().targetOriginId("s3-lmaws-site-a1b2c3d4").viewerProtocolPolicy(ViewerProtocolPolicy.ALLOW_ALL).build()).build()).build()).build();
+                return GetDistributionResponse.builder().eTag("etag").distribution(Distribution.builder().id("EDFDVBD6EXAMPLE").arn("arn:aws:cloudfront::000000000000:distribution/EDFDVBD6EXAMPLE").domainName("d1234567890.cloudfront.net").status("Deployed").distributionConfig(DistributionConfig.builder().enabled(true).defaultCacheBehavior(DefaultCacheBehavior.builder().targetOriginId(Boolean.TRUE.equals(seen.get("apiDefault"))?"lambda-api-a1b2c3d4":"s3-lmaws-site-a1b2c3d4").viewerProtocolPolicy(ViewerProtocolPolicy.ALLOW_ALL).build()).build()).build()).build();
             if (type == CloudFrontClient.class && name.equals("listTagsForResource"))
                 return software.amazon.awssdk.services.cloudfront.model.ListTagsForResourceResponse.builder().tags(Tags.builder().items(software.amazon.awssdk.services.cloudfront.model.Tag.builder().key("lmaws_test").value(RUN).build()).build()).build();
             if (type == CloudFrontClient.class && name.equals("updateDistribution"))

@@ -730,6 +730,13 @@ public final class AwsBackend implements AutoCloseable {
         if(!demo){requireOwnedEvent(name,runId);var result=events().removeTargets(x->x.rule(name).ids("lmaws-target"));if(result.failedEntryCount()!=null&&result.failedEntryCount()>0)throw new IllegalStateException("EventBridge target removal rejected");events().deleteRule(x->x.name(name));eventRuns.remove(name);}
         return row("kind","event_rule","name",name,"state","deleted","run_id",runId);
     }
+    void deleteOwnedWorker(String name,String runId) {
+        requireScenarioWrite();requireName(name);requireRunId(runId);
+        if(!name.equals("lmaws_"+runId+"_worker"))throw new SecurityException("worker name outside run");
+        if(demo)return;
+        try{var found=lambda().getFunction(x->x.functionName(name));String arn=found.configuration().functionArn();requireOwnedLambda(arn,runId);deleteLambda(arn,runId);}
+        catch(ResourceNotFoundException absent){}
+    }
     Map<String,String> deleteLambda(String arn,String runId) {
         requireScenarioWrite();if(!demo){requireOwnedLambda(arn,runId);lambda().deleteFunction(x->x.functionName(arn));lambdaRuns.remove(arn);}
         return row("kind","lambda","id",arn,"state","deleted","run_id",runId);
