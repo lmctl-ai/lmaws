@@ -24,6 +24,7 @@ public final class RuntimeLogGroupChecks {
    refused(()->backend.reconcileRuntimeLogGroup(group,"cafe04",start,end,false));if(!writes.isEmpty())throw new AssertionError("adopted without ledger");
    tags.set(Map.of("lmaws_test","foreign"));refused(()->backend.reconcileRuntimeLogGroup(group,"cafe04",start,end,true));if(!writes.isEmpty())throw new AssertionError("modified foreign group");
    tags.set(Map.of());created.set(start.minusSeconds(1).toEpochMilli());refused(()->backend.reconcileRuntimeLogGroup(group,"cafe04",start,end,true));if(!writes.isEmpty())throw new AssertionError("adopted pre-existing group");
+   created.set(end.plusSeconds(901).toEpochMilli());refused(()->backend.reconcileRuntimeLogGroup(group,"cafe04",start,end,true));if(!writes.isEmpty())throw new AssertionError("adopted outside delivery window");
    created.set(Instant.now().toEpochMilli());function.set(true);refused(()->backend.reconcileRuntimeLogGroup(group,"cafe04",start,end,true));if(!writes.isEmpty())throw new AssertionError("reconciled active function");
    function.set(false);backend.reconcileRuntimeLogGroup(group,"cafe04",start,end,true);if(!writes.equals(List.of("tag","delete")))throw new AssertionError("missing receipt-scoped repair/delete");
    backend.reconcileRuntimeLogGroup(group,"cafe04",start,end,true);if(writes.size()!=2)throw new AssertionError("idempotent reconciliation changed absent group");

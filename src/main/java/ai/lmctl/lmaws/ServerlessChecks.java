@@ -20,7 +20,7 @@ public final class ServerlessChecks {
             }
             try(var run=new ServerlessRun(backend,cost,"cafe03","example.com",state.toString())){
                 if(!"up".equals(run.summary().get("status"))||run.leftovers().size()!=5)throw new AssertionError("close discarded up state");
-                run.down();if(!run.leftovers().isEmpty())throw new AssertionError("cleanup receipts remain");run.down();
+                run.down();run.settle(1);if(!run.leftovers().isEmpty())throw new AssertionError("cleanup receipts remain");run.down();
             }
             refused(()->new ServerlessRun(backend,cost,"dead04","example.com",state.toString()));
             refused(()->new ServerlessRun(backend,cost,"cafe03","different.example",state.toString()));

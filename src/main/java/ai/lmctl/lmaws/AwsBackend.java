@@ -514,6 +514,7 @@ public final class AwsBackend implements AutoCloseable {
         out.put("created", Instant.now().toString()); out.put("run_id", runId); return out;
     }
 
+    boolean fixtureEndpoint(){return endpoint!=null;}
     void emptyServerlessBucket(String bucket,String runId) {
         requireScenarioWrite();if(!owned("bucket",bucket,runId))throw new SecurityException("bucket ownership mismatch");
         for(var page:s3().listObjectsV2Paginator(x->x.bucket(bucket)))for(var object:page.contents())s3().deleteObject(x->x.bucket(bucket).key(object.key()));
@@ -598,7 +599,7 @@ public final class AwsBackend implements AutoCloseable {
     void reconcileRuntimeLogGroup(String logGroup,String runId,Instant earliest,Instant latest,boolean creationReceipt,java.util.function.Consumer<String> checkpoint){
         requireScenarioWrite();requireLogGroupName(logGroup,runId);requireRunId(runId);
         if(demo)return;
-        if(endpoint==null)try{Thread.sleep(12000);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IllegalStateException("log drain interrupted");}
+        if(endpoint==null)try{long delay=latest==null?12000:Math.max(0,12000-java.time.Duration.between(latest,Instant.now()).toMillis());if(delay>0)Thread.sleep(delay);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IllegalStateException("log drain interrupted");}
         String fn="lmaws_"+runId+"_fn";
         try{lambda().getFunction(x->x.functionName(fn));throw new SecurityException("log drain requires an absent run function");}catch(software.amazon.awssdk.services.lambda.model.ResourceNotFoundException absent){}
         checkpoint.accept("function_absent_and_drain_complete");
@@ -608,7 +609,7 @@ public final class AwsBackend implements AutoCloseable {
         try{tags=logs().listTagsLogGroup(x->x.logGroupName(logGroup)).tags();}catch(software.amazon.awssdk.services.cloudwatchlogs.model.ResourceNotFoundException absent){return;}
         if(!runId.equals(tags.get("lmaws_test"))){
             long created=found.get().creationTime()==null?0:found.get().creationTime();
-            if(!creationReceipt||!tags.isEmpty()||earliest==null||latest==null||created<earliest.toEpochMilli()||created>latest.plusSeconds(120).toEpochMilli())throw new SecurityException("untagged log group lacks a matching creation/deletion receipt");
+            if(!creationReceipt||!tags.isEmpty()||earliest==null||latest==null||created<earliest.toEpochMilli()||created>latest.plusSeconds(900).toEpochMilli())throw new SecurityException("untagged log group lacks a matching creation/deletion receipt");
             checkpoint.accept("empty_tags_match_private_creation_receipt");
             logs().tagLogGroup(x->x.logGroupName(logGroup).tags(Map.of("lmaws_test",runId)));checkpoint.accept("run_tag_restored");
         }

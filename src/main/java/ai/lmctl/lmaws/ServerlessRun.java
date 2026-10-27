@@ -141,6 +141,23 @@ final class ServerlessRun implements AutoCloseable {
             state.put("status","down");state.put("finished_at",Instant.now().toString());persist();return summary();
         }catch(RuntimeException error){throw error;}catch(Exception error){throw new IllegalStateException("cleanup scope failed",error);}
     }
+    synchronized Map<String,String> settle(int maxSeconds){
+        if(maxSeconds<1||maxSeconds>900)throw new IllegalArgumentException("settlement bound must be 1..900 seconds");
+        long deadline=System.nanoTime()+java.time.Duration.ofSeconds(maxSeconds).toNanos();
+        Instant deleted=Instant.parse(state.getOrDefault("lambda_deleted_at",state.getOrDefault("finished_at",Instant.now().toString())));
+        Instant deliveryEnd=backend.isDemo()||backend.fixtureEndpoint()?Instant.now():deleted.plusSeconds(600);
+        try(var scope=cost.cleanupScope()){
+            for(;;){
+                down();deliveryEnd=backend.isDemo()||backend.fixtureEndpoint()||!state.containsKey("lambda_deleted_at")?Instant.now():Instant.parse(state.get("lambda_deleted_at")).plusSeconds(600);
+                var rows=backend.isDemo()?leftovers():backend.serverlessInventory(run);
+                if(rows.isEmpty()&&!Instant.now().isBefore(deliveryEnd)){state.put("settled_at",Instant.now().toString());persist();return summary();}
+                if(System.nanoTime()>=deadline)throw new IllegalStateException("post-delivery inventory did not settle within the bound");
+                long wait=Math.min(30000,Math.max(1,java.time.Duration.between(Instant.now(),deliveryEnd).toMillis()));
+                if(!Instant.now().isBefore(deliveryEnd))wait=2000;
+                try{Thread.sleep(wait);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IllegalStateException("settlement interrupted");}
+            }
+        }catch(RuntimeException error){throw error;}catch(Exception error){throw new IllegalStateException("cannot settle serverless cleanup",error);}
+    }
     private String privateError(Throwable error){
         if(error instanceof software.amazon.awssdk.awscore.exception.AwsServiceException aws&&aws.awsErrorDetails()!=null)return aws.awsErrorDetails().errorCode()+": "+aws.awsErrorDetails().errorMessage();
         return error.getClass().getSimpleName()+": "+error.getMessage();

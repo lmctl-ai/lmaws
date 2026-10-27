@@ -143,6 +143,7 @@ public final class CloudHost implements AutoCloseable {
         r.method("Serverless","step",List.of("string","string"),"Row",(c,s,a)->rowValue(c,((ServerlessRun)s.asObject()).step(text(a[0]),text(a[1]))));
         r.method("Serverless","status",List.of(),"Row",(c,s,a)->rowValue(c,((ServerlessRun)s.asObject()).summary()));
         r.method("Serverless","leftovers",List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(((ServerlessRun)s.asObject()).leftovers(),c)));
+        r.method("Serverless","settle",List.of("int"),"Row",(c,s,a)->rowValue(c,((ServerlessRun)s.asObject()).settle(Math.toIntExact(a[0].asInt()))));
         r.method("Serverless","down",List.of(),"Row",(c,s,a)->rowValue(c,((ServerlessRun)s.asObject()).down()));
         r.method("Cloud","lambda_function",List.of("string","string","string","string","string","int","int"),"Lambda",
                 (c,s,a)->{ Session v=session(s); int memory=Math.toIntExact(a[5].asInt()), timeout=Math.toIntExact(a[6].asInt()); if(memory>512||timeout>30) throw VmException.host("scenario Lambda caps are memory <=512 MiB and timeout <=30 seconds");
