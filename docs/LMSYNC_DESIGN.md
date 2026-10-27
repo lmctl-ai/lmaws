@@ -1,6 +1,6 @@
 # lmfiles: file lifecycle registry (proposed name)
 
-Status: **design only, brief v2 plus file-lifecycle addendum**. This is the current registry design. It
+Status: **design only, brief v2 plus file-lifecycle and lmssh addenda**. This is the current registry design. It
 consolidates the useful publication examples from root `SYNC_DESIGN.md` at
 `d0f033f`, replacing its integrated sync/policy engine with the boundary below.
 No implementation, AWS command, remote-host test, workflow dispatch or benchmark
@@ -942,7 +942,8 @@ note does not change IAM grants or execute any operation.
 ### C. RSYNC ALTERNATIVE — registry + existing lmssh
 
 **Use lmssh today**, not a proposed Java SSH library, lmcurl SFTP extension or
-new transport product. lmssh bundles OpenSSH's ssh/scp/sftp clients. Its README,
+new transport product. lmssh is the existing static OpenSSH 10.6p1 executable
+with ssh/scp/sftp/ssh-keygen and a scripting API; it contains no sshd. Its README,
 `durable-memory/04-api.md`, generated schema and existing deploy/fetch examples
 provide the current API. User scripts can select arbitrary path lists, skip trusted
 recorded copies and transfer without a remote tree listing or checksum comparison.
@@ -1000,18 +1001,127 @@ Result with `ok/status/stdout/stderr/timed_out/require`; ordinary put/get/rename
 throw on failure. Only after the chosen action reports success does the user
 script record the corresponding source snapshot/final-path result.
 
-Host-key policy is explicit in these examples: strict_host_key("yes") plus trusted
-known_hosts; do not copy accept-new/no settings for unattended publication. Key
-files/config and the existing SSH agent can supply auth; lmssh has no new agent
-server to build. `Session.password(io.env(...))` exists via askpass if a job needs
-it, but examples prefer key/agent references and never print credential values.
-Paths/agent settings remain private; no real remote target is used in this design.
-Temp-name-then-rename is a job pattern, not a registry rule; atomicity depends on
-server/filesystem guarantees. Known-host/auth/rename failures remain unconfirmed.
+Host-key verification remains strict: the API's default refuses unknown hosts
+in unattended batch use. These examples explicitly retain
+`strict_host_key("yes")` with trusted known_hosts; never set accept-new/no or
+silently enroll a remote key. User ssh_config/raw options can override behavior,
+so a deployment script must not import a permissive config accidentally. Key paths
+and the existing SSH agent can supply auth; lmssh has no agent server to build.
+Its existing password/passphrase support uses SSH_ASKPASS, not printed arguments.
+`Session.password(io.env(...))` exists if needed, but examples prefer key/agent
+references and never print credentials, key material, environment values or raw
+secret-bearing diagnostics. No real remote target is used in this design.
+Temp/final paths must share the server filesystem for rename atomicity; do not
+claim rename is a durable fsync or cross-filesystem transaction. Known-host,
+authentication, transfer and rename failures remain unconfirmed.
 
-The synthetic picture shows upload/download, temp/final paths and zero tree/checksum
-comparison calls. Existing lmssh local test conventions can validate the composed
-job; this design does not start sshd or modify lmssh's transport/build.
+#### lmssh gap analysis: compose what exists, add only missing receipts
+
+The audit is against lmssh source `68e6159`, README, `durable-memory/04-api.md`,
+`examples/deploy-file.lms`, `cpp/host.cpp`, and bundled `sftp.c`. Existing methods
+remain valid; neither lmcurl/libssh2 enablement nor Java SSH-library work is part
+of this plan. The registry still makes zero remote calls. The action host may
+perform protocol stat/attribute operations during put/get/resume; no remote
+listing or checksum round trip is selected by default.
+
+| Requirement | Available today / limit | Recipe choice or exact small addition |
+|---|---|---|
+| Per-file parallelism on one host | `ssh.each` fans commands over hosts; `ssh.parallel(n)` does not turn `Session.put` or one raw batch into a per-file pool. Several sessions/calls in one DSL block remain sequential | Outer LMScript uses bounded parallel workers, each running an lmssh block/process with a disjoint claimed manifest. No new session-pool API needed for the initial job; benchmark handshake/multiplex costs |
+| Connection reuse under concurrency | `reuse(true)` uses ControlMaster with a host-runtime work-directory ControlPath. Sessions for the same endpoint in one runtime can share that master; closing one may disturb siblings | Give each outer worker its own lmssh process/private work directory, reuse within it, and close after its batch. Do not share live Session handles or close a shared master per file |
+| Interrupted upload/download | Existing raw `sftp` accepts `reput`/`reget`, including preservation flags; ordinary put/get retries restart. Resume consults server attributes as protocol work | Script records immutable source revision, known temp path and partial state; resumes only with its own trusted-prefix contract. A changed/unknown source or oversized/corrupt prefix restarts or explicitly verifies. No append/resume binding is missing |
+| mtime and permissions | Raw `put -p`, `get -p`, `reput -p`, `reget -p` request mode/time preservation; `chmod mode path` is available in raw batches. Typed put/get has no preserve argument; server privilege/umask/time precision can limit results | Use existing batch commands and explicit script-selected metadata; record requested versus actually confirmed attributes separately. No new chmod/mtime wrapper needed. Do not claim ownership/ACL/xattr preservation or remote mode confirmation without an explicit verification |
+| Millions of small files | `Session.sftp(batch)` sends many commands through one child/connection; each typed put/rename call starts a step. Batch string and captured output are buffered; exit status is whole-batch, not per-file structured | Stream registry queries into bounded batches (example 128 files or 1 MiB of command text, script parameters), not one million-line string. Use one worker connection per batch stream. A full successful batch can confirm its explicit files; on failed batch its unknown completed prefix must remain unconfirmed |
+| Transfer receipt with size | `put/get/rename` return void or throw; raw `sftp` returns Result, not per-file byte totals. Outer script can supply immutable source size/hash for upload, or stat/hash the completed local download | Present size as `source_size`/`local_size`, never invented server-measured bytes. For efficient confirmed-prefix replay and actual byte counts add **`Session.transfer_batch(plan_path, result_log_path) -> Result`** to lmssh, a thin structured wrapper around its existing client path |
+| Retryable vs permanent errors | Result exposes `ok`, `status`, `stderr`, `stdout`, `timed_out`; host throws RUN_HOST for failed typed steps. Generic exit codes/localized stderr do not reliably distinguish denial, quota and transport reset | Today retry timeout/uncertain transport only by explicit script policy; unknown remains unknown. Add **`Result.error_kind() -> string`** backed by structured SFTP/transport facts (`none`, `timeout`, `transport`, `authentication`, `host-key`, `permission`, `not-found`, `no-space`, `unsupported`, `unknown`), never pretend all exit-255 errors are retryable |
+
+`transfer_batch` is a **proposed addition**, not an existing signature. Its local
+manifest contains explicit op IDs, put/get/reput/reget/mkdir/rename/chmod requests,
+quoted paths and optional source fingerprint/preserve flags. It emits bounded,
+checksummed per-operation result lines with timestamp, source/temp/final paths,
+reported bytes and their basis, exit/protocol status and error kind. It must use
+actual successful command/transfer boundaries, not scrape progress percentages
+or assume every command succeeded from intent. Instrument the bundled client's
+existing batch/transfer dispatch as necessary; do not replace the transport.
+A rename receipt completes the script's publication projection; a successful put
+to a temp path alone does not. A connection loss yields unknown outcomes for
+unconfirmed operations. Result fsync and DB replay retain the confirmation gap
+from section 3; nothing makes remote transfer exactly-once. Provider durability
+beyond its acknowledged operation must be labelled, not invented.
+
+Do not build an automatic retry policy into error_kind: e.g. not-found may mean
+source gone or a missing parent, permission failure may need user action, and a
+transport retry may repeat a completed operation. The script interprets context.
+Classify only facts available from structured paths; keep ambiguous failures
+`unknown` and bounded/redacted diagnostics. A script choosing remote stat or hash
+verification must request it explicitly and record its extra round trips.
+
+#### Implementation steps in the existing lmssh repo
+
+Whoever implements these jobs also makes the small lmssh additions; no owner
+handoff or new transport product is required. **This document implements none.**
+
+1. Keep the current strict host-key/auth contracts and raw SFTP API. Add regression
+   fixtures for reget/reput, preserve flags, quoting and batched rename before
+   introducing the receipt wrapper; reuse the existing deploy/fetch examples.
+2. Add `Session.transfer_batch(plan_path,result_log_path)` using existing client
+   dispatch, bounded input/output and per-op machine receipts. Keep old signatures
+   unchanged, generate schema/signatures and document byte-count provenance.
+   Validate/reject unsupported path encodings/commands explicitly; no shell glue
+   or secret text in logs. Unknown-host failures must not create success receipts.
+3. Add `Result.error_kind()` and the same factual field in batch receipts; test
+   structured errors and unknown fallback. Policy/retry caps stay in the `.lms`.
+4. Compose worker-process concurrency with existing runtime fan-out and private
+   ControlPaths. Benchmark batch sizes and per-host worker counts; only add a
+   connection-pool convenience later if measured process overhead justifies it.
+5. Test JVM/native registry replay against actual lmssh local receipts, update
+   lmssh schema/help/API docs and synthetic recipe pictures, and run its local
+   gate. No change to lmcurl, no new SSH library and no real remote host is needed.
+
+#### Local sshd test plan (future implementation gate)
+
+Use the existing lmssh `test.sh` loopback harness as a starting point. lmssh has no
+server: discover system sshd or a separately built temporary OpenSSH sshd. If none
+is usable, report exactly that prerequisite; `LMSSH_REQUIRE_SSHD=1` must fail the
+required integration gate rather than silently skip. Do not fetch/build a server
+or start one during this design task.
+
+Create a private temp directory, throwaway client and host keys, dedicated
+sshd_config/PID/log/authorized_keys, and a high loopback-only port. Use only
+synthetic files under temp local/remote roots. Obtain the host public key directly
+from the generated key, prepopulate `[127.0.0.1]:port` in private known_hosts, then
+connect strictly. Do **not** copy existing harness accept-new settings. Disable
+password/network exposure and use internal-sftp; validate sshd config and bound
+startup/each operation/whole test by timeouts. Trap cleanup kills only the owned
+PID, closes masters and removes temp artifacts. Some system sshd configurations
+need privileged setup or an unlocked test account; report that limitation rather
+than changing global sshd, authentication or host configuration.
+
+| Test | Required proof |
+|---|---|
+| First publish/download, then unchanged registry-selected rerun | Exact synthetic bytes and recorded source revision; second run invokes no action host and no remote list/checksum |
+| Nested mkdir, quoted spaces/quotes/glob characters, UTF-8 paths | Explicit paths only; no command injection or glob expansion into unselected files; unsafe newline/NUL paths rejected if not representable |
+| Interrupted put/get and reget/reput | Kill a throttled bounded transfer, retain known temp state, resume immutable source, compare bytes **locally in the harness**; no runtime remote checksum command |
+| Changed source, wrong prefix, temp larger than source | Script refuses unsafe resume/restarts; wrong prefix is not magically detected without a chosen integrity check |
+| Temp rename, overwrite and cross-filesystem boundary | Publication record follows acknowledged rename; unsupported/non-atomic case reported, never asserted atomic |
+| `-p`, explicit chmod and timestamp precision | Harness inspects local server temp tree; requested/observed permissions/time distinguished, unsupported cases reported |
+| Batch success, failure in middle, lost connection | Confirmed-prefix receipts survive; no record for unconfirmed suffix or merely staged temp; older raw API may safely re-plan the entire failed batch |
+| Timeout/reset, denial, missing source, full disk (isolated fault fixture) | Stable factual error kind or unknown; script decides retries; no leaked error secrets |
+| Unknown/changed host key, wrong client key, encrypted key via askpass | Strict refusal, no enrollment/no receipt; successful throwaway passphrase path never logs key/passphrase |
+| Several workers/same host, close one worker, bounded memory | Disjoint claims, independent masters, surviving workers unaffected, batch memory capped, receipts ordered per operation identity |
+| Crash after remote success/before receipt and after receipt/before DB | First remains unconfirmed; second replays once; no false published stage or lost durable confirmation |
+
+Instrument loopback server/client operations (or a recording SFTP test subsystem)
+to assert zero READDIR and no remote exec/checksum command for normal recipes;
+permit/count protocol stat attributes needed by transfer/resume. Local harness
+inspection of the owned temp tree is test evidence, not a production remote
+verification policy. Assert no key/secret text in stdout, diagnostics or result
+logs. Linux/macOS are current lmssh targets; its README states Windows unsupported,
+so do not claim a Windows SFTP job works from a registry Windows build alone.
+
+The synthetic picture shows registry-selected upload/download, temp/final paths,
+confirmed receipts, and zero default tree/checksum comparison calls. lmssh plus
+registry is the rsync alternative: retained local belief and arbitrary subsets,
+not rsync delta computation or a hidden remote directory scan.
 
 ### Small additions needed only for the blocked variants
 
@@ -1031,7 +1141,9 @@ Keep any future implementation local to those existing hosts and their normal
 safety/ledger contracts. COPY, per-key release GC, typed multipart-resume and richer invalidation
 completion conveniences are not required by the bounded examples above; do not design them here merely because
 they might be useful later. If a later job genuinely needs one, audit then name
-that exact missing binding. There is no lmssh transport blocker for the shown jobs.
+that exact missing binding. There is no lmssh transport blocker for the bounded shown jobs. Structured
+per-file bulk receipts/error classification are the small lmssh additions above;
+they are not required for a one-file existing-API smoke test.
 
 ### Full pipeline: A -> user clean -> B, optionally C, in one `.lms`
 
