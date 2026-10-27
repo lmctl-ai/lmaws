@@ -141,6 +141,7 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","s3_notification",List.of("string","string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3Notification(text(a[0]),text(a[1]),text(a[2]),text(a[3]))));
         r.method("Lambda","status",List.of(),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).status()));
         r.method("Lambda","url",List.of("string"),"string",(c,s,a)->Value.ofString(((LambdaFunction)s.asObject()).url(text(a[0]))));
+        r.method("Lambda","wait_active",List.of("int"),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).waitActive(Math.toIntExact(a[0].asInt()))));
         r.method("Lambda","invoke",List.of("string"),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).invoke(text(a[0]))));
         r.method("Lambda","delete",List.of(),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).delete()));
         r.method("EventRule","status",List.of(),"Row",(c,s,a)->rowValue(c,((EventRule)s.asObject()).status()));

@@ -43,3 +43,15 @@ statement rollout. That statement is intentionally limited to:
 Only the `lmaws_session` policy context accepts this PassRole exception. IAM
 mutations remain forbidden; the explicitly permitted scoped IAM metadata reads
 are described by the policy lint API.
+
+## Live verification readiness
+
+The live hello test runs only after the Lead confirms the session-policy rollout
+and refreshed `lmaws` credentials. Use `Lambda.wait_active(60)` before invoking;
+cleanup is idempotent when both the script and host teardown delete the handle.
+
+[Lambda creates `/aws/lambda/<function-name>` log groups on invocation](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-cloudwatchlogs-loggroups.html).
+The supplied session-policy snapshot does not cover that namespace for log-group
+administration. A zero-leftovers test needs the Lead to approve scoped creation,
+tagging and deletion for `/aws/lambda/lmaws_*` as well. Never use admin for the
+Lambda test or its cleanup. No extra session-policy grant is applied by this recipe.

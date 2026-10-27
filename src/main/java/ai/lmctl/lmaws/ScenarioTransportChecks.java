@@ -13,6 +13,7 @@ public final class ScenarioTransportChecks {
     static final String RULE_ARN="arn:aws:events:us-east-1:"+ACCOUNT+":rule/"+RULE;
     public static void main(String[] args)throws Exception {
         var requests=Collections.synchronizedList(new ArrayList<String>());
+        var statePolls=new java.util.concurrent.atomic.AtomicInteger();var stateFailed=new AtomicBoolean();
         var foreign=new AtomicBoolean();var ruleExists=new AtomicBoolean();var targetFailed=new AtomicBoolean();var notificationsExist=new AtomicBoolean();
         int port=Integer.parseInt(System.getenv("LMAWS_TEST_PORT"));
         var server=HttpServer.create(new InetSocketAddress("127.0.0.1",port),0);
@@ -34,6 +35,7 @@ public final class ScenarioTransportChecks {
             else if(path.equals("/2015-03-31/functions")&&method.equals("POST"))out="{\"FunctionArn\":\""+ARN+"\",\"State\":\"Active\"}";
             else if(path.endsWith("/invocations"))out="{\"ok\":true}";
             else if(path.endsWith("/url"))out="{\"FunctionUrl\":\"https://fixture.lambda-url.us-east-1.on.aws/\",\"AuthType\":\"NONE\"}";
+            else if(path.endsWith("/configuration")&&method.equals("GET"))out="{\"FunctionArn\":\""+ARN+"\",\"State\":\""+(stateFailed.get()?"Failed":statePolls.incrementAndGet()<2?"Pending":"Active")+"\"}";
             else if(path.startsWith("/2015-03-31/functions/")&&method.equals("GET"))out="{\"Configuration\":{\"FunctionArn\":\""+ARN+"\",\"State\":\"Active\"},\"Tags\":{\"lmaws_test\":\""+tag+"\"}}";
             else if(query!=null&&query.contains("tagging")){type="application/xml";out="<Tagging xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><TagSet><Tag><Key>lmaws_test</Key><Value>"+tag+"</Value></Tag></TagSet></Tagging>";}
             else if(query!=null&&query.contains("notification")&&method.equals("GET")){type="application/xml";out="<NotificationConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"+(notificationsExist.get()?"<QueueConfiguration><Id>foreign</Id><Queue>arn:aws:sqs:us-east-1:"+ACCOUNT+":other</Queue><Event>s3:ObjectCreated:Put</Event></QueueConfiguration>":"")+"</NotificationConfiguration>";}
@@ -43,6 +45,8 @@ public final class ScenarioTransportChecks {
         });server.start();
         try(var backend=new AwsBackend("us-east-1",false)){
             backend.createLambda(FN,"lmaws_lambda_exec","python3.12","app.handler","def handler(e,c): return e",128,10,RUN);
+            check("Active".equals(backend.waitLambdaActive(ARN,RUN,5).get("state")),"bounded Active wait");
+            check(statePolls.get()>=2,"Pending was not polled");stateFailed.set(true);refused(()->backend.waitLambdaActive(ARN,RUN,1));stateFailed.set(false);
             backend.invokeLambda(ARN,"{}");backend.lambdaUrl(ARN,"public offline transport fixture");
             check(requests.stream().anyMatch(x->x.contains("InvokeFunctionUrl")&&x.contains("NONE")),"URL permission missing");
             check(requests.stream().anyMatch(x->x.contains("InvokedViaFunctionUrl")&&x.contains("lambda:InvokeFunction")),"URL-only invoke permission missing");
@@ -60,7 +64,9 @@ public final class ScenarioTransportChecks {
             foreign.set(true);writes=mutationCount(requests);refused(()->backend.tableTtl("lmaws_"+RUN+"_table","expires_at",RUN));refused(()->backend.tableItem("lmaws_"+RUN+"_table","entry","value",RUN));check(writes==mutationCount(requests),"foreign table mutated");foreign.set(false);
             notificationsExist.set(true);writes=mutationCount(requests);refused(()->backend.s3Notification("lmaws-"+RUN+"-bucket",ARN,"s3:ObjectCreated:Put",RUN));check(writes==mutationCount(requests),"existing notifications overwritten");notificationsExist.set(false);
             backend.s3Notification("lmaws-"+RUN+"-bucket",ARN,"s3:ObjectCreated:Put",RUN);
-            backend.deleteEventRule(RULE,RUN);backend.deleteLambda(ARN,RUN);
+            backend.deleteEventRule(RULE,RUN);
+            var handle=new LambdaFunction(backend,FN,"lmaws_lambda_exec","python3.12","app.handler","def handler(e,c): return e",128,10,RUN);handle.providerArn(ARN);
+            handle.delete();int deletedWrites=mutationCount(requests);handle.delete();check(mutationCount(requests)==deletedWrites,"repeated Lambda delete dispatched again");
             refused(()->new EventRule("lmaws_bad","rate(",RUN));refused(()->new LambdaFunction(FN,"other","python3.12","app.handler","",128,10,RUN));
             System.out.println("PASS actual Lambda/EventBridge/DynamoDB/S3 SDK transports, permissions, ZIP and foreign-resource refusal");
         }finally{server.stop(0);}

@@ -47,12 +47,17 @@ public final class LambdaFunction {
         if (reason.length() > 256) throw new IllegalArgumentException("Function URL reason is too long");
         return backend==null ? "https://"+name+".lambda-url.local/" : backend.lambdaUrl(arn(), reason);
     }
+    public synchronized Map<String,String> waitActive(int seconds) {
+        if(seconds<1||seconds>120)throw new IllegalArgumentException("Lambda Active wait must be 1..120 seconds");
+        if(deleted)throw new IllegalStateException("Lambda is deleted");
+        return backend==null?status():backend.waitLambdaActive(arn(),runId,seconds);
+    }
     public synchronized Map<String,String> invoke(String payload){
         if (deleted) throw new IllegalStateException("Lambda is deleted");
         if (payload == null || payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 256*1024) throw new IllegalArgumentException("invoke payload exceeds 256 KiB");
         return backend==null ? row("status","200","function_name",name,"request_id","fake-"+runId,"payload",payload,"cold_start","false") : backend.invokeLambda(arn(),payload);
     }
-    public synchronized Map<String,String> delete(){if(backend!=null) backend.deleteLambda(arn(),runId);deleted=true;return status();}
+    public synchronized Map<String,String> delete(){if(!deleted){if(backend!=null) backend.deleteLambda(arn(),runId);deleted=true;}return status();}
     static byte[] sourceZip(String handler,String source) {
         String entry=handler.substring(0,handler.indexOf('.'))+".py";
         try { var b=new ByteArrayOutputStream(); try(var z=new ZipOutputStream(b)){z.putNextEntry(new ZipEntry(entry));z.write(source.getBytes(java.nio.charset.StandardCharsets.UTF_8));z.closeEntry();} return b.toByteArray(); }

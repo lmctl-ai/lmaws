@@ -532,6 +532,20 @@ public final class AwsBackend implements AutoCloseable {
         String arn=response.functionArn();lambdaRuns.put(arn,runId);
         return row("kind","lambda","id",arn,"name",name,"arn",arn,"run_id",runId,"state",response.stateAsString()==null?"Pending":response.stateAsString());
     }
+    Map<String,String> waitLambdaActive(String arn,String runId,int seconds) {
+        if(seconds<1||seconds>120)throw new IllegalArgumentException("Lambda Active wait must be 1..120 seconds");
+        requireScenarioWrite();requireOwnedLambda(arn,runId);
+        if(demo)return row("kind","lambda","state","Active","run_id",runId);
+        long deadline=System.nanoTime()+Duration.ofSeconds(seconds).toNanos();
+        while(System.nanoTime()<deadline) {
+            var result=lambda().getFunctionConfiguration(r->r.functionName(arn));
+            if("Active".equals(result.stateAsString()))return row("kind","lambda","state","Active","run_id",runId);
+            if("Failed".equals(result.stateAsString()))throw new IllegalStateException("Lambda creation entered Failed state");
+            long remaining=deadline-System.nanoTime();if(remaining<=0)break;
+            try{Thread.sleep(Math.min(1000,Math.max(1,remaining/1000000)));}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException("Lambda Active wait interrupted");}
+        }
+        throw new IllegalStateException("Lambda did not become Active within the bounded wait");
+    }
     Map<String,String> invokeLambda(String arn,String payload) {
         requireScenarioWrite();
         if(payload==null||payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>262144)throw new IllegalArgumentException("Lambda payload exceeds 256 KiB");
