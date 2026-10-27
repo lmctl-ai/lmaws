@@ -111,6 +111,17 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.work / "~" / "recipe-output.json").exists())
 
+    def test_admin_profile_is_reserved_for_grant_entrypoints(self) -> None:
+        self.env["AWS_PROFILE"] = "admin"
+        denied = self.run_script(ROOT / "recipes" / "inventory_queues.lms", "--preview", "--profile", "admin")
+        self.assertNotEqual(denied.returncode, 0, "ordinary inventory accepted the admin profile")
+        allowed = self.run_script(ROOT / "recipes" / "grant_lambda_role.lms", "--preview", "--apply", "--profile", "admin")
+        self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+        report = json.loads((self.work / "data/grant_lambda_role.json").read_text())
+        self.assertTrue(report["synthetic"])
+        self.assertFalse(report["applied"], "preview plus apply mutated the role")
+        self.assertTrue(allowed.stdout.strip().splitlines()[-1].startswith("estimated cost: $"))
+
     def test_inherited_live_flag_stays_synthetic_for_picture_example(self) -> None:
         empty_config = self.work / "empty-aws-config"
         empty_config.write_text("", encoding="utf-8")
