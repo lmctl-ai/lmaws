@@ -119,10 +119,10 @@ public final class CloudHost implements AutoCloseable {
                 (c,s,a)->{ Session v=session(s); int memory=(int)a[5].asInt(), timeout=(int)a[6].asInt(); if(memory>512||timeout>30) throw VmException.host("scenario Lambda caps are memory <=512 MiB and timeout <=30 seconds");
                     LambdaFunction fn=new LambdaFunction(v.backend,text(a[0]),text(a[1]),text(a[2]),text(a[3]),text(a[4]),memory,timeout,v.cost.runId()); if(!v.backend.isDemo()) fn.providerArn(v.backend.createLambda(text(a[0]),text(a[1]),text(a[2]),text(a[3]),text(a[4]),memory,timeout,v.cost.runId()).get("arn")); lambdaFunctions.add(fn); return Value.object("Lambda",fn); });
         r.method("Cloud","event_rule",List.of("string","string"),"EventRule",
-                (c,s,a)->{ Session v=session(s); EventRule rule=new EventRule(text(a[0]),text(a[1]),v.cost.runId()); eventRules.add(rule); return Value.object("EventRule",rule); });
-        r.method("Cloud","dynamodb_ttl",List.of("string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.tableTtl(text(a[0]),text(a[1]))));
-        r.method("Cloud","dynamodb_item",List.of("string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.tableItem(text(a[0]),text(a[1]),text(a[2]))));
-        r.method("Cloud","s3_notification",List.of("string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3Notification(text(a[0]),text(a[1]),text(a[2]))));
+                (c,s,a)->{ Session v=session(s); EventRule rule=new EventRule(v.backend,text(a[0]),text(a[1]),v.cost.runId()); if(!v.backend.isDemo()) v.backend.putEventRule(text(a[0]),text(a[1]),v.cost.runId()); eventRules.add(rule); return Value.object("EventRule",rule); });
+        r.method("Cloud","dynamodb_ttl",List.of("string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.tableTtl(text(a[0]),text(a[1]),session(s).cost.runId())));
+        r.method("Cloud","dynamodb_item",List.of("string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.tableItem(text(a[0]),text(a[1]),text(a[2]),session(s).cost.runId())));
+        r.method("Cloud","s3_notification",List.of("string","string","string"),"Row",(c,s,a)->rowValue(c,session(s).backend.s3Notification(text(a[0]),text(a[1]),text(a[2]),session(s).cost.runId())));
         r.method("Lambda","status",List.of(),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).status()));
         r.method("Lambda","url",List.of("string"),"string",(c,s,a)->Value.ofString(((LambdaFunction)s.asObject()).url(text(a[0]))));
         r.method("Lambda","invoke",List.of("string"),"Row",(c,s,a)->rowValue(c,((LambdaFunction)s.asObject()).invoke(text(a[0]))));

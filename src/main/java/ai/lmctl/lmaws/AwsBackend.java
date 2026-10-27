@@ -62,6 +62,7 @@ import software.amazon.awssdk.services.iam.model.Policy;
 import software.amazon.awssdk.services.iam.model.PolicyVersion;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.ListFunctionsRequest;
+import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.route53.Route53Client;
 import software.amazon.awssdk.services.route53.model.ListHostedZonesRequest;
@@ -118,12 +119,15 @@ public final class AwsBackend implements AutoCloseable {
     private final Map<String,S3Client> regionalBuckets=new LinkedHashMap<>();
     private final Map<String, java.util.Set<String>> bucketObjects = new LinkedHashMap<>();
     private final Map<String, DemoPolicyState> demoPolicies = new LinkedHashMap<>();
+    private final Map<String,String> lambdaRuns = new LinkedHashMap<>();
+    private final Map<String,String> eventRuns = new LinkedHashMap<>();
     private final List<AutoCloseable> clients = new ArrayList<>();
     private final ClientOverrideConfiguration config;
     private String cachedAccountId;
 
     private S3Client s3; private SqsClient sqs; private SnsClient sns; private SsmClient ssm; private DynamoDbClient ddb;
     private CloudWatchLogsClient logs; private CloudWatchClient cloudwatch; private Ec2Client ec2; private LambdaClient lambda;
+    private EventBridgeClient events;
     private Route53Client route53; private SecretsManagerClient secrets; private EcsClient ecs; private IamClient iam; private StsClient sts; private CloudFormationClient cloudformation;
 
     public AwsBackend(String region, boolean demo) {
@@ -496,36 +500,49 @@ public final class AwsBackend implements AutoCloseable {
         String roleArn = role.startsWith("arn:") ? role : "arn:aws:iam::" + sts().getCallerIdentity().account() + ":role/" + role;
         byte[] zip = LambdaFunction.sourceZip(handler, source);
         var response = lambda().createFunction(x -> x.functionName(name).role(roleArn).runtime(software.amazon.awssdk.services.lambda.model.Runtime.fromValue(runtime)).handler(handler).memorySize(memory).timeout(timeout).code(c -> c.zipFile(SdkBytes.fromByteArray(zip))).publish(true).tags(Map.of("lmaws_test",runId)));
-        return row("kind","lambda","id",response.functionArn(),"name",name,"arn",response.functionArn(),"run_id",runId,"state","active");
+        lambdaRuns.put(response.functionArn(),runId); return row("kind","lambda","id",response.functionArn(),"name",name,"arn",response.functionArn(),"run_id",runId,"state","active");
     }
     Map<String,String> invokeLambda(String arn,String payload) {
+        if (!lambdaRuns.containsKey(arn) && !demo) throw new IllegalStateException("Lambda is not owned by this run");
         if (demo) return row("status","200","function_name",arn,"request_id","fake-invoke","payload",payload,"cold_start","false");
         var response=lambda().invoke(x -> x.functionName(arn).payload(SdkBytes.fromUtf8String(payload)).invocationType("RequestResponse"));
         return row("status",Integer.toString(response.statusCode()),"function_name",arn,"request_id",response.executedVersion()==null?"":response.executedVersion(),"payload",response.payload()==null?"":response.payload().asUtf8String());
     }
     String lambdaUrl(String arn,String reason) {
         if (reason==null||reason.isBlank()) throw new IllegalArgumentException("public Function URL auth NONE requires an explicit reason");
+        if (!demo && !lambdaRuns.containsKey(arn)) throw new IllegalStateException("Lambda is not owned by this run");
         if (demo) return "https://"+last(arn)+".lambda-url.local/";
         var r=lambda().createFunctionUrlConfig(x -> x.functionName(arn).authType("NONE")); return r.functionUrl();
     }
-    Map<String,String> deleteLambda(String arn,String runId) {
-        requireWriteEnabled(); if (demo) return row("kind","lambda","id",arn,"state","deleted");
-        lambda().deleteFunction(x -> x.functionName(arn)); return row("kind","lambda","id",arn,"state","deleted","run_id",runId);
+    Map<String,String> putEventRule(String name,String schedule,String runId) {
+        requireWriteEnabled(); requireName(name); if(demo)return row("kind","event_rule","name",name,"id","arn:aws:events:local:rule/"+name,"run_id",runId,"state","active");
+        if(eventRuns.containsKey(name)) throw new IllegalStateException("EventBridge rule already exists in this host"); var out=events().putRule(x->x.name(name).scheduleExpression(schedule).state("ENABLED").tags(software.amazon.awssdk.services.eventbridge.model.Tag.builder().key("lmaws_test").value(runId).build())); eventRuns.put(name,runId);
+        return row("kind","event_rule","name",name,"id",out.ruleArn(),"arn",out.ruleArn(),"run_id",runId,"state","active");
     }
-    Map<String,String> tableTtl(String table,String attribute) {
+    Map<String,String> putEventTarget(String rule,String lambdaArn,String runId) {
+        requireWriteEnabled(); if(!demo && !eventRuns.containsKey(rule)) throw new IllegalStateException("EventBridge rule is not owned by this run"); if(demo)return row("kind","event_target","rule",rule,"target",lambdaArn,"state","active");
+        events().putTargets(x->x.rule(rule).targets(software.amazon.awssdk.services.eventbridge.model.Target.builder().id("lmaws-target").arn(lambdaArn).build()));
+        return row("kind","event_target","rule",rule,"target",lambdaArn,"state","active");
+    }
+    Map<String,String> deleteEventRule(String name,String runId) { requireWriteEnabled(); if(!demo && !runId.equals(eventRuns.get(name))) throw new IllegalStateException("EventBridge rule is not owned by this run"); if(!demo)events().removeTargets(x->x.rule(name).ids("lmaws-target")); if(!demo)events().deleteRule(x->x.name(name)); eventRuns.remove(name); return row("kind","event_rule","name",name,"state","deleted","run_id",runId); }
+    Map<String,String> deleteLambda(String arn,String runId) {
+        requireWriteEnabled(); if (!demo && !lambdaRuns.containsKey(arn)) throw new IllegalStateException("Lambda is not owned by this run"); if (demo) return row("kind","lambda","id",arn,"state","deleted");
+        lambda().deleteFunction(x -> x.functionName(arn)); lambdaRuns.remove(arn); return row("kind","lambda","id",arn,"state","deleted","run_id",runId);
+    }
+    Map<String,String> tableTtl(String table,String attribute,String runId) {
         requireWriteEnabled(); requireName(table); if(attribute==null||!attribute.matches("[A-Za-z0-9_-]{1,255}")) throw new IllegalArgumentException("invalid DynamoDB TTL attribute");
-        if(!demo) ddb().updateTimeToLive(x -> x.tableName(table).timeToLiveSpecification(t -> t.attributeName(attribute).enabled(true)));
+        if(!demo && !owned("table",table,runId)) throw new IllegalStateException("DynamoDB table is not owned by this run"); if(!demo) ddb().updateTimeToLive(x -> x.tableName(table).timeToLiveSpecification(t -> t.attributeName(attribute).enabled(true)));
         return row("kind","dynamodb_ttl","table",table,"attribute",attribute,"enabled","true");
     }
-    Map<String,String> tableItem(String table,String key,String value) {
+    Map<String,String> tableItem(String table,String key,String value,String runId) {
         requireWriteEnabled(); requireName(table); if(key==null||key.isBlank()||key.length()>1024) throw new IllegalArgumentException("invalid DynamoDB item key");
-        if(!demo) ddb().putItem(x -> x.tableName(table).item(Map.of("pk",AttributeValue.builder().s(key).build(),"value",AttributeValue.builder().s(value==null?"":value).build())));
+        if(!demo && !owned("table",table,runId)) throw new IllegalStateException("DynamoDB table is not owned by this run"); if(!demo) ddb().putItem(x -> x.tableName(table).item(Map.of("pk",AttributeValue.builder().s(key).build(),"value",AttributeValue.builder().s(value==null?"":value).build())));
         return row("kind","dynamodb_item","table",table,"pk",key,"value",value==null?"":value);
     }
-    Map<String,String> s3Notification(String bucket,String lambdaArn,String eventName) {
+    Map<String,String> s3Notification(String bucket,String lambdaArn,String eventName,String runId) {
         requireWriteEnabled(); requireName(bucket); if(lambdaArn==null||!lambdaArn.contains(":function:lmaws")) throw new IllegalArgumentException("S3 notification target must be an lmaws Lambda ARN");
         if(eventName==null||!eventName.matches("s3:ObjectCreated:(Put|Post|Copy|CompleteMultipartUpload|\\*)")) throw new IllegalArgumentException("unsupported S3 notification event");
-        if(!demo) s3().putBucketNotificationConfiguration(x -> x.bucket(bucket).notificationConfiguration(NotificationConfiguration.builder().lambdaFunctionConfigurations(LambdaFunctionConfiguration.builder().lambdaFunctionArn(lambdaArn).events(Event.fromValue(eventName)).build()).build()));
+        if(!demo && !owned("bucket",bucket,runId)) throw new IllegalStateException("S3 bucket is not owned by this run"); if(!demo) s3().putBucketNotificationConfiguration(x -> x.bucket(bucket).notificationConfiguration(NotificationConfiguration.builder().lambdaFunctionConfigurations(LambdaFunctionConfiguration.builder().lambdaFunctionArn(lambdaArn).events(Event.fromValue(eventName)).build()).build()));
         return row("kind","s3_notification","bucket",bucket,"lambda_arn",lambdaArn,"event",eventName,"state","active");
     }
 
@@ -611,6 +628,7 @@ public final class AwsBackend implements AutoCloseable {
     private CloudWatchClient cloudwatch() { return cloudwatch == null ? cloudwatch = register(base(CloudWatchClient.builder()).build()) : cloudwatch; }
     private Ec2Client ec2() { return ec2 == null ? ec2 = register(base(Ec2Client.builder()).build()) : ec2; }
     private LambdaClient lambda() { return lambda == null ? lambda = register(base(LambdaClient.builder()).build()) : lambda; }
+    private EventBridgeClient events() { return events == null ? events = register(base(EventBridgeClient.builder()).build()) : events; }
     private Route53Client route53() { return route53 == null ? route53 = register(base(Route53Client.builder()).build()) : route53; }
     private SecretsManagerClient secrets() { return secrets == null ? secrets = register(base(SecretsManagerClient.builder()).build()) : secrets; }
     private EcsClient ecs() { return ecs == null ? ecs = register(base(EcsClient.builder()).build()) : ecs; }
