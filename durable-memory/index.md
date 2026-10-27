@@ -40,3 +40,4 @@ Canonical external records: [USER_TEST](../docs/USER_TEST.md),
 [current comparison campaign](../evidence/comparison-campaign-v013.json),
 [provider findings](../compare/PROVIDER_TEST.md).
 Superseded release/candidate notes and evidence are available in Git history.
+- [../SYNC_DESIGN.md](../SYNC_DESIGN.md): design-only selectable TTL/hashed/release/invalidate sync strategies, costs, optional grant and acceptance tests.
