@@ -33,8 +33,15 @@ public final class CostLedger {
     private final List<Map<String,Object>> failedCreates=new ArrayList<>();
     private final List<Map<String,String>> accessDeniedPatches=new ArrayList<>();
     private BigDecimal requestTotal=BigDecimal.ZERO; private Resource current,pending; private String lastService="",lastOperation=""; private int cleanupDepth; private int refusals; private long lastCeDispatch;
-    private static final class Charge { long requests,units; BigDecimal cost=BigDecimal.ZERO,unit=BigDecimal.ZERO;
-        Map<String,Object> report(){return Map.of("requests",requests,"billing_units",units,"unit_price_usd",unit,"estimated_usd",cost);} }
+    private static final class Charge {
+        long requests,units; BigDecimal cost=BigDecimal.ZERO,unit=BigDecimal.ZERO; String note="";
+        Map<String,Object> report(){
+            Map<String,Object> m=new LinkedHashMap<>();
+            m.put("requests",requests);m.put("billing_units",units);m.put("unit_price_usd",unit);m.put("estimated_usd",cost);
+            if(note!=null && !note.isEmpty())m.put("cost_note",note);
+            return Collections.unmodifiableMap(m);
+        }
+    }
     private static final class Resource {
         final String kind;String id,name;final long start;long end=-1,bytes;boolean confirmed;long nextUnits=1;final Map<String,Charge> requests=new LinkedHashMap<>();
         Resource(String kind,long start){this.kind=kind;this.start=start;}
@@ -80,15 +87,21 @@ public final class CostLedger {
             lastCeDispatch=System.nanoTime();
         }
         lastService=svc;lastOperation=operation;requestTotal=requestTotal.add(charge);String key=svc+"."+operation;
-        add(requests,key,units,unit,charge);Resource owner=current==null?pending:current;
-        if(owner!=null)add(owner.requests,key,units,unit,charge);
-        write(Map.of("event","cost_request","service",svc,"operation",operation,"billing_units",units,"unit_price_usd",unit,"estimated_usd",charge));
+        String note=(svc.equals("cloudfront")&&op.equals("createinvalidation"))
+            ?"First 1,000 CloudFront invalidation paths per month are free; additional paths cost $0.005 per path (1 nonexistent path per distribution, no wildcards)."
+            :"";
+        add(requests,key,units,unit,charge,note);Resource owner=current==null?pending:current;
+        if(owner!=null)add(owner.requests,key,units,unit,charge,note);
+        Map<String,Object> ev=new LinkedHashMap<>();
+        ev.put("event","cost_request");ev.put("service",svc);ev.put("operation",operation);ev.put("billing_units",units);ev.put("unit_price_usd",unit);ev.put("estimated_usd",charge);
+        if(!note.isEmpty())ev.put("cost_note",note);
+        write(ev);
     }
     public synchronized long ceRequests(){return requests.entrySet().stream().filter(e->e.getKey().startsWith("costexplorer.")).mapToLong(e->e.getValue().requests).sum();}
     public synchronized long metricRequests(){return requests.entrySet().stream().filter(e->e.getKey().startsWith("cloudwatch.GetMetric")).mapToLong(e->e.getValue().requests).sum();}
     public synchronized long metricUnits(){return requests.entrySet().stream().filter(e->e.getKey().startsWith("cloudwatch.GetMetric")).mapToLong(e->e.getValue().units).sum();}
 
-    private static void add(Map<String,Charge> target,String key,long units,BigDecimal unit,BigDecimal amount){Charge c=target.computeIfAbsent(key,k->new Charge());c.requests++;c.units+=units;c.unit=unit;c.cost=c.cost.add(amount);}
+    private static void add(Map<String,Charge> target,String key,long units,BigDecimal unit,BigDecimal amount,String note){Charge c=target.computeIfAbsent(key,k->new Charge());c.requests++;c.units+=units;c.unit=unit;c.cost=c.cost.add(amount);if(note!=null&&!note.isEmpty())c.note=note;}
     public synchronized void reserveCreate(String kind){if(pending!=null)throw new IllegalStateException("previous creation attempt unresolved");requireBudget(HEADROOM.add(new BigDecimal("0.001")),"creating "+kind);pending=new Resource(kind,clock.getAsLong());current=null;write(Map.of("event","cost_reserve","kind",kind,"future_cleanup_usd",HEADROOM));}
     public synchronized void created(String kind,String id,String name){Resource r=pending==null?new Resource(kind,clock.getAsLong()):pending;r.id=id;r.name=name;r.confirmed=true;resources.put(kind+"\0"+id,r);pending=null;current=r;write(Map.of("event","cost_resource","state","created","kind",kind,"id",id,"name",name));}
     public synchronized String lastOperation(){return lastOperation;}

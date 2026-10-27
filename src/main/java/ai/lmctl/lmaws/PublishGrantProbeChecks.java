@@ -107,7 +107,7 @@ public final class PublishGrantProbeChecks {
     private static void runLoopbackTransportChecks() throws Exception {
         ProbeFakeState state = new ProbeFakeState();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.setExecutor(Executors.newCachedThreadPool());
+        server.setExecutor(null);
         server.createContext("/", ex -> handleFake(ex, state));
         server.start();
         String endpoint = "http://127.0.0.1:" + server.getAddress().getPort();
@@ -158,9 +158,13 @@ public final class PublishGrantProbeChecks {
                 check("PASS".equals(PublishGrantProbes.runSingle(
                     liveFake, "cloudfront_invalidate_nonexistent_dist", "E00000NONEXIST", "cafe01").get("status")),
                     "403 on nonexistent CloudFront distribution must PASS");
-                check("PASS".equals(PublishGrantProbes.runSingle(
-                    liveFake, "cloudfront_invalidate_opt_in", "E1SYNTHETIC123", "opt_in:cafe01").get("status")),
-                    "opt-in CloudFront invalidation must PASS");
+                Map<String, String> cfOptOk = PublishGrantProbes.runSingle(
+                    liveFake, "cloudfront_invalidate_opt_in", "E1SYNTHETIC123", "opt_in:cafe01");
+                check("PASS".equals(cfOptOk.get("status"))
+                        && "****NV01".equals(cfOptOk.get("invalidation_id"))
+                        && "201/200".equals(cfOptOk.get("http_status"))
+                        && "/__perm_check/cafe01-e1synthetic123".equals(cfOptOk.get("invalidation_path")),
+                    "opt-in CloudFront invalidation must PASS with masked invalidation_id and unique path: " + cfOptOk);
 
                 // Wrongly-granted negative probes (e.g. ResourceNotFoundException / ParameterNotFound / NoSuchDistribution) must FAIL.
                 state.mode = "negative_not_found";

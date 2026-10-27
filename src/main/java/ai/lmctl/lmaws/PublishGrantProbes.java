@@ -1007,25 +1007,28 @@ public final class PublishGrantProbes {
             throw new SecurityException("cloudfront_invalidate_opt_in is off by default and requires explicit 'opt_in:<runId>' (--live-invalidate)");
         }
         String validRun = requireRunId(extra.substring("opt_in:".length()));
-        String invPath = "/__perm_check/" + validRun;
+        String invPath = "/__perm_check/" + validRun + "-" + distId.toLowerCase(Locale.ROOT);
         if (invPath.contains("*")) {
             throw new SecurityException("wildcard invalidation paths are strictly forbidden");
         }
         String expected = "CreateInvalidation 201 + GetInvalidation 200 on " + invPath + " (no wildcards)";
         if (backend.isDemo()) {
+            String demoId = maskLast4("IDEMO" + validRun.toUpperCase(Locale.ROOT));
             Map<String, String> row = buildRow(
                 probeId,
                 "cloudfront_invalidate_opt_in",
                 distId,
                 expected,
-                "CreateInvalidation 201 (IDEMO" + validRun.toUpperCase(Locale.ROOT) + ") + GetInvalidation 200 (status=InProgress, path=" + invPath + ", demo)",
-                "200",
+                "CreateInvalidation 201 (id=" + demoId + ") + GetInvalidation 200 (status=InProgress, path=" + invPath + ", demo)",
+                "201/200",
                 "",
                 true,
                 "opt_in_nonexistent_path"
             );
-            row.put("invalidation_id", "IDEMO" + validRun.toUpperCase(Locale.ROOT));
+            row.put("invalidation_id", demoId);
             row.put("invalidation_path", invPath);
+            row.put("create_http_status", "201");
+            row.put("get_http_status", "200");
             row.put("free_tier_note", "First 1,000 invalidation paths per month are free; additional paths cost $0.005 per path.");
             return row;
         }
@@ -1044,26 +1047,32 @@ public final class PublishGrantProbes {
             if (invId.isBlank()) {
                 throw new IllegalStateException("CreateInvalidation returned empty invalidation ID");
             }
+            int createStatus = created.sdkHttpResponse() != null ? created.sdkHttpResponse().statusCode() : 201;
             var got = cf.getInvalidation(
                 GetInvalidationRequest.builder()
                     .distributionId(distId)
                     .id(invId)
                     .build());
+            int getStatus = got.sdkHttpResponse() != null ? got.sdkHttpResponse().statusCode() : 200;
             String status = got.invalidation() != null ? Objects.toString(got.invalidation().status(), "Unknown") : "Unknown";
+            String maskedId = maskLast4(invId);
+            String combinedHttp = createStatus + "/" + getStatus;
             Map<String, String> row = buildRow(
                 probeId,
                 "cloudfront_invalidate_opt_in",
                 distId,
                 expected,
-                "CreateInvalidation 201 (" + invId + ") + GetInvalidation 200 (status=" + status + ", path=" + invPath + ")",
-                "200",
+                "CreateInvalidation " + createStatus + " (id=" + maskedId + ") + GetInvalidation " + getStatus + " (status=" + status + ", path=" + invPath + ")",
+                combinedHttp,
                 "",
                 true,
                 "opt_in_nonexistent_path"
             );
-            row.put("invalidation_id", invId);
+            row.put("invalidation_id", maskedId);
             row.put("invalidation_path", invPath);
             row.put("invalidation_status", status);
+            row.put("create_http_status", String.valueOf(createStatus));
+            row.put("get_http_status", String.valueOf(getStatus));
             row.put("free_tier_note", "First 1,000 invalidation paths per month are free; additional paths cost $0.005 per path.");
             return row;
         } catch (Exception e) {
@@ -1165,6 +1174,13 @@ public final class PublishGrantProbes {
             return maskAll(code + " (HTTP " + aws.statusCode() + ")");
         }
         return maskAll(e.getClass().getSimpleName() + ": " + Objects.toString(e.getMessage(), ""));
+    }
+
+    static String maskLast4(String id) {
+        if (id == null || id.isBlank()) return "****";
+        String trimmed = id.trim();
+        if (trimmed.length() <= 4) return "****" + trimmed;
+        return "****" + trimmed.substring(trimmed.length() - 4);
     }
 
     static String maskAll(String value) {

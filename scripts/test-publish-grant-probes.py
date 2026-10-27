@@ -177,6 +177,14 @@ with tempfile.TemporaryDirectory(prefix="lmaws-publish-probes-") as tmp:
     rows = json.loads(out_file.read_text())
     assert len(rows) == 10 and all(r["status"] == "PASS" for r in rows), rows
     assert model.last_if_match == '"00000000000000000000000000000000"'
+    cf_row = [r for r in rows if r["kind"] == "cloudfront_invalidate_opt_in"][0]
+    assert cf_row["invalidation_id"] == "****TH01", cf_row
+    assert cf_row["invalidation_path"] == "/__perm_check/cafe01-e1synthetic123", cf_row
+    assert cf_row["http_status"] == "201/200", cf_row
+    ledger_files = list((work / "ledgers").glob("*.jsonl"))
+    assert ledger_files, "expected cost ledger file"
+    ledger_text = "\n".join(p.read_text() for p in ledger_files)
+    assert "First 1,000 CloudFront invalidation paths per month are free; additional paths cost $0.005 per path" in ledger_text, ledger_text
 
     # Wrongly-granted case: S3 PutObject returns 403 -> status must be FAIL
     run_dsl(
