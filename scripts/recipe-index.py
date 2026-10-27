@@ -82,7 +82,7 @@ def read_recipe(path: Path) -> Recipe:
             meta.setdefault("function", function_names[0])
     if not meta["function"].strip():
         raise ValueError(f"{path}: function metadata is empty")
-    if meta["access"] not in {"Read-only", "Write with the lmaws profile", "Read-only with the lmaws-ec2 profile", "Write with the lmaws-ec2 profile", "Write with the admin profile"}:
+    if meta["access"] not in {"Read-only", "Write with default", "Write with the lmaws profile", "Read-only with the lmaws-ec2 profile", "Write with the lmaws-ec2 profile", "Write with the admin profile"}:
         raise ValueError(f"{path}: access must be Read-only or Write with the lmaws/lmaws-ec2/admin profile")
     if meta["category"] not in CATEGORIES:
         raise ValueError(f"{path}: unknown category {meta['category']!r}")
@@ -118,8 +118,9 @@ def render(items: list[Recipe]) -> str:
         "Reusable LMScript recipes for audits, inventory, spend review and safely owned sandboxes.",
         "The access column describes AWS permissions; local reports are written only when a recipe is called.",
         "Each generated entry is self-contained and runnable directly. Import the paired library from its raw URL when composing recipes; entry scripts perform the execution step.",
-        "Use `lmaws`, never the `aws` CLI. Read-only recipes use `default`; writes require",
-        "`AWS_PROFILE=lmaws`, the ownership prefix/tag, a ledger and teardown.",
+        "Use `lmaws`, never the `aws` CLI. Read-only recipes use `default`; lifecycle writes use",
+        "`AWS_PROFILE=lmaws`, the ownership prefix/tag, a ledger and teardown. The upload check uses",
+        "`default` only for its conditional PUT, with `lmaws` sandbox creation/cleanup.",
         "",
         "All executable recipes default to synthetic fixtures. Use `--preview` for a no-call plan,",
         "or the runner's `lmctl script --dry-run recipes/<name>.lms`. Live inventory needs `--live`;",

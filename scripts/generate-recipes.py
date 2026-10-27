@@ -25,6 +25,8 @@ ITEMS.append(dict(name='session_doctor',category='Identity and access posture',t
 ITEMS.append(dict(name='grant_lambda_role',category='Identity and access posture',task='grant_lambda_role',library='iam_role',function='recipe_grant_lambda_role',what='Preview or apply the pre-built lmaws_lambda_exec execution role with the mandatory boundary and scoped data access',access='Write with the admin profile',cost='$0.00 synthetic; live IAM metadata only; apply requires AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1 and --apply'))
 ITEMS.append(dict(name='fleet_roles',category='Identity and access posture',task='fleet_roles',library='fleet_roles',function='recipe_fleet_roles',what='Plan, lint, apply (one instance at a time) and roll back least-privilege operational IAM roles and mandatory permissions boundary for fleet instances t4g1 and t4g2',access='Write with the admin profile',cost='$0.00 synthetic plan; live read-only discovery uses default; apply requires AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1, --apply and --i-am-the-admin-human',args='--profile default --output data/fleet_roles [--live] [--apply --profile admin --i-am-the-admin-human] [--rollback FILE]',run=''))
 
+ITEMS.append(dict(name='check_s3_upload',category='Identity and access posture',task='check_s3_upload',library='s3_upload',function='recipe_check_s3_upload',what='Simulate default S3 permissions and verify one conditional upload with owned cleanup',access='Write with default',cost='$0.00 offline; tiny live S3 request estimate, cap $0.05',args='--policy-file POLICY.json [--bucket NAME --key KEY] [--managed-policy ARN --account-id ID] [--live --run-id HEX] [--allow-leave-object] [--cap 0.05] [--output PRIVATE_PATH]',run='--policy-file POLICY.json'))
+
 COMPUTE_ARGS='--region us-east-1 --profile default --output data/NAME [--live]'
 for name,what,access,cost,args,run in [
  ('fleet_status','Discover tagged instances: state, type, addresses and root-storage policy','Read-only','$0.00 synthetic; live EC2 Describe calls are free; cap $0.05','--tag-key Project --tag-value VALUE '+COMPUTE_ARGS,'--tag-key Project'),
@@ -128,17 +130,21 @@ def generate(check=False):
   body+='let report='+item['function']+'(options);\nif (!options.preview) {println("report:",get(report,"output_file",options.output+".json"));println(recipe_cost_line(report));}\n'
   body=re.sub(r'\nimport \"[^\"]+\";\n', '\n', body)
   if name in ['grant_session_policy','grant_lambda_role','fleet_roles']:body=body.replace('recipe_options(ARGV)','recipe_grant_options(ARGV)')
+  if name=='check_s3_upload':body=body.replace('recipe_options(ARGV)','s3_upload_options(ARGV)')
   entry=header+'\n# Generated standalone entry; reusable source: '+lib+'\n'+flatten(ROOT/lib)+'\n'+body
   target=ROOT/'recipes'/(name+'.lms')
   if check:assert target.read_text()==entry, str(target)+' is stale; run generate-recipes.py'
   else:target.write_text(entry)
   exheader='# Synthetic-only: '+item['what']+'.\n# This picture-first example always disables live AWS and apply, even if inherited.\n# Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/'+example+'.lms\n'
   exbody='import "../recipes/lib/'+item['library']+'.lms";\nlet options=recipe_options(ARGV);\noptions.live=false;options.apply=false;options.preview=false;options.profile="default";\noptions.task="'+item['task']+'";options.output="data/'+example+'";\nlet report='+item['function']+'(options);\nassert(is_array(report.rows));\n'
+  if name=='check_s3_upload':
+   exbody=exbody.replace('recipe_options(ARGV)','s3_upload_options(ARGV)').replace('let report=recipe_check_s3_upload(options);','options.file="";options.managed_policy="";options.own_account="";options.bucket="";options.allow_leave=false;options.demo_lifecycle=true;\nlet report=recipe_check_s3_upload(options);')
   if item['library']=='lifecycle':exbody+='assert(len(report.rows)==1 && report.rows[0].remaining==0);\nreport.rows[0].name="owned synthetic '+item['task']+'";\n'
   if item['library']=='compute':exbody+='recipe_compute_picture(report,"'+item['task']+'","'+example+'");\n'
   elif item['library']=='hygiene':exbody+='recipe_hygiene_picture(report,"'+item['task']+'","'+example+'");\n'
   elif item['library']=='policy_builder':exbody+='recipe_policy_picture(report,"'+item['task']+'","'+example+'");\n'
   else:exbody+='recipe_picture(report.rows,"'+item['what']+'","'+example+'");\n'
+  if name=='check_s3_upload':exbody=exbody.replace('recipe_picture(report.rows,\"'+item['what']+'\",\"'+example+'\");','recipe_s3_upload_picture(report,\"'+example+'\");')
   if item['library']=='spend':
    exbody=exbody.replace('let report=recipe_spend(options);','options.cap=0.25;\nlet report=recipe_spend(options);')
    exbody=exbody.replace('recipe_picture(report.rows,"'+item['what']+'","'+example+'");','recipe_spend_picture(report,"'+example+'");')

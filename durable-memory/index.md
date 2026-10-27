@@ -41,3 +41,6 @@ Canonical external records: [USER_TEST](../docs/USER_TEST.md),
 [provider findings](../compare/PROVIDER_TEST.md).
 Superseded release/candidate notes and evidence are available in Git history.
 - [../docs/LMSYNC_DESIGN.md](../docs/LMSYNC_DESIGN.md): confirmed lmfiles lifecycle registry design and 1A/1B implementation qualification, items/aliases, user-defined stages/events, indexed queries and leased claims; existing-host job sketches, durability and stage-aware scale budgets; [independent review and dispositions](../docs/LMSYNC_REVIEW.md); [legacy pointer](../SYNC_DESIGN.md).
+
+- [17-s3-upload-check.md](17-s3-upload-check.md): default conditional upload exception, offline probes, two-profile cleanup, ledger proof and policy recommendation.
+
