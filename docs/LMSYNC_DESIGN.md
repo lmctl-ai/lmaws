@@ -1478,7 +1478,7 @@ Required correctness phases:
    in-memory byte model owns expected local state, never lmfiles. Every round uses
    the normal LMScript scan/query -> plan -> lmaws -> confirmed-record path.
    Touch with equal content hash plans no PUT. Kill, lost-response and failed-PUT
-   faults defer to eligible upload rounds (this seed:5,13,19); replay/retry must
+   faults defer to eligible upload rounds (this seed:5,11,17); replay/retry must
    converge the interrupted tree before applying the next round's new mutations.
 7. Final three-way reconciliation compares actual local files, confirmed registry
    beliefs and independently listed S3 objects: exact key set/size/SHA256,
@@ -1505,8 +1505,8 @@ baselines, timing/RSS/throughput studies or any large-object population.
 The fixed model uses a specified32-bit LCG and sorted candidate sets, with one
 job/sandbox throughout. A rename is delete+add to a free key in the100-key universe;
 no eligible key means an explicit no-op. Re-created keys get new bytes. The model
-plans120 operations for this seed (create8, update14, touch18, delete16, rename9,
-recreate7, no-op48); these are not live counts. The conservative whole-job bound
+plans120 operations for this seed (create7, update16, touch20, delete16, rename7,
+recreate8, no-op46); these are not live counts. The conservative whole-job bound
 is253 object PUT attempts including scripted phases and retry reserves, with an
 explicit400-PUT admission ceiling plus the existing$0.05 cost cap. The intended
 live estimate is about$0.002; there are no large uploads or performance studies.
@@ -1524,7 +1524,9 @@ maximum300s clock-skew tolerance; report maximum observed distance outside the
 interval. Reject inverted intervals. Serial round order and per-item revision
 order require nondecreasing S3 times; equal whole-second timestamps are allowed.
 Never compare revision counters of different items. Use explicit global round IDs
-for cross-key ordering and retain verified prior receipts. No timed delays or
+for cross-key ordering and retain verified prior receipts. Keep affected keys
+disjoint within a round so planned rename/delete/create operations cannot cancel
+each other before the normal job selects actions. No timed delays or
 throughput experiment is needed. Private failures identify key/view/field/round;
 public evidence has only counts/status and observed max skew.
 
