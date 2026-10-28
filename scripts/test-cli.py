@@ -6,7 +6,7 @@ with host.open('rb') as binary: is_elf=binary.read(4)==b'\x7fELF'
 def run(args,code=0,extra=None):
  p=subprocess.run(([str(host)] if host.suffix!='.cmd' else ['cmd.exe','/c',str(host)])+args,env=dict(env,**(extra or {})),text=True,encoding="utf-8",capture_output=True,timeout=120)
  assert p.returncode==code,(args,p.returncode,p.stdout[-1200:],p.stderr[-1200:]);return p
-assert run(['--version']).stdout=='lmaws 0.1.23\n'
+assert run(['--version']).stdout=='lmaws 0.1.24\n'
 assert run(['--notices']).stdout==(root/'THIRD_PARTY_NOTICES').read_text(encoding="utf-8")
 assert 'LMAWS_MAX_MEMORY_MB' in run(['--help']).stdout
 assert '\u2014 AWS SDK' in run(['--help'],extra={'JAVA_TOOL_OPTIONS':'-Dstdout.encoding=windows-1252 -Dstderr.encoding=windows-1252'}).stdout
