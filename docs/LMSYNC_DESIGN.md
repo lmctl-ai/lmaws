@@ -1473,17 +1473,69 @@ Required correctness phases:
    allow only the one uncertain in-flight retry in the PUT ledger count.
 5. Lose one successful upload response: no confirmed projection until retry.
    If-None-Match on an existing key returns412 and does not overwrite it.
-6. The TEST independently lists and verifies exact key sets, sizes, ETags/content
-   hashes, Content-Type and Cache-Control after each relevant phase. These are
-   script-controlled verification calls, never hidden registry behavior.
-7. Delete all test objects and the bucket, independently prove absence, then
-   publish sanitized counts/pass-fail and the ledger cost. Do not claim absence
-   from a cleanup intent or a missing local receipt.
+6. Run30 seeded rounds (seed20261027), four random operations each over the same
+   100-key universe: create/update/touch/delete/rename/recreate/no-op. An independent
+   in-memory byte model owns expected local state, never lmfiles. Every round uses
+   the normal LMScript scan/query -> plan -> lmaws -> confirmed-record path.
+   Touch with equal content hash plans no PUT. Kill, lost-response and failed-PUT
+   faults defer to eligible upload rounds (this seed:5,13,19); replay/retry must
+   converge the interrupted tree before applying the next round's new mutations.
+7. Final three-way reconciliation compares actual local files, confirmed registry
+   beliefs and independently listed S3 objects: exact key set/size/SHA256,
+   ETag=single-part body MD5, remote version, headers and request/confirmation
+   timestamp bounds. Keep verified prior receipts for revision/round ordering.
+8. Lose the test registry; explicitly import verified listing/HEAD results using
+   normal item/alias/observe/stage_record/batch primitives. This is a costed verify
+   action. The next normal plan must be empty and make zero AWS requests.
+9. The TEST independently verifies key sets, sizes, checksums and headers after
+   each relevant phase. Only this verification and explicit rebuild may LIST;
+   lmfiles never does. All normal selection remains local.
+10. Delete all test objects and the bucket; independently prove absence, then
+    publish sanitized counts/pass-fail and ledger cost. If versioning unexpectedly
+    exists, include versions and delete markers using exact owned-bucket guards.
+    Never infer absence from cleanup intent or a missing local receipt.
 
 Request counts are correctness assertions, not performance measurements. The
 normal query still makes zero remote calls; only the script's selected actions
 and explicit test verification contact AWS. Do not run comparative aws CLI/rclone
 baselines, timing/RSS/throughput studies or any large-object population.
+
+### Soak and reconciliation rules
+
+The fixed model uses a specified32-bit LCG and sorted candidate sets, with one
+job/sandbox throughout. A rename is delete+add to a free key in the100-key universe;
+no eligible key means an explicit no-op. Re-created keys get new bytes. The model
+plans120 operations for this seed (create8, update14, touch18, delete16, rename9,
+recreate7, no-op48); these are not live counts. The conservative whole-job bound
+is253 object PUT attempts including scripted phases and retry reserves, with an
+explicit400-PUT admission ceiling plus the existing$0.05 cost cap. The intended
+live estimate is about$0.002; there are no large uploads or performance studies.
+
+S3 full-object ChecksumSHA256 is canonical Base64 SHA256, compared to local and
+recorded hex digests after normalization. If unavailable, script-set object
+metadata sha256 is permitted, read by explicit HEAD; if both exist they must
+agree. LIST alone cannot provide checksum metadata, Content-Type or Cache-Control.
+Single-part SSE-S3 bodies are required for the requested ETag/MD5 assertion;
+composite/multipart/SSE-KMS ETags must not be falsely treated as MD5.
+
+Record request-start before dispatch, and confirmed time only after a successful
+response and durable receipt. LastModified must lie within that interval plus a
+maximum300s clock-skew tolerance; report maximum observed distance outside the
+interval. Reject inverted intervals. Serial round order and per-item revision
+order require nondecreasing S3 times; equal whole-second timestamps are allowed.
+Never compare revision counters of different items. Use explicit global round IDs
+for cross-key ordering and retain verified prior receipts. No timed delays or
+throughput experiment is needed. Private failures identify key/view/field/round;
+public evidence has only counts/status and observed max skew.
+
+An explicit S3 import reconstructs current state, not unknowable client history.
+Keep remote LastModified/ETag/checksum and import provenance/observation bounds;
+mark original request/confirmation timestamps and old revisions unknown. Do not
+fabricate them from listing time. The upload-interval/order reconciliation runs
+before DB loss; post-import acceptance is current state plus empty local plan.
+The pure model/reconciler in lmfiles/scripts has local unit tests only, not an
+implemented live executor or evidence of S3 convergence. Until released APIs are
+usable, every live phase/round/check stays NOT RUN, convergence/max skew null.
 
 ### Released-host capability block (v0.1.22)
 
@@ -1502,15 +1554,19 @@ Small additions needed in lmaws (names below are proposed contracts):
   ownership/recovery; never adopt an unowned preexisting bucket.
 - s3_put_file with expected_sha256, Content-Type, Cache-Control, optional
   If-None-Match and a structured confirmed/uncertain/precondition receipt.
-- s3_head_object and s3_list_objects for the TEST's independent verification.
-- s3_delete_objects with per-key outcomes and exact run ownership.
+- s3_head_object and s3_list_objects for the TEST's independent verification;
+  expose LastModified, size, ETag, version, checksum mode/full SHA256 and headers
+  (or explicit sha256 metadata). GetObjectAttributes is an optional checksum path.
+- s3_delete_objects with per-key outcomes and exact run ownership; bucket
+  versioning/status, version/delete-marker enumeration and deletion for teardown
+  if versioning unexpectedly exists (the job must not enable it).
 - Ledger request/cost accounting across executor invocations, including ambiguous
   sends and cleanup, with no implicit calls on an empty plan.
 
 Existing s3_upload_check is not a substitute: its implementation uses the default
 profile for PUT and a different fixed smoke-test workflow/name. The current brief
 forbids that path. No AWS session or bucket is opened until the required released
-API exists. The executable preflight records all seven phases as NOT RUN, zero
+API exists. The executable preflight records all ten phases and30 soak rounds as NOT RUN, zero
 created resources and zero AWS requests; it does not claim remote absence proof.
 
 ## 9. Positioning, risks and implementation breakdown
