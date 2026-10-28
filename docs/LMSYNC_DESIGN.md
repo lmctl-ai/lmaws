@@ -8,12 +8,17 @@ is the bar.** No100M benchmark, large uploads or scale-qualification campaign is
 goal. lmfiles core remains local, Java-only and free of business rules.
 
 The Lead has authorized one narrowly scoped correctness run: released lmaws
-v0.1.22, AWS_PROFILE=lmaws only, one lmaws-lmfiles-<runid> bucket in us-east-1,
+v0.1.23, AWS_PROFILE=lmaws only, one lmaws-lmfiles-<runid> bucket in us-east-1,
 100 synthetic objects, lmaws_test=<runid>, default$0.05 cap and complete teardown.
 This does not authorize other buckets, admin/default writes or other live work.
-The release capability preflight currently blocks that run before resource
-creation; see lmfiles docs/S3_100_TEST.md. No denial was observed because no AWS
-request was attempted. No workflow dispatch or release is part of this task.
+The authorized run is COMPLETE:100 initial objects,30 seeded rounds,3 injected
+faults, full final reconciliation and explicit listing import. Every round
+converged. A fresh-executor NoSuchBucket/404 independently proves zero leftovers.
+The ledger recorded1433 attempts,estimated$0.0018854 under$0.05; max observed
+interval skew1.081s. Only sanitized counts/status are public in
+[lmfiles results](https://github.com/lmctl-ai/lmfiles/blob/main/docs/S3_100_RESULTS.json).
+This result does not authorize another run or any unrelated bucket/profile.
+No workflow dispatch, IAM/admin operation, tag or release was performed here.
 
 This remains the canonical registry design; legacy SYNC_DESIGN.md is a pointer.
 Scripts own policy; the registry stores beliefs and never calls a remote.
@@ -1535,43 +1540,42 @@ Keep remote LastModified/ETag/checksum and import provenance/observation bounds;
 mark original request/confirmation timestamps and old revisions unknown. Do not
 fabricate them from listing time. The upload-interval/order reconciliation runs
 before DB loss; post-import acceptance is current state plus empty local plan.
-The pure model/reconciler in lmfiles/scripts has local unit tests only, not an
-implemented live executor or evidence of S3 convergence. Until released APIs are
-usable, every live phase/round/check stays NOT RUN, convergence/max skew null.
+The one-script driver and independent model/reconciler have passed the authorized
+live campaign. Planning remained local; the no-change phase made0 requests.
+Full final LIST/HEAD comparison covered99 present keys after random mutations.
+SDK correlation audit proved244 distinct planned PUT operations,248 attempts
+including3 documented uncertain retries and1 conditional412,0 touch PUTs and0
+unexpected reuploads. The crash generation used exactly100 PUTs.
 
-### Released-host capability block (v0.1.22)
+### Released-host qualification (v0.1.23)
 
-The following records the released v0.1.22 blocker. The exact-name create/attach/delete, file PUT, HEAD/list/delete and durable ledger APIs are now implemented on main for the Lead's v0.1.23 release; see [S3_OBJECTS.md](S3_OBJECTS.md) for the actual signatures and limits. Fake transport/local qualification does not mean the100-object live test ran. Sol2 must use the released capabilities before starting that separately authorized run.
+The former0.1.22 gaps are resolved by the eight released methods in
+[S3_OBJECTS.md](S3_OBJECTS.md): exact create/attach/delete, file PUT, HEAD, bounded
+LIST, selective DELETE and persistent local ledger summary. The completed driver
+is [upload_s3_live.lms](https://github.com/lmctl-ai/lmfiles/blob/main/examples/upload_s3_live.lms).
+Every restarted executor attached. Mutations used profile lmaws only and the same
+exact tagged sandbox; no default/admin write or legacy s3_upload_check was used.
 
-The installed release schema offers Run.put(Row,key,string)->void, Run.bucket,
-Run.cleanup and Cloud.resource_exists. It has no generic S3 file PUT with headers,
-checksum/confirmation and If-None-Match, list-object metadata, HEAD-object metadata
-or selective object-delete binding. Existing Run resources are process-owned and
-Run.close cleans them; they cannot reattach a persisted bucket after executor
-restart. Sandbox names are lmaws-<runid>-<suffix>, not the exact requested layout
-for an arbitrary unique tag runid. These are API gaps, not an IAM denial or a
-registry defect. Do not weaken the existing sandbox guards as a workaround.
+The test used tiny single-part objects. Fresh bucket deletion succeeded and a
+separate process observed NoSuchBucket/404; no hidden version resource remained.
+Version-specific listing/deletion remains outside the bounded API. Never infer
+support for adopting unowned or preexisting versioned buckets from this test.
 
-Small additions needed in lmaws (names below are proposed contracts):
+The application-response-loss fault discards an SDK success before index
+confirmation; it does not claim a real network outage. The failed-upload fault
+is LocalChecksumMismatch before dispatch. SIGKILL tests actual executor death,
+reattachment and confirmed-receipt replay. Independent verification belongs to
+the test, not lmfiles. Full LIST/HEAD occurs after scripted mutation/fault phases,
+at final reconciliation and for import; soak rounds use fresh LIST plus changed
+HEADs. No remote verification runs inside the zero-request job.
 
-- s3_bucket_create/delete for an exact guarded name/tag and crash-safe ledger
-  ownership/recovery; never adopt an unowned preexisting bucket.
-- s3_put_file with expected_sha256, Content-Type, Cache-Control, optional
-  If-None-Match and a structured confirmed/uncertain/precondition receipt.
-- s3_head_object and s3_list_objects for the TEST's independent verification;
-  expose LastModified, size, ETag, version, checksum mode/full SHA256 and headers
-  (or explicit sha256 metadata). GetObjectAttributes is an optional checksum path.
-- s3_delete_objects with per-key outcomes and exact run ownership; bucket
-  versioning/status, version/delete-marker enumeration and deletion for teardown
-  if versioning unexpectedly exists (the job must not enable it).
-- Ledger request/cost accounting across executor invocations, including ambiguous
-  sends and cleanup, with no implicit calls on an empty plan.
-
-Existing s3_upload_check is not a substitute: its implementation uses the default
-profile for PUT and a different fixed smoke-test workflow/name. The current brief
-forbids that path. No AWS session or bucket is opened until the required released
-API exists. The executable preflight records all ten phases and30 soak rounds as NOT RUN, zero
-created resources and zero AWS requests; it does not claim remote absence proof.
+Checker regressions cover Java Instant nanoseconds on Python3.10, actual-file
+rehashing instead of stale manifests, and importing only verified S3 snapshot
+fields. A local recheck of the same real99-key snapshot passed after teardown;
+no second bucket or live rerun was needed. Client upload times/history remain
+unknown after listing import. The reconstructed current index yields an empty
+normal plan with0 requests. API request counts/cost do not include separate
+storage/transfer metering and are not a throughput/scale qualification.
 
 ## 9. Positioning, risks and implementation breakdown
 
@@ -1667,8 +1671,8 @@ Those figures are informational, not a new acceptance target. Functional tests
 cover state, journal replay, crash points, revision fencing and real local HTTP/
 SFTP pairings. No new scale/performance measurement is planned.
 
-The one-script upload executor remains a local fake. The separately authorized
-100-object AWS correctness run is blocked by released lmaws0.1.22 API gaps, before
-resource creation. General predicates, change cursors/archives and multi-process
+The one-script real upload executor has completed its separately authorized
+100-object/30-round AWS correctness run using released lmaws0.1.23; zero leftovers
+were independently verified. General predicates, change cursors/archives and multi-process
 coordination remain possible future API work. No large-tier qualification is a
 roadmap goal. Exact implementation contracts/evidence live in the lmfiles repo.

@@ -10,4 +10,10 @@ S3OperationLedger locks the cumulative price admission and fsyncs before every S
 
 Fake SDK and concurrent-process persistence tests are part of test.sh. The synthetic recipe/image represent eight stages, not live request counts.85 recipes/125 examples at this change. IAM file audit found all required S3 actions under existing s3:* scoped to lmaws-*; no admin update or live resource operation was performed.
 
-Main is ready for the Lead's v0.1.23 release; no tag/release is cut by this task. The lmfiles100-object live run remains Sol2's separately authorized work after that release. No live-success/absence claim is made here.
+v0.1.23 is released. The separately authorized lmfiles run completed100 initial
+objects,30 seeded rounds,3 faults, reconciliation and listing import. Every round
+converged; a fresh executor observed NoSuchBucket/404 after explicit teardown.
+1433 request attempts,estimated$0.0018854,cap$0.05,maxskew1.081s. No IAM denial or
+host bug observed; only local checker fixes were needed. Public proof contains
+counts/status only: lmfiles docs/S3_100_RESULTS.json. No further live run is
+implicitly authorized. CI/tests remain fake-only; no new credentials or OIDC.

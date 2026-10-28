@@ -1,6 +1,6 @@
 # Persistent sandbox S3 objects
 
-Implemented on main for the Lead's v0.1.23 release. v0.1.22 lacks these bindings; require the actual signatures before the lmfiles live driver runs. No release or live correctness run is performed by this implementation task.
+Released in v0.1.23. The separately authorized lmfiles live100-object/30-round campaign passed all phases and independently proved zero leftovers. Its persistent ledger counted1433 requests with estimated request cost$0.0018854 under$0.05; see [sanitized evidence](https://github.com/lmctl-ai/lmfiles/blob/main/docs/S3_100_RESULTS.json). v0.1.22 lacks these bindings. CI remains fake-only; this manual live result does not authorize arbitrary accounts or resources.
 
 | Signature | Result |
 |---|---|
@@ -58,4 +58,4 @@ The [synthetic recipe](../recipes/s3_objects.lms) and gallery image are schemati
 
 `S3OperationLedgerChecks` covers fsync persistence, restart, simultaneous processes, cap reduction/increase refusal, malformed/torn journals and pure no-op summaries. `scripts/test-s3-objects.py` uses actual SDK requests against a local fake S3 endpoint: full headers/checksums,412, lost response/5xx, pagination, partial deletion, metadata and ownership guards, executor kill/recovery and cumulative cap refusal. Both run in test.sh. No production bucket or account data occurs in public fixtures.
 
-The supplied local session-policy and managed-policy files grant `s3:*` on `lmaws-*` buckets and objects, including PutObject, GetObject, GetObjectAttributes, DeleteObject, ListBucket, GetBucketTagging, PutBucketTagging, CreateBucket and DeleteBucket. No missing action or admin policy update was found in that file audit; this is not a claim that a live run has succeeded. The Lead owns release v0.1.23; Sol2 owns the separately authorized100-object live correctness run afterward.
+The supplied local session-policy and managed-policy files grant `s3:*` on `lmaws-*` buckets and objects, including PutObject, GetObject, GetObjectAttributes, DeleteObject, ListBucket, GetBucketTagging, PutBucketTagging, CreateBucket and DeleteBucket. No missing action or admin policy update was found in that file audit; this is not a claim that a live run has succeeded. The Lead released v0.1.23. The separately authorized lmfiles live run subsequently completed without IAM changes or denials; its unique owned bucket was deleted and NoSuchBucket/404 was observed from a new executor. No tag/release or CI credential setup was performed by that test.
