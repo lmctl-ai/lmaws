@@ -1246,7 +1246,7 @@ public final class PublishGrantProbes {
     private static final String DEFAULT_CANONICAL_AMI_FILTER = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-arm64-server-*";
     private static final String DEFAULT_CANONICAL_SSM_PARAM =
         "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id";
-    private static final String NONEXISTENT_INSTANCE_ID = "i-00000000000000000";
+    private static final String NONEXISTENT_INSTANCE_ID = "i-0123456789abcdef0";
 
     /**
      * Execution interceptor that refuses any non-Describe* EC2 HTTP request unless DryRun=true is present in the form body.
@@ -1255,6 +1255,14 @@ public final class PublishGrantProbes {
         @Override
         public void beforeTransmission(Context.BeforeTransmission context, ExecutionAttributes attributes) {
             String op = attributes.getOptionalAttribute(SdkExecutionAttribute.OPERATION_NAME).orElse("");
+            if (op.startsWith("Describe")) {
+                return;
+            }
+            boolean modelDryRun = Boolean.TRUE.equals(
+                context.request().getValueForField("DryRun", Boolean.class).orElse(false));
+            if (modelDryRun) {
+                return;
+            }
             String body = "";
             var reqBody = context.requestBody();
             if (reqBody.isPresent()) {
@@ -1264,17 +1272,14 @@ public final class PublishGrantProbes {
                     throw new SecurityException("failed to inspect EC2 request body for DryRun=true enforcement: " + e.getMessage(), e);
                 }
             }
-            boolean isDescribe = op.startsWith("Describe")
-                || body.contains("Action=Describe")
-                || body.startsWith("Action=Describe");
-            if (isDescribe) {
+            if (body.contains("Action=Describe") || body.startsWith("Action=Describe")) {
                 return;
             }
-            boolean hasDryRunTrue = body.contains("DryRun=true") || body.contains("DryRun=True");
-            if (!hasDryRunTrue) {
-                throw new SecurityException(
-                    "PublishGrantProbes DryRunEnforcingInterceptor blocked non-DryRun EC2 operation '" + op + "'");
+            if (body.contains("DryRun=true") || body.contains("DryRun=True")) {
+                return;
             }
+            throw new SecurityException(
+                "PublishGrantProbes DryRunEnforcingInterceptor blocked non-DryRun EC2 operation '" + op + "'");
         }
     }
 
@@ -1492,9 +1497,10 @@ public final class PublishGrantProbes {
         Map<String, Object> spec = parseExtraObject(extra);
         String regionName = stringField(spec, "region", "us-east-1");
         String instanceType = stringField(spec, "instance_type", "t4g.nano");
-        String imageId = stringField(spec, "image_id", "ami-00000000000000000");
+        String imageId = stringField(spec, "image_id", "ami-0123456789abcdef0");
+        boolean autoRegionalAmi = "auto_regional".equalsIgnoreCase(imageId);
         if ("auto".equalsIgnoreCase(imageId) || imageId.isBlank()) {
-            imageId = "ami-00000000000000000";
+            imageId = "ami-0123456789abcdef0";
         }
         int volumeSizeGib = intField(spec, "volume_size_gib", 10);
         String volumeType = stringField(spec, "volume_type", "gp3");
@@ -1533,6 +1539,21 @@ public final class PublishGrantProbes {
         }
 
         try (Ec2Client ec2 = buildDryRunEc2Client(backend, regionName)) {
+            if (autoRegionalAmi) {
+                List<Image> imgs = ec2.describeImages(DescribeImagesRequest.builder()
+                    .owners(CANONICAL_OWNER_ID)
+                    .filters(
+                        Filter.builder().name("name").values(DEFAULT_CANONICAL_AMI_FILTER).build(),
+                        Filter.builder().name("architecture").values("arm64").build(),
+                        Filter.builder().name("state").values("available").build()
+                    ).build()).images();
+                Image latest = imgs.stream()
+                    .max(Comparator.comparing(img -> Objects.toString(img.creationDate(), "")))
+                    .orElse(null);
+                imageId = (latest != null && latest.imageId() != null && !latest.imageId().isBlank())
+                    ? latest.imageId()
+                    : "ami-0123456789abcdef0";
+            }
             RunInstancesRequest.Builder req = RunInstancesRequest.builder()
                 .dryRun(true)
                 .imageId(imageId)
@@ -1755,16 +1776,21 @@ public final class PublishGrantProbes {
         }
 
         try (Ec2Client ec2 = buildDryRunEc2Client(backend, "us-east-1")) {
+            String resourceId = NONEXISTENT_INSTANCE_ID;
+            String discovered = findFirstNonProvisionerInstanceId(ec2);
+            if (discovered != null && !discovered.isBlank()) {
+                resourceId = discovered;
+            }
             if ("delete_tags".equals(opMode)) {
                 ec2.deleteTags(DeleteTagsRequest.builder()
                     .dryRun(true)
-                    .resources(NONEXISTENT_INSTANCE_ID)
+                    .resources(resourceId)
                     .tags(Tag.builder().key("provisioner").value("lmprov").build())
                     .build());
             } else {
                 ec2.createTags(CreateTagsRequest.builder()
                     .dryRun(true)
-                    .resources(NONEXISTENT_INSTANCE_ID)
+                    .resources(resourceId)
                     .tags(Tag.builder().key("provisioner").value("lmprov").build())
                     .build());
             }
@@ -1828,7 +1854,7 @@ public final class PublishGrantProbes {
         return Jsons.mask(value)
             .replaceAll("(?<![0-9])[0-9]{12}(?![0-9])", "************")
             .replaceAll("[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", "[masked-id]")
-            .replaceAll("\\b(i|vpc|subnet|sg|vol|eni|eipalloc)-(?!0{8,17}\\b)[0-9a-f]{8,17}\\b", "$1-****");
+            .replaceAll("\\b(i|vpc|subnet|sg|vol|eni|eipalloc)-(?!(?:0{8,17}|0123456789abcdef0)\\b)[0-9a-f]{8,17}\\b", "$1-****");
     }
 
     private static Map<String, String> buildRow(
