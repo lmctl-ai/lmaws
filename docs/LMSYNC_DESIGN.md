@@ -1,18 +1,22 @@
 # lmfiles: file lifecycle registry
 
-Implementation: **[lmctl-ai/lmfiles](https://github.com/lmctl-ai/lmfiles)** now exists
-under the confirmed name **lmfiles**. The Lead separately authorized milestones
-1A/1B after this design phase. The implemented JSON API, local/fake job and
-measurements are documented in that repo; the larger API/tier plan below still
-includes deferred 1C work. No real AWS/SFTP action or release was authorized.
+Implementation: **[lmctl-ai/lmfiles](https://github.com/lmctl-ai/lmfiles)** implements
+1A/1B and1C-a: the local registry, journals, optional scan, compact format3 events
+and real local lmcurl/lmssh pairings. Existing10k figures are informational only.
+**User decision: performance and scale measurement are not planned; correctness
+is the bar.** No100M benchmark, large uploads or scale-qualification campaign is a
+goal. lmfiles core remains local, Java-only and free of business rules.
 
-Status: **v2 design baseline, reviewed and qualified by the implemented 1A/1B subset**. This is the current registry design. It
-consolidates the useful publication examples from root `SYNC_DESIGN.md` at
-`d0f033f`, replacing its integrated sync/policy engine with the boundary below.
-The original design phase performed no runtime actions. The subsequent build
-authorization created the confirmed lmfiles repo and allowed its manual fake-only
-CI; this document still authorizes no real cloud/SSH operation or release. The
-canonical document path remains `docs/LMSYNC_DESIGN.md`; legacy lmsync links point here.
+The Lead has authorized one narrowly scoped correctness run: released lmaws
+v0.1.22, AWS_PROFILE=lmaws only, one lmaws-lmfiles-<runid> bucket in us-east-1,
+100 synthetic objects, lmaws_test=<runid>, default$0.05 cap and complete teardown.
+This does not authorize other buckets, admin/default writes or other live work.
+The release capability preflight currently blocks that run before resource
+creation; see lmfiles docs/S3_100_TEST.md. No denial was observed because no AWS
+request was attempted. No workflow dispatch or release is part of this task.
+
+This remains the canonical registry design; legacy SYNC_DESIGN.md is a pointer.
+Scripts own policy; the registry stores beliefs and never calls a remote.
 
 Contents: [boundary](#definition-and-boundary), [API](#1-core-api-and-neutral-data),
 [belief/verification](#2-believed-state-and-verification-scripts),
@@ -21,7 +25,7 @@ Contents: [boundary](#definition-and-boundary), [API](#1-core-api-and-neutral-da
 [Java stores](#5-java-implementation-and-scale-tier-storage),
 [lifecycle jobs and host gaps](#6-lifecycle-jobs-using-existing-products),
 [multi-host milestone](#7-one-lmscript-two-hosts-first-milestone),
-[benchmarks](#8-benchmark-plan-proving-the-local-state-claim),
+[functional upload correctness](#8-functional-correctness-bounded-real-upload-pairing),
 [implementation](#9-positioning-risks-and-implementation-breakdown).
 
 ## Definition and boundary
@@ -120,7 +124,7 @@ not belong in public fixtures or audit output. Status is a validated **string**
 `ok | failed | gone | skipped`, not a DSL enum, and never triggers retry/deletion.
 Stage names/namespace/slot are user strings; default slot is empty. An event binds
 the exact reported source revision, never success for a later revision. Large
-arbitrary values use bounded blobs, whose disk bytes still count in benchmarks.
+arbitrary values use bounded blobs, whose storage still counts against the configured resource budget.
 
 Completion may include an explicit observed-item update in the same transaction:
 compare the pre-fetch revision, allocate a new revision only if content changed,
@@ -551,9 +555,8 @@ IDs and checksums. No socket/TCP listener, remote RPC or native pipe binding is
 needed. This is an optional mode of the Java registry host, not another native
 component. Restrict directory permissions to the owner, reject symlink traversal,
 use backpressure/bounded polling and fsync before acknowledging. Keep completed
-request IDs durably deduplicated before reclaiming reply files. Measure mailbox
-latency and file churn; use coarse 32–256-item request batches as the template
-default, never one durable mailbox RPC per item at high throughput. A later OS-local IPC
+request IDs durably deduplicated before reclaiming reply files. Use coarse32–256-item request batches as the template default; verify durable
+ordering and deduplication without timing or throughput studies. A later OS-local IPC
 optimization must preserve this protocol and qualify platform support.
 Clients retry uncertain requests with the same operation ID. Embedded mode remains
 useful for one process; second direct writers get `writer-busy`, not corruption.
@@ -649,9 +652,9 @@ design adds no transport dependency to the registry.
 
 | Store | Primary-source evidence / uncertainty | Recommendation |
 |---|---|---|
-| Direct H2 MVStore | Argon2 reports H2/MVStore native-image working on all five lmdb targets with AWT metadata excluded and supplied reflection config; registry workload still unqualified | Recommended first store, explicit byte codecs and positional file I/O; qualify large tiers before choosing custom runs |
+| Direct H2 MVStore | Argon2 reports H2/MVStore native-image working on all five lmdb targets with AWT metadata excluded and supplied reflection config; registry workload still unqualified | Recommended first store, explicit byte codecs and positional file I/O; preserve correctness before considering custom runs |
 | Custom sorted runs + sparse fences + Bloom filters | Implementable with Java NIO; immutable generations, WAL and compaction are our engineering responsibility | Recommended 100M/1B path; small-tier fallback/common export format |
-| iq80 Java LevelDB / embedded LSM | Java port with batches/snapshots/cache controls; reviewed README describes limited testing, and no representative native-image qualification was found | Prototype/benchmark alternative, not an assumed production dependency |
+| iq80 Java LevelDB / embedded LSM | Java port with batches/snapshots/cache controls; reviewed README describes limited testing, and no representative native-image qualification was found | Unselected implementation alternative, not an assumed production dependency |
 | MapDB | JVM file-backed collections; exact dependency/reachability/durability behavior needs testing | Optional candidate; no unmeasured native-image claim |
 | Xerial SQLite JDBC | Native-image support exists, but SQLite is loaded from platform native libraries through JNI | Not compatible with this brief's Java-only/no-JNI requirement |
 | RocksDB JNI | Adds native libraries and per-platform JNI packaging/testing | Not needed by the proposed Java design; only reconsider with explicit new user direction if every viable Java approach fails |
@@ -680,8 +683,8 @@ must not imply huge mapped address space. No dependency is added by this design.
 
 ### Lean scale model with stages and audit history
 
-Argon2's **unmeasured 750–1,050 B/item target** is adopted for a lean synthetic
-profile: three shared-prefix aliases averaging 96 uncompressed bytes, one local
+Argon2's historical **750–1,050 B/item estimate** described a lean synthetic
+profile; it is informational, not a planned measurement or acceptance target: three shared-prefix aliases averaging 96 uncompressed bytes, one local
 observation, five co-located stage summaries, six compact events, SHA-256 stored
 once per distinct content revision, and a small declared attribute/frontier index
 set. Intern stage/namespace/slot IDs, use dense item numbers, raw digests, block
@@ -704,30 +707,25 @@ Long unrelated URLs, high-entropy errors/digests, many revisions/indexes and
 failed retries can greatly exceed these averages. No silent metadata truncation
 or event dropping is permitted to meet a size target.
 
-| Tier (items) | Store recommendation | Lean estimated live disk | Working-memory ceiling | Unmeasured subset-query goals |
+| Tier (items) | Store recommendation | Lean estimated live disk | Working-memory ceiling | Historical estimates, not acceptance targets |
 |---|---|---:|---:|---|
-| <=1M | H2 MVStore with compact byte rows; qualify footprint | 0.75–1.05 GB | 128–256 MiB | 1M lookups <=20 s warm / <=60 s cold |
-| <=100M | Benchmark MVStore vs sharded Java sorted runs; choose measured result | 75–105 GB | 512–768 MiB | 1M lookups <=30 s warm / <=180 s cold |
-| <=1B | Bounded Java sorted partitions if MVStore fails tier tests | 750–1,050 GB | <=1,024 MiB | Projection <=60 s warm / <=300 s cold |
+| <=1M | H2 MVStore with compact byte rows | 0.75–1.05 GB | 128–256 MiB | No performance target |
+| <=100M | Current qualified MVStore; alternate store only for a demonstrated correctness need | 75–105 GB | 512–768 MiB | No performance target |
+| <=1B | Unselected bounded Java sorted-partition option | 750–1,050 GB | <=1,024 MiB | No performance target |
 
 These compact targets include the section 1 baseline indexes and only a small
-number of sparse difference frontiers; add independently measured per-index and
+number of sparse difference frontiers; account conceptually for per-index and
 history-growth costs. Reserve **2x live disk** for compaction plus WAL, snapshots,
 exports and unique metadata: 100M lean ~150–210 GB before those extras, 1B lean
 ~1.5–2.1 TB. MVStore page overhead and write amplification are not known to match
-the sorted-run arithmetic. Measure bytes by family before choosing it for a tier.
+the sorted-run arithmetic. These estimates are not planned measurements or qualified tier capacities.
 Keep filters/fences on disk with bounded cache, not all in RAM; Bloom positives
-always compare full keys. Measure heap, direct buffers, RSS and OS cache separately.
+always compare full keys. Resource bounds remain explicit; no RSS or throughput study is planned.
 
-Frontier acceptance case: 100M A, 99,995,000 matching B, query returns 5,000 by
-reading at most frontier entries plus bounded seek/page overhead, never 200M
-postings. Report cold/warm latency, physical reads, mutation write amplification
-and ready-index construction time. Stage bits alone would still require scanning
-100M items; **the sparse index** supplies output-sensitive enumeration. Attribute/
-hash lookup targets <10 ms warm p95 for small results; high-duplicate results stream.
-General aggregates include scan cost. Claim batch sizes 1/32/256 quantify writer
-saturation. All goals remain unmeasured. The 100M disk benchmark below decides
-whether the lean target and frontier latency actually hold.
+Frontier correctness acceptance uses small synthetic fixtures: compare registered
+A-not-B results against an independent oracle, including revisions, late receipts,
+failed attempts and tombstones. Sparse frontiers remain the implementation, but
+no timing, I/O-throughput or large-population acceptance target is planned.
 
 Cap memtable, block/filter caches, open shards/files and compaction workers through
 plain resource options. Use checksummed blocks, explicit encodings, bounded merge
@@ -1200,7 +1198,7 @@ fix. Include existing-path regression coverage in the lmssh implementation gate.
 
 | Requirement | Available today / limit | Recipe choice or exact small addition |
 |---|---|---|
-| Per-file parallelism on one host | `ssh.each` fans commands over hosts; `ssh.parallel(n)` does not turn `Session.put` or one raw batch into a per-file pool. Several sessions/calls in one DSL block remain sequential | Outer LMScript uses bounded parallel workers, each running an lmssh block/process with a disjoint claimed manifest. No new session-pool API needed for the initial job; benchmark handshake/multiplex costs |
+| Per-file parallelism on one host | `ssh.each` fans commands over hosts; `ssh.parallel(n)` does not turn `Session.put` or one raw batch into a per-file pool. Several sessions/calls in one DSL block remain sequential | Outer LMScript uses bounded parallel workers, each running an lmssh block/process with a disjoint claimed manifest. No new session-pool API needed for the initial job; check connection reuse functionally |
 | Connection reuse under concurrency | `reuse(true)` uses ControlMaster with a host-runtime work-directory ControlPath. Sessions for the same endpoint in one runtime can share that master; closing one may disturb siblings | Give each outer worker its own lmssh process/private work directory, reuse within it, and close after its batch. Do not share live Session handles or close a shared master per file |
 | Interrupted upload/download | Existing raw `sftp` accepts `reput`/`reget`, including preservation flags; ordinary put/get retries restart. Resume consults server attributes as protocol work | Script records immutable source revision, known temp path and partial state; resumes only with its own trusted-prefix contract. A changed/unknown source or oversized/corrupt prefix restarts or explicitly verifies. No append/resume binding is missing |
 | mtime and permissions | Raw `put -p`, `get -p`, `reput -p`, `reget -p` request mode/time preservation; `chmod mode path` is available in raw batches. Typed put/get has no preserve argument; server privilege/umask/time precision can limit results | Use existing batch commands and explicit script-selected metadata; record requested versus actually confirmed attributes separately. No new chmod/mtime wrapper needed. Do not claim ownership/ACL/xattr preservation or remote mode confirmation without an explicit verification |
@@ -1247,7 +1245,7 @@ handoff or new transport product is required. **This document implements none.**
    structured errors and unknown fallback. Policy/retry caps stay in the `.lms`.
 4. Compose worker-process concurrency with existing runtime fan-out and private
    ControlPaths. Benchmark batch sizes and per-host worker counts; only add a
-   connection-pool convenience later if measured process overhead justifies it.
+   connection-pool convenience only if a concrete functional requirement needs it.
 5. Test JVM/native registry replay against actual lmssh local receipts, update
    lmssh schema/help/API docs and synthetic recipe pictures, and run its local
    gate. No change to lmcurl, no new SSH library and no real remote host is needed.
@@ -1327,7 +1325,7 @@ not one compile/spawn per object. Argon2's non-throwing lmcurl option likewise
 needs behavior tests, not just a schema check.
 
 lmaws currently fsyncs its CostLedger on each SDK call and enforces the existing
-hard cap. Measure this as a throughput cost. Any optimization must **durably
+hard cap. No throughput study is planned. Any optimization must **durably
 reserve the batch's worst-case billable budget before requests**, charge uncertain
 outcomes conservatively and reconcile receipts after; never merely defer
 charge/admission fsync until after requests. Retain current per-call safety until
@@ -1447,132 +1445,73 @@ a preview is only a synthetic namespace receipt, never proof of real upload.
 Persistent arbitrary files require the exact s3_put_file integrity/non-throwing
 binding before claiming that variant works. All executions remain local/fake.
 
-**1C — optional helpers and scale qualification.** Add local scan/hash cursors,
-full import/export/event archives and coarse multi-process mailbox support after
-the single-process job is useful. Complete the eight lifecycle scripts and their
-synthetic pictures, qualify host-specific batch receipts/failure handling, and
-run the measured lean/heavy 100M workload before claiming a stable large tier.
-The registry's Java-only boundary and stage-policy neutrality remain acceptance
-gates for each slice.
+**1C — functional lifecycle correctness.** Preserve optional local ingestion,
+import/export/event history and the script-owned pipeline. The next acceptance
+work is the100-object upload pairing below, plus deterministic crash, corruption,
+fencing and recovery checks. Performance and scale measurement are not planned;
+there is no100M-item, large-tree or large-upload qualification goal. Existing10k
+numbers stay informational. General indexes/cursors/archives and process mailbox
+APIs are separate future functionality, not reasons to schedule benchmarks.
 
-**Later, only after explicit live authorization:** one bounded lmaws test bucket,
-`lmaws-*` name and `lmaws_test` tag, existing ledger caps. Existing Run.bucket/put/
-cleanup suffices for a small string smoke; persistent file publication needs the
-PUT gap. Record actual PUT and actual cleanup/forget separately, report leftovers,
-and preserve failure receipts. No real AWS/SSH test is run or authorized by this
-design task. No registry repository or workflow is created/dispatched.
+## 8. Functional correctness: bounded real upload pairing
 
-## 8. Benchmark plan proving the local-state claim
+One LMScript orchestrates lmfiles state with released lmaws. It must restrict all
+AWS activity to profile lmaws and the exact unique lmaws-lmfiles-<runid> bucket,
+tagged lmaws_test=<runid>, region us-east-1, with a$0.05 ledger cap. Only synthetic
+small files are allowed. Public evidence contains counts/status, never account
+IDs, ARNs, bucket IDs, credentials or object names from real data. Stop on any
+IAM denial and report action/resource/condition without broadening grants.
 
-Measure pure read queries separately from mutation operations: claim, renew,
-complete, scan, observe and record intentionally change local state, although all
-remain remote-side-effect free. No measurements are fabricated here. Use deterministic synthetic fixtures and a
-local protocol-recording fake endpoint first. A network-denying harness must prove
-that all lmfiles operations, including doctor/import/recovery, make **zero network
-calls**. Benchmark transfer scripts separately, counting every host request,
-security check, retry and byte. Emulator timing is not AWS timing.
+Required correctness phases:
 
-### Query and request counts
+1. Publish100 files using a100-add plan and confirmed receipts.
+2. Replan unchanged local state: empty plan and zero AWS requests of any kind.
+   Do not initialize an AWS client or perform ownership checks for this phase.
+3. Change3, add2 and remove2: exactly5 uploads and2 deletes; record confirmations.
+4. A new100-file generation: kill the executor around40 uploads, replay durable
+   receipts, replan only unconfirmed operations. Confirmed PUTs must not repeat;
+   allow only the one uncertain in-flight retry in the PUT ledger count.
+5. Lose one successful upload response: no confirmed projection until retry.
+   If-None-Match on an existing key returns412 and does not overwrite it.
+6. The TEST independently lists and verifies exact key sets, sizes, ETags/content
+   hashes, Content-Type and Cache-Control after each relevant phase. These are
+   script-controlled verification calls, never hidden registry behavior.
+7. Delete all test objects and the bucket, independently prove absence, then
+   publish sanitized counts/pass-fail and the ledger cost. Do not claim absence
+   from a cleanup intent or a missing local receipt.
 
-Measure 1M queried paths as index-only lookups with existing local observations,
-then separately end-to-end local scan/stat/hash + query. Include random and
-localized sets, hits/misses, multiple targets, dirty stat records, unrelated roots
-and streaming output. Compare HEAD-per-file and explicit list-and-compare via the
-fake action host, not new network methods in lmfiles. An arbitrary subset of M paths
-need not correspond to a remote directory; enumerating N remote keys still leaves
-the application to compare that subset. An existing local DB answers directly.
+Request counts are correctness assertions, not performance measurements. The
+normal query still makes zero remote calls; only the script's selected actions
+and explicit test verification contact AWS. Do not run comparative aws CLI/rclone
+baselines, timing/RSS/throughput studies or any large-object population.
 
-Expected decision counts below are **hypotheses for measurement**, excluding
-separately reported transfer-host security checks. Assume full 1,000-object pages;
-directory shape, short pages, retries and baseline options can add requests.
+### Released-host capability block (v0.1.22)
 
-| No-change decision method | 10k files | 200k files | 1M queried paths with a 1B-object target |
-|---|---|---|---|
-| lmfiles local query | 0 remote calls | 0 remote calls | 0 remote calls; 1M local comparisons |
-| HEAD/stat per file baseline | 10k HEAD/stat | 200k HEAD/stat | 1M HEAD/stat |
-| Flat list-and-compare | About 10 LIST | About 200 LIST | At least 1M LIST pages if enumerating the whole target |
-| AWS CLI `s3 sync` tree workflow | Expect about 10 LIST plus measured extras | Expect about 200 LIST plus extras | Destination enumeration scales with the compared namespace |
-| rclone ordinary sync | Page lower bound plus per-directory/metadata calls | Same caveat | Measure directory traversal, not only the flat lower bound |
-| rclone fast-list sync | About 10 LIST plus measured checks | About 200 LIST plus checks | Enumeration and memory scale with destination |
-| rclone no-traverse subset copy | Direct candidate checks measured; no full-tree listing expected | Same | A fair optimized subset competitor; usually trades traversal for direct checks |
+The installed release schema offers Run.put(Row,key,string)->void, Run.bucket,
+Run.cleanup and Cloud.resource_exists. It has no generic S3 file PUT with headers,
+checksum/confirmation and If-None-Match, list-object metadata, HEAD-object metadata
+or selective object-delete binding. Existing Run resources are process-owned and
+Run.close cleans them; they cannot reattach a persisted bucket after executor
+restart. Sandbox names are lmaws-<runid>-<suffix>, not the exact requested layout
+for an arbitrary unique tag runid. These are API gaps, not an IAM denial or a
+registry defect. Do not weaken the existing sandbox guards as a workaround.
 
-Do not claim every tool always lists. Fix/document the exact baseline flags and
-versions, including rclone modtime/HEAD-after-upload and fast-list memory choices.
-Keep metadata, integrity checks, concurrency, part settings, byte sizes, latency,
-region/endpoint and retry policy comparable; report tuned as well as default
-baselines. [AWS CLI sync](https://docs.aws.amazon.com/cli/latest/reference/s3/sync.html),
-[rclone S3 behavior](https://rclone.org/s3/), [rclone flags](https://rclone.org/flags/).
-No baseline commands are executed here. A future non-lmaws AWS baseline requires
-its own explicit authorization; loopback/fake comparisons need no real account.
+Small additions needed in lmaws (names below are proposed contracts):
 
-ListObjectsV2 returns at most 1,000 keys/page. A billion keys implies at least a
-million LIST requests, roughly $5 under an illustrative $0.005/1,000 request rate,
-before other costs. At illustrative $0.0004/1,000 read requests, 1M HEADs cost $0.40;
-lmfiles's local query costs $0 in remote requests. These are arithmetic examples,
-not invoices, performance measurements or hardcoded lmfiles prices. Pricing belongs
-to the script/action host. [ListObjectsV2](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html),
-[AWS pricing example](https://docs.aws.amazon.com/solutions/latest/automated-security-response-on-aws/cost.html).
+- s3_bucket_create/delete for an exact guarded name/tag and crash-safe ledger
+  ownership/recovery; never adopt an unowned preexisting bucket.
+- s3_put_file with expected_sha256, Content-Type, Cache-Control, optional
+  If-None-Match and a structured confirmed/uncertain/precondition receipt.
+- s3_head_object and s3_list_objects for the TEST's independent verification.
+- s3_delete_objects with per-key outcomes and exact run ownership.
+- Ledger request/cost accounting across executor invocations, including ambiguous
+  sends and cleanup, with no implicit calls on an empty plan.
 
-### 10k / 200k publication jobs
-
-Create real local synthetic trees of 10k and 200k files with recorded distributions,
-seed and digests. Measure first publication, no-change re-run, and 1% changes
-(100 / 2,000 files), plus separate metadata-only, preserved-mtime and multipart
-variants. Run the same user policy with state enabled and a Java transfer baseline
-without remembered state to isolate DB benefits from SDK transfer throughput.
-
-Collect scan/query/decision/transfer/record wall time, CPU/hash bytes, peak heap/RSS,
-OS page cache, disk I/O, open-file peak, per-operation request counts, uploaded/copied
-bytes and action-host estimated cost. Use at least three trials with hardware,
-filesystem, dependency versions and JVM/native-image labels. A cold process is not
-a cold filesystem cache; report the distinction. Any picture from fake trials is
-clearly synthetic.
-
-With a script that chooses only changed stable-key single-part uploads, expected
-PUTs are N initially, 0 on no-op, and 0.01N for a 1% content change, plus host checks
-and any verification the script deliberately selected. Release prefixes, hash
-rewrites and script-selected verification can amplify these counts; show them as
-separate policies, not hidden costs of the state primitive. A 200k first publish
-can exceed the existing lmaws $0.25 per-run hard ceiling. Use the fake executor for
-that experiment; any later live campaign needs explicit bounded batches, aggregate
-cost disclosure and authorization, not a silent cap raise.
-
-### 100M-entry local index test
-
-Generate **100M synthetic items**, three aliases, five stages and six events per
-item with the section 5 metadata distribution, plus all required indexes, on local
-disk: not 100M actual downloaded files or remote objects. Check free space first:
-the lean model needs at least 150–210 GB compaction headroom plus archives/WAL
-and extra metadata; reserve more for the metadata-heavy profile.
-If unavailable, report the limitation and run a smaller measured scale; never
-claim a 1M-only benchmark proved 100M behavior. Measure actual bytes per family, WAL,
-filters/fences, compaction amplification, bulk ingest, open/recovery time and
-1M-query warm/cold latency under fixed memory limits. Include 90/10 hit/miss mix,
-localized/uniform random queries, multiple targets, 1% updates, forget tombstones,
-concurrent snapshot readers, stage A-not-B (dense and sparse), revision-aware
-anti-joins, scalar attribute predicates, duplicate hash buckets, time ranges,
-aggregates and event cursor replay. Measure lease claim/renew/complete contention
-with many workers/process clients and the forced-kill cases in section 4.
-Report bytes separately for items, aliases, stage projections, events, claims,
-indexes and WAL; report per-event growth and full write amplification. Use 64-bit offsets and files
-larger than 4 GiB. Compare JVM and shipped GraalVM binaries.
-
-Run **two declared metadata profiles**: lean interned/sparse (750–1,050 B/item
-target) and unique per-stage 128 B/per-event 96 B payloads with long/high-entropy
-aliases. Count actual blobs, reverse indexes, difference-frontier entries,
-compression, WAL and compaction bytes; a small metadata profile cannot prove a
-bound for arbitrary attributes. Add the 100M/5,000-pending steady-state case:
-measure initial build separately, then no-change reads, 5,000 additions/completions,
-source revision changes and crash recovery with frontier correctness against an
-independent full anti-join oracle. Assert query I/O tracks pending cardinality
-plus shard seeks, not complete A/B populations. Publish actual bytes/item, p50/p95
-latency, examined entries and write amplification on recorded hardware.
-
-Publish measured size/lookup/RSS results before selecting the 100M tier as stable.
-The 1B estimates remain projections until a separately qualified larger test;
-do not create a billion remote objects. An all-in-memory microbenchmark is not
-evidence for this disk tier. Store failures trigger a better Java codec/store
-choice, not automatic JNI adoption or a full C++ rewrite.
+Existing s3_upload_check is not a substitute: its implementation uses the default
+profile for PUT and a different fixed smoke-test workflow/name. The current brief
+forbids that path. No AWS session or bucket is opened until the required released
+API exists. The executable preflight records all seven phases as NOT RUN, zero
+created resources and zero AWS requests; it does not claim remote absence proof.
 
 ## 9. Positioning, risks and implementation breakdown
 
@@ -1606,7 +1545,7 @@ directories or moving/deleting files itself.
 |---|---|
 | Alias collision or hash treated as identity | Unique alias index returns conflict; duplicate hashes remain separate items |
 | Failed retry hides prior publication / new source mistaken for published | Latest attempt and last-success distinct; compare explicit source revisions |
-| Dense anti-join/index explosion | Transactional sparse frontiers for registered differences; explicit scan fallback only for ad-hoc queries; measure per-index amplification |
+| Dense anti-join/index explosion | Transactional sparse frontiers for registered differences; explicit scan fallback only for ad-hoc queries; check transactional frontier consistency |
 | Lease fencing mistaken for remote exactly-once | Fenced local completion only; script/host idempotency and version preconditions |
 | Archived cursor range unavailable | Explicit error with low-watermark/archive ranges; never silently skip events |
 | Outside writer or years-old belief | No age heuristic or hidden query; script chooses explicit verification/reconciliation |
@@ -1642,8 +1581,8 @@ Implementation steps for registry coders:
    section 6 and verify it there; do not invent a new upload/download product.
    Keep current product APIs and examples valid. Later real AWS tests require
    separate authorization and the existing lmaws safety/ledger rules.
-7. Qualify large sorted-store tiers and the local 100M benchmark. Measure the
-   registry's disk/memory/query behavior rather than claiming unrun results.
+7. Prove small-fixture lifecycle correctness, confirmation-gap recovery and
+   empty-plan zero-request behavior. No performance or scale measurements planned.
 8. Update registry schema/help/examples and synthetic pictures. No new repository,
    release or workflow dispatch is authorized by this documentation task.
 
@@ -1655,43 +1594,21 @@ is added to the core. This document is the consolidated design; root
 `SYNC_DESIGN.md` is only a pointer.
 
 
-## Implementation qualification: milestones 1A/1B
+## Implemented state after1C-a
 
-The first implementation qualifies H2 MVStore with dense positive long keys,
-interned stage IDs, co-located stage summaries, CRC32C and compressed JSON binary
-payloads using positional I/O. It does not yet implement the custom raw-digest/
-delta-event codec assumed by the lean sizing model. The measured10k-item profile
-(three explicit aliases plus identity index, five stages,60,100 events including
-100 pending updates) occupies **1,507.328 bytes/item**, above the unmeasured
-750–1,050 target. Keep that target as a 1C benchmark goal, not a claim about1A.
+lmfiles uses qualified H2 MVStore with positional I/O, dense IDs, interned stage
+and alias families, co-located projections and compact CRC32C event frames with
+page compression. Format1/2 stores upgrade to3 through a synced shadow with a
+retained backup; no reset. Lease deadlines survive reopen and persisted owner
+fences/clock eras reject expired holders. JSON/scalar/opaque-handle API only.
 
-A reopened100-entry sparse frontier examined exactly100 entries in3.711ms;
-1,000 permuted subset lookups including JSON serialization took73.083ms. These
-are one local Linux/native observations, not100M results or cold-cache statistics.
-Exact evidence, fixture contract and binary hash: lmfiles docs/MEASUREMENTS.md.
+The historical10k-item format3 profile is804.4544B/item versus1480.2944 in format2.
+Those figures are informational, not a new acceptance target. Functional tests
+cover state, journal replay, crash points, revision fencing and real local HTTP/
+SFTP pairings. No new scale/performance measurement is planned.
 
-Implementation choices preserve core neutrality: JSON/scalar bindings, caller-
-declared frontier predicates, explicit revision comparisons, and user-reported
-results. Namespaced IDs are DB-scoped positive 64-bit decimal strings; don't mix
-numeric IDs between registries. Optional initial aliases can be adopted atomically
-with item_upsert and recorded in its single creation event. Lease deadlines are
-persisted with a monotonic owner epoch; reopen conservatively retains the full
-original duration without scanning/loading all claims into RAM.
-
-The one-script publication job explicitly binds existing lmaws in demo mode and
-owns a persistent LOCAL fake bucket. It records success only after the mock host
-and local write report success. The fixture tests first publish, no-op, changed
-bytes, deliberately missing receipt, replay and retry; no real AWS test occurred.
-Nine actual fault points include half-written H2 pages, write failure, compaction
-boundaries and durable plan/result receipt boundaries. Managed/native assertions,
-address-space/memory checks and public URL runs are recorded in the product repo.
-
-1C remains: optional scans/hash helpers, general predicate indexes/aggregates,
-change cursors/checkpoints/archives, multi-process coordination and100M scale/
-metadata-heavy/compaction/power-loss qualification. Existing transport gaps remain
-separate. Manual lmfiles CI is permitted by the build brief; lmctlhq workflow
-dispatch, tags/releases and real cloud/SSH actions remain outside this task.
-
-Five-platform managed/native qualification is green for the implementation:
-https://github.com/lmctl-ai/lmfiles/actions/runs/40526639317
-No tags or releases were created.
+The one-script upload executor remains a local fake. The separately authorized
+100-object AWS correctness run is blocked by released lmaws0.1.22 API gaps, before
+resource creation. General predicates, change cursors/archives and multi-process
+coordination remain possible future API work. No large-tier qualification is a
+roadmap goal. Exact implementation contracts/evidence live in the lmfiles repo.
