@@ -11,6 +11,7 @@ public final class CloudHost implements AutoCloseable {
     private final List<Sandbox> runs=new ArrayList<>();
     private final Map<SpendReport,CostLedger> spendLedgers=new IdentityHashMap<>();
     private final Map<Session,Ec2Compute> compute=new IdentityHashMap<>();
+    private final Map<Session,Ec2Provision> provisioning=new IdentityHashMap<>();
     private final List<Ec2Compute.SpotRun> spots=new ArrayList<>();
     private final List<WebRun> webRuns=new ArrayList<>();
     private final List<LambdaFunction> lambdaFunctions=new ArrayList<>();
@@ -71,6 +72,10 @@ public final class CloudHost implements AutoCloseable {
         boolean live=AwsBackend.isLiveEnabled();
         String region=AwsBackend.activeRegion();
         return open(region,!live,name,true);
+    }
+    private Ec2Provision provision(Value value) {
+        Session selected=session(value);
+        return provisioning.computeIfAbsent(selected, s -> new Ec2Provision(s.backend));
     }
     private Session session(Value value) {return (Session)value.asObject();}
     public Registry registry() {
@@ -234,6 +239,14 @@ public final class CloudHost implements AutoCloseable {
     private static Value one(Map<String,String> data,Context c) {c.charge(2048);return Value.object("Row",data);}
     /** EC2 compute: read-only reports on Cloud, and one run-owned spot nano lifecycle (type Spot). */
     private void registerCompute(Registry r) {
+        r.method("Cloud","ec2_provision_run",List.of("string"),"string",(c,s,a)->Value.ofString(provision(s).run(text(a[0]))));
+        r.method("Cloud","ec2_provision_describe",List.of("string"),"string",(c,s,a)->Value.ofString(provision(s).describe(text(a[0]))));
+        r.method("Cloud","ec2_provision_stop",List.of("string"),"string",(c,s,a)->Value.ofString(provision(s).stop(text(a[0]))));
+        r.method("Cloud","ec2_provision_start",List.of("string"),"string",(c,s,a)->Value.ofString(provision(s).start(text(a[0]))));
+        r.method("Cloud","ec2_provision_terminate",List.of("string"),"string",(c,s,a)->Value.ofString(provision(s).terminate(text(a[0]))));
+        r.method("Cloud","ec2_provision_verify",List.of("string"),"string",(c,s,a)->Value.ofString(provision(s).verify(text(a[0]))));
+        r.method("Cloud","ec2_provision_console",List.of("string"),"string",(c,s,a)->Value.ofString(provision(s).console(text(a[0]))));
+        r.method("Cloud","ec2_provision_dry_run",List.of("string","string"),"string",(c,s,a)->Value.ofString(provision(s).dryRun(text(a[0]),text(a[1]))));
         r.method("Cloud","ec2_instances",List.of("string","string"),"Rows",(c,s,a)->rows(compute(s).instances(text(a[0]),text(a[1])),c));
         r.method("Cloud","cpu_credits",List.of("string","int"),"Rows",(c,s,a)->rows(compute(s).cpuCredits(text(a[0]),a[1].asInt()),c));
         r.method("Cloud","addresses",List.of(),"Rows",(c,s,a)->rows(compute(s).addresses(),c));

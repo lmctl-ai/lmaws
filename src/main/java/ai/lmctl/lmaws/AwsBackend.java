@@ -1730,6 +1730,18 @@ public final class AwsBackend implements AutoCloseable {
     private Map<String, String> demoCreate(String k, String n, String value, String runId) { String id = n; String key = demoKey(k, id); if(demoResources.containsKey(key))throw new IllegalStateException("demo resource already exists"); Map<String, String> m = row("kind", k, "id", id, "name", n, "created", Instant.now().toString(), "run_id", runId,"tags",Jsons.encode(Map.of("lmaws_test",runId))); if (value != null) m.put("value_metadata", "stored"); demoResources.put(key, m); return new LinkedHashMap<>(m); }
     private static String demoKey(String kind, String id) { return kind + "\u0000" + id; }
 
+    private Ec2Client provisioningEc2;
+    /** Provisioning owns retries through its persisted client token and observed state. */
+    Ec2Client provisioningEc2Client() {
+        if(provisioningEc2==null) provisioningEc2=register(base(Ec2Client.builder(),
+            config.toBuilder().retryPolicy(RetryPolicy.builder().numRetries(0).build()).build()).build());
+        return provisioningEc2;
+    }
+    private SsmClient provisioningSsm;
+    private StsClient provisioningSts;
+    SsmClient provisioningSsmClient(){if(provisioningSsm==null)provisioningSsm=register(base(SsmClient.builder(),config.toBuilder().retryPolicy(RetryPolicy.builder().numRetries(0).build()).build()).build());return provisioningSsm;}
+    StsClient provisioningStsClient(){if(provisioningSts==null)provisioningSts=register(base(StsClient.builder(),config.toBuilder().retryPolicy(RetryPolicy.builder().numRetries(0).build()).build()).build());return provisioningSts;}
+    boolean hasFakeEndpoint() { return endpoint != null; }
     Ec2Client ec2Client() { return ec2(); }
     IamClient iamClient() { return iam(); }
     StsClient stsClient() { return sts(); }
