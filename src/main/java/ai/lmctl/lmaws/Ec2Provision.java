@@ -62,6 +62,11 @@ final class Ec2Provision {
         try(ProvisionJournal journal=ProvisionJournal.open(value,backend.isDemo())){
             Map<String,Object> state=journal.state();Map<String,Object> receipt;
             try{receipt=work.run(journal,state);}catch(RuntimeException failure){
+                // A rejected start never began a billing segment. A transport-uncertain start
+                // keeps the conservative pending estimate until a provider observation settles it.
+                if(!dry&&"StartInstances".equals(lastCall.get())&&failure instanceof AwsServiceException aws&&aws.statusCode()<500&&state.containsKey("pending_start_prior_state")){
+                    state.put("state",state.remove("pending_start_prior_state"));state.put("active_segment_seconds",0);
+                }
                 // Invalid ownership/configuration is never disguised as an AWS success.
                 String failedAction=failure instanceof AwsServiceException?lastCall.get():operation;
                 receipt=error(journal,failure,failedAction);
@@ -176,13 +181,17 @@ final class Ec2Provision {
                 else{var s=status.instanceStatuses().get(0);out.put("system_status",s.systemStatus()==null?"unknown":s.systemStatus().statusAsString());out.put("instance_status",s.instanceStatus()==null?"unknown":s.instanceStatus().statusAsString());}
             }
             boolean impaired="impaired".equals(out.get("system_status"))||"impaired".equals(out.get("instance_status"));
-            if(impaired||instance.stateReason()!=null&&!text(instance.stateReason().code()).isBlank()){
+            String reason=instance.stateReason()==null?"":text(instance.stateReason().code());
+            boolean failedReason=!reason.isBlank()&&!Set.of("Client.UserInitiatedShutdown","Client.InstanceInitiatedShutdown","Client.UserInitiatedHibernate").contains(reason);
+            out.put("health_failed",impaired||failedReason);out.put("classification",impaired?"status_checks_failed":failedReason?"state_transition":"");
+            if(!impaired&&!failedReason)out.put("console_tail","");
+            if(impaired||failedReason){
                 out.put("health_failed",true);out.put("classification",impaired?"status_checks_failed":"state_transition");
                 try{out.put("console_tail",consoleText(journal,state,instance.instanceId()));}catch(RuntimeException denied){out.put("console_error",error(journal,denied,"GetConsoleOutput"));}
             }
         }
         if(state.get("config") instanceof Map<?,?>){ProvisionCosts.settle(state,observed,Instant.now());}
-        state.putAll(out);return out;
+        state.putAll(out);state.remove("pending_start_prior_state");state.put("last_observed_state",observed);return out;
     }
     private void resolve(ProvisionJournal journal,Map<String,Object> state,Map<String,Object> cfg){
         if(state.containsKey("ami_id"))return;
@@ -248,6 +257,7 @@ final class Ec2Provision {
                 Map<String,Object> out=observe(j,s,demoInstance(s,value),true);out.put("status",operation.equals("start")?"started":text(s.get("state")));return out;
             }
             String iid=instance.instanceId();
+            if(operation.equals("start")&&!dry){s.put("pending_start_prior_state",current);ProvisionCosts.settle(s,"pending",Instant.now());}
             s.put("last_requested_operation",operation);s.put("last_requested_at",Instant.now().toString());j.save(s);
             if(operation.equals("stop"))call(j,action,()->ec2().stopInstances(x->x.instanceIds(iid).dryRun(dry)));
             else if(operation.equals("start"))call(j,action,()->ec2().startInstances(x->x.instanceIds(iid).dryRun(dry)));

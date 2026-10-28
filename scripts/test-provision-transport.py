@@ -20,7 +20,7 @@ import base64
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERSION=ET.parse(ROOT/"pom.xml").getroot().find("{http://maven.apache.org/POM/4.0.0}version").text
-HOST=os.environ.get("LMAWS_TEST_HOST")
+HOST=str(pathlib.Path(os.environ["LMAWS_TEST_HOST"]).resolve()) if os.environ.get("LMAWS_TEST_HOST") else None
 COMMAND=(["cmd.exe","/c",HOST] if HOST and HOST.endswith(".cmd") else [HOST]) if HOST else ["java","-cp",str(ROOT/"target"/f"lmaws-{VERSION}.jar"),"ai.lmctl.lmaws.Main"]
 
 
@@ -40,6 +40,7 @@ class Fake(http.server.BaseHTTPRequestHandler):
     boot_count = 0
     decode_denied = False
     impaired = False
+    state_reason = ""
     unsafe_child = False
     tags = {
         "provisioner": "lmprov", "lmprov_id": "demo-01",
@@ -107,7 +108,7 @@ class Fake(http.server.BaseHTTPRequestHandler):
                 self.reply(f"<DescribeInstancesResponse {ns}><reservationSet/></DescribeInstancesResponse>")
                 return
             tags = {} if Fake.unsafe_tags else Fake.tags
-            self.reply(f"<DescribeInstancesResponse {ns}><reservationSet><item><instancesSet><item><instanceId>i-0fixture000000001</instanceId><instanceType>t4g.nano</instanceType><instanceState><name>{Fake.state}</name></instanceState><blockDeviceMapping><item><deviceName>/dev/sda1</deviceName><ebs><volumeId>vol-0fixture00000001</volumeId><deleteOnTermination>true</deleteOnTermination></ebs></item></blockDeviceMapping><networkInterfaceSet><item><networkInterfaceId>eni-0fixture0000001</networkInterfaceId></item></networkInterfaceSet><tagSet>" + "".join(f"<item><key>{k}</key><value>{v}</value></item>" for k, v in tags.items()) + "</tagSet></item></instancesSet></item></reservationSet></DescribeInstancesResponse>")
+            self.reply(f"<DescribeInstancesResponse {ns}><reservationSet><item><instancesSet><item><instanceId>i-0fixture000000001</instanceId><instanceType>t4g.nano</instanceType><instanceState><name>{Fake.state}</name></instanceState><stateReason><code>{Fake.state_reason}</code><message>synthetic transition reason</message></stateReason><blockDeviceMapping><item><deviceName>/dev/sda1</deviceName><ebs><volumeId>vol-0fixture00000001</volumeId><deleteOnTermination>true</deleteOnTermination></ebs></item></blockDeviceMapping><networkInterfaceSet><item><networkInterfaceId>eni-0fixture0000001</networkInterfaceId></item></networkInterfaceSet><tagSet>" + "".join(f"<item><key>{k}</key><value>{v}</value></item>" for k, v in tags.items()) + "</tagSet></item></instancesSet></item></reservationSet></DescribeInstancesResponse>")
         elif action == "DescribeVolumes":
             if not Fake.children_present:
                 self.reply(f'<Response {ns}><Errors><Error><Code>InvalidVolume.NotFound</Code><Message>gone</Message></Error></Errors></Response>',400) if any(k.startswith("VolumeId") for k in form) else self.reply(f'<DescribeVolumesResponse {ns}><volumeSet/></DescribeVolumesResponse>')
@@ -275,6 +276,14 @@ file_write("terminate.json", cloud.ec2_provision_terminate("demo-01"));
             unhealthy=json.loads(health.receipts["health.json"])
             assert unhealthy["health_failed"] and unhealthy["classification"]=="status_checks_failed" and "LMPROV boot=" in unhealthy["console_tail"],unhealthy
             Fake.impaired=False
+            Fake.state_reason="Client.UserInitiatedShutdown"
+            benign=invoke('let c=aws.region("us-east-1");file_write("health.json",c.ec2_provision_describe("crash-01"));')
+            assert not json.loads(benign.receipts["health.json"]).get("health_failed",False),benign.receipts
+            Fake.state_reason="Server.InternalError"
+            broken=invoke('let c=aws.region("us-east-1");file_write("health.json",c.ec2_provision_describe("crash-01"));')
+            failed=json.loads(broken.receipts["health.json"])
+            assert failed["health_failed"] and failed["state_reason"]["code"]=="Server.InternalError" and "console_tail" in failed,failed
+            Fake.state_reason=""
             Fake.unsafe_child=True
             before=sum(a=="StopInstances" for a,_ in Fake.actions)
             guarded=invoke('let c=aws.region("us-east-1");file_write("guard.json",c.ec2_provision_stop("crash-01"));')
@@ -283,6 +292,8 @@ file_write("terminate.json", cloud.ec2_provision_terminate("demo-01"));
             print("PASS EC2 provisioning loopback lifecycle, canonical SSM AMI, tags, on-demand gp3 and no spot/key/profile")
     finally:
         server.shutdown(); server.server_close()
+        if "schema_path" in locals(): schema_path.unlink(missing_ok=True)
+        if "ledger_root" in locals(): shutil.rmtree(ledger_root)
 
 
 if __name__ == "__main__":
