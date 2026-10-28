@@ -24,6 +24,7 @@ ITEMS.append(dict(name='grant_session_policy',category='Identity and access post
 ITEMS.append(dict(name='session_doctor',category='Identity and access posture',task='session_doctor',library='iam_policy',function='recipe_session_doctor',what='Inspect profile session types, 0600 credential cache expiry and dry-run/read-only permission probes',access='Read-only',cost='$0.00 synthetic; live read and EC2 DryRun probes create no resources; cap $0.05'))
 ITEMS.append(dict(name='grant_lambda_role',category='Identity and access posture',task='grant_lambda_role',library='iam_role',function='recipe_grant_lambda_role',what='Preview or apply the pre-built lmaws_lambda_exec execution role with the mandatory boundary and scoped data access',access='Write with the admin profile',cost='$0.00 synthetic; live IAM metadata only; apply requires AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1 and --apply'))
 ITEMS.append(dict(name='s3_objects',category='Safe lifecycle sandboxes',task='s3_objects',library='s3_objects',function='recipe_s3_objects',what='Plan guarded object uploads, metadata checks, bounded listing and selective deletion in an owned lmaws- bucket',access='Write with the lmaws profile',cost='Synthetic $0.00; live request estimate from the persistent ledger; cap $0.05',args='--profile lmaws --region us-east-1 --output data/s3_objects [--live --apply]'))
+ITEMS.append(dict(name='provision',example='provision_job',category='Compute and fleet',task='provision',library='provision',function='recipe_provision',what='Provision and resume one tagged on-demand t4g.nano with an lmfiles lifecycle record',access='Write with the default profile',run='create --lmprov-id demo-001 --config recipes/provision.config.json',cost='Synthetic $0.00; live cap $0.25 plus instance and gp3 hourly estimate',args='--operation create|status|stop|start|terminate|errors --lmprov-id ID --config recipes/provision.config.json [--live --apply]'))
 
 
 COMPUTE_ARGS='--region us-east-1 --profile default --output data/NAME [--live]'
@@ -107,7 +108,7 @@ def generate_discovery(check=False):
 def generate(check=False):
 
  for item in ITEMS:
-  name=item['name'];example='recipe_'+name;lib='recipes/lib/'+item['library']+'.lms'
+  name=item['name'];example=item.get('example','recipe_'+name);lib='recipes/lib/'+item['library']+'.lms'
   args='--task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile default --output data/'+name+' [--live]'
   if item['library']=='spend':args='--period 30 --top 10 --region us-east-1 --profile default --cap 0.25 [--live] [--output PRIVATE_DIR]'
   if item['library']=='prefix':args+=' --ledger-dir .lmaws-local/recipes/ledgers --older-hours 24 [--delete --profile lmaws]'
@@ -120,6 +121,7 @@ def generate(check=False):
   when={'Identity and access posture':'Before a posture review; IAM-dependent recipes remain synthetic for federated profiles','Permission builder and IAM analysis':'When specifying, shrinking, splitting, diffing, explaining or simulating AWS IAM policies without hand-editing raw JSON','Inventory':'Before a change or when reviewing current service coverage','Cost and spend':'When investigating a billing period or prioritizing savings opportunities','Idle and waste detection':'When triaging stopped resources; confirm age and usage before action','Tag and naming compliance':'Before enforcing tag or naming policies; review unknown metadata','Leftover search and cleanup by prefix':'After a test run or shutdown to review names and local ledger records','Safe lifecycle sandboxes':'Before a service integration, validate a disposable create/cleanup path','Compute and fleet':'When reviewing a small EC2 fleet without SSH or the aws CLI, or proving a disposable spot lifecycle'}[item['category']]
   header='\n'.join('# '+k+': '+v for k,v in [('Access',item['access']),('What',item['what']),('When',when),('Run',('lmctl recipes/'+name+'.lms '+item['run']).strip() if 'run' in item else 'lmctl recipes/'+name+'.lms '+('--task queue ' if name=='lifecycle' else '')+'--top 10'),('Preview','lmctl recipes/'+name+'.lms --preview'),('Arguments',args),('Typical-cost',item['cost']),('Category',item['category']),('Library',lib),('Function',item['function']),('Example',example)])
   body='\nimport "./lib/'+item['library']+'.lms";\nlet options=recipe_options(ARGV);\n'
+  if name=='provision':body=body.replace('recipe_options(ARGV)','provision_options(ARGV)')
   if name not in ['inventory','lifecycle']:
    body+='options.task='+repr(item['task']).replace("'",'"')+';\n'
   elif name=='inventory':body+='if (!contains(ARGV,"--task")) {options.task="all";}\n'
@@ -135,6 +137,7 @@ def generate(check=False):
   else:target.write_text(entry)
   exheader='# Synthetic-only: '+item['what']+'.\n# This picture-first example always disables live AWS and apply, even if inherited.\n# Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/'+example+'.lms\n'
   exbody='import "../recipes/lib/'+item['library']+'.lms";\nlet options=recipe_options(ARGV);\noptions.live=false;options.apply=false;options.preview=false;options.profile="default";\noptions.task="'+item['task']+'";options.output="data/'+example+'";\nlet report='+item['function']+'(options);\nassert(is_array(report.rows));\n'
+  if name=='provision':exbody=exbody.replace('options.task="provision";','options.task="provision";options.lmprov_id="demo-001";options.config="recipes/provision.config.json";')
   if item['library']=='lifecycle':exbody+='assert(len(report.rows)==1 && report.rows[0].remaining==0);\nreport.rows[0].name="owned synthetic '+item['task']+'";\n'
   if item['library']=='compute':exbody+='recipe_compute_picture(report,"'+item['task']+'","'+example+'");\n'
   elif item['library']=='hygiene':exbody+='recipe_hygiene_picture(report,"'+item['task']+'","'+example+'");\n'
@@ -147,6 +150,8 @@ def generate(check=False):
   exbody+='println(recipe_cost_line(report));\n'
   exbody=re.sub(r'^import \"[^\"]+\";\n', '', exbody)
   content=exheader+'# Generated standalone example from '+lib+'\n'+flatten(ROOT/lib)+'\n'+exbody
+  if name=='provision':
+   content=exheader+'# Generated standalone example from '+lib+'\n'+flatten(ROOT/lib)+'\n'+(ROOT/'scripts/templates/provision-example.lms').read_text()
   target=ROOT/'examples'/(example+'.lms')
   if check:assert target.read_text()==content, str(target)+' is stale; run generate-recipes.py'
   else:target.write_text(content)

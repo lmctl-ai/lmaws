@@ -1,0 +1,21 @@
+let nonce=temp_file();let ID="demo-"+substr(sha256(nonce),0,12);remove_file(nonce);
+let options=provision_options([]);options.lmprov_id=ID;options.live=false;options.apply=false;options.preview=false;options.profile="default";options.config="";options.config_explicit=false;options.output="data/provision_job";
+let made=recipe_provision(merge(options,{operation:"create"}));assert(made.record.stage=="created" && made.receipt.ok);
+let running=recipe_provision(merge(options,{operation:"status"}));assert(running.receipt.state=="running");
+let first=recipe_provision(merge(options,{operation:"console"}));assert(contains(first.receipt.output,"boot=1"));
+let stopped=recipe_provision(merge(options,{operation:"stop"}));assert(stopped.receipt.state=="stopped");
+let started=recipe_provision(merge(options,{operation:"start"}));assert(started.record.stage=="started");
+assert(made.receipt.volume_id==started.receipt.volume_id);
+recipe_provision(merge(options,{operation:"status"}));
+let second=recipe_provision(merge(options,{operation:"console"}));assert(contains(second.receipt.output,"boot=2"));
+let terminated=recipe_provision(merge(options,{operation:"terminate"}));assert(terminated.receipt.state=="terminated");
+let proof=recipe_provision(merge(options,{operation:"verify"}));assert(proof.receipt.cleanup_complete && proof.receipt.leftovers==0);
+let record=provision_record(ID);assert(record.stage=="terminated" && len(record.history)==7);
+let counts={};for(entry in record.history) {counts[entry.stage]=get(counts,entry.stage,0)+1;}
+let data="";for(stage in ["requested","created","running","stopped","started","terminated"]) {data=data+stage+" "+str(get(counts,stage,0))+"\n";}
+mkdir("images");mkdir("build");mkdir("data");write_file("data/provision-stages.dat",data);
+let plot=_lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png("images/provision_job.png",900,560);plot.cmd("set title 'Offline on-demand provisioning: confirmed lmfiles stages'; set ylabel 'recorded transitions'; set yrange [0:*]; set style data histograms; set style fill solid 0.8; set grid ytics; plot 'data/provision-stages.dat' using 2:xtic(1) lc rgb '#5db7d1' notitle");plot.close();
+end _lmcode_
+savedsl(plot,"build/provision-plot.dslb");let r=system(concat(dsl_cli(plot),["--dsl","build/provision-plot.dslb"]),120000);assert(r.code==0);
+println(json_stringify({synthetic:true,lmprov_id:ID,stages:counts,same_volume:true,boot_count:2,leftovers:0}));println("estimated cost: $0.00 (offline demonstration)");

@@ -13,6 +13,7 @@ Current maintenance notes:
 - [07-example-costs.md](07-example-costs.md): profiles, ownership, teardown, sweeper and caps.
 - [08-recipes.md](08-recipes.md): reusable recipe modules, synthetic examples and catalogue gates.
 - [10-compute.md](10-compute.md): EC2 compute recipes, the spot nano lifecycle tag contract and the lmaws-ec2 profile.
+- [18-provisioning.md](18-provisioning.md): guarded on-demand EC2 provisioning, lmfiles records and deferred live checklist.
 
 - [11-web-stack.md](11-web-stack.md): persistent guarded web-stack integration and local safety gates.
 - [12-policy-builder.md](12-policy-builder.md): fluent IAM permission builder, action catalog, compaction, denial/ledger synthesizer and simulator.

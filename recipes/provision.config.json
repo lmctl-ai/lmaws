@@ -1,0 +1,12 @@
+{
+  "lmprov_id": "demo-001",
+  "region": "us-east-1",
+  "instance_type": "t4g.nano",
+  "volume_gib": 10,
+  "ami_parameter": "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id",
+  "owner": "lmctl",
+  "purpose": "on-demand-provisioning",
+  "cap_usd": 0.25,
+  "dry": false,
+  "public_ipv4": false
+}

@@ -10,10 +10,13 @@ needs no AWS account at all.
 | Read-only inventory, audits, spend reports | `default` | `--live` | Describe/List/Get only; spend reports require `default` |
 | Create and tear down service sandboxes (queue, topic, table, bucket, parameter, log group), cleanup by prefix | `lmaws` | `--live --apply` | Names `lmaws_<run>_...` / `lmaws-<run>-...`, tag `lmaws_test=<run>`, us-east-1 |
 | Web and serverless scenarios (lmweblab) | `lmaws` | `--live --apply` | Run-owned resources only, us-east-1 |
+| On-demand provisioning (separate ownership API) | `default`, `lmaws`, `lmaws-ec2`, `lmaws-web` | `--live --apply`; `--dry` for authorization checks | `provisioner=lmprov`, stable lmprov_id; [runbook](PROVISIONING.md); live campaign waits for Lead GO |
 | EC2 spot nano sandbox, latest AMI lookup | `lmaws-ec2` | `--live` (`--apply` for the sandbox) | t4g.nano/t3.nano, 8 GiB gp3, no public IPv4, us-east-1 |
 | Create or change `lmaws_` IAM policies and Lambda roles | `admin` | `--live --apply` and `LMAWS_ADMIN_GRANT=1` | Only the grant recipes accept it; every other write refuses `admin` |
 
 Rules enforced by the host (not only by IAM):
+
+- The `ec2_provision_*` API has its own guard: default and the three lmaws profiles may manage only verified lmprov-owned resources. It does not relax any existing sandbox, fleet or IAM guard. The job live plan uses default only after the grant; admin remains refused.
 
 - Writes need `LMAWS_LIVE=1` (recipes set it from `--live`) and one of the profiles above; any
   other profile name is read-only. `admin` is refused for every non-IAM mutation.

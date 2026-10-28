@@ -176,6 +176,7 @@ println("matched rows:",len(report.rows));
 | [`ebs_roots.lms`](ebs_roots.lms) | EBS volumes, attachments, root DeleteOnTermination and the AZ lock, as a report | Read-only | --region us-east-1 --profile default --output data/ebs_roots [--live] | $0.00 synthetic; live Describe calls are free; cap $0.05 |
 | [`eip_map.lms`](eip_map.lms) | Map Elastic IPs to instances, flag idle ones, report pinned addresses (never releases) | Read-only | --tag-key Project --region us-east-1 --profile default --output data/eip_map [--live] | $0.00 synthetic; live Describe calls are free; cap $0.05 |
 | [`fleet_status.lms`](fleet_status.lms) | Discover tagged instances: state, type, addresses and root-storage policy | Read-only | --tag-key Project --tag-value VALUE --region us-east-1 --profile default --output data/fleet_status [--live] | $0.00 synthetic; live EC2 Describe calls are free; cap $0.05 |
+| [`provision.lms`](provision.lms) | Provision and resume one tagged on-demand t4g.nano with an lmfiles lifecycle record | Write with the default profile | --operation create|status|stop|start|terminate|errors --lmprov-id ID --config recipes/provision.config.json [--live --apply] | Synthetic $0.00; live cap $0.25 plus instance and gp3 hourly estimate |
 | [`spot_nano_lifecycle.lms`](spot_nano_lifecycle.lms) | Launch one tagged no-public-IP spot nano, check it, terminate it and prove zero leftovers | Write with the lmaws-ec2 profile | --region us-east-1 --profile lmaws-ec2 --output .lmaws-local/compute/spot_nano_lifecycle [--live --apply] | Synthetic $0.00; live about $0.0005 (spot nano minutes + 8 GiB gp3); cap $0.05 |
 | [`spot_prices.lms`](spot_prices.lms) | Spot price history per AZ for nano types, cheapest AZ and saving vs On-Demand | Read-only | --types t4g.nano,t3.nano --hours 3 --region us-east-1 --profile default --output data/spot_prices [--live] | $0.00 synthetic; live Describe calls are free; cap $0.05 |
 
@@ -929,6 +930,15 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 Example: [`examples/recipe_fleet_status.lms`](../examples/recipe_fleet_status.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_fleet_status`.
+
+### provision
+
+![Provision and resume one tagged on-demand t4g.nano with an lmfiles lifecycle record](../docs/images/provision_job.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/provision_job.lms`
+
+Example: [`examples/provision_job.lms`](../examples/provision_job.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/provision.lms`; function `recipe_provision`.
 
 ### spot_nano_lifecycle
 

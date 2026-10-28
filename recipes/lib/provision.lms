@@ -1,0 +1,173 @@
+# Access: Write with the default or lmaws profile; live mutations require the host grant.
+# What: On-demand tagged t4g.nano provisioning with resumable lifecycle operations and lmfiles records.
+# When: Create a short-lived Ubuntu ARM64 customer sandbox without SSH or the aws CLI.
+# Run: lmctl recipes/provision.lms --operation create --lmprov-id demo-001 --config recipes/provision.config.json
+# Preview: lmctl recipes/provision.lms --preview
+
+import "./common.lms";
+
+fn provision_options(argv) {
+  let o=recipe_normalize({profile:"default",cap:num(recipe_env("LMAWS_MAX_COST_USD","0.25")),cap_explicit:recipe_env("LMAWS_MAX_COST_USD","")!=""});
+  o.operation="create"; o.lmprov_id=recipe_env("LMPROV_ID",""); o.config=recipe_env("LMPROV_CONFIG",""); o.config_explicit=o.config!=""; o.dry=false; o.overrides={};
+  let i=0; while(i<len(argv)) {
+    let k=argv[i];
+    if(k=="provision") {} else if(contains(["create","status","stop","start","terminate","errors","verify","console"],k)) {o.operation=k;}
+    else if(k=="--live") {o.live=true;} else if(k=="--apply") {o.apply=true;} else if(k=="--preview") {o.preview=true;}
+    else if(k=="--dry" || k=="--dry-run") {o.dry=true;}
+    else if(!starts_with(k,"--") && o.lmprov_id=="") {o.lmprov_id=k;}
+    else {
+      assert(i+1<len(argv),k+" needs a value"); i=i+1; let v=argv[i];
+      if(k=="--operation") {o.operation=v;} else if(k=="--lmprov-id") {o.lmprov_id=v;}
+      else if(k=="--config") {o.config=v;o.config_explicit=true;} else if(k=="--profile") {o.profile=v;}
+      else if(k=="--region") {o.overrides.region=v;} else if(k=="--cap") {o.cap=num(v);o.cap_explicit=true;}
+      else if(k=="--instance-type") {o.overrides.instance_type=v;} else if(k=="--volume-gib") {o.overrides.volume_gib=num(v);}
+      else if(k=="--ami-parameter") {o.overrides.ami_parameter=v;} else if(k=="--owner") {o.overrides.owner=v;} else if(k=="--purpose") {o.overrides.purpose=v;}
+      else {assert(false,"unknown provisioning option "+k);}
+    }
+    i=i+1;
+  }
+  return recipe_normalize(o);
+}
+
+fn provision_defaults() {
+  return {lmprov_id:"demo-001", region:"us-east-1", instance_type:"t4g.nano", volume_gib:10,
+    ami_parameter:"/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id",
+    owner:"lmctl", purpose:"on-demand-provisioning", cap_usd:0.25, max_runtime_seconds:3600, dry:false, public_ipv4:false};
+}
+
+fn provision_config(options) {
+  let cfg=provision_defaults();
+  assert(options.config=="" || file_exists(options.config), "--config path does not exist");
+  if(options.config_explicit) {assert(file_exists(options.config),"config file is missing: "+options.config);cfg=merge(cfg,json_parse(read_file(options.config)));}
+  else if(file_exists("recipes/provision.config.json")) {cfg=merge(cfg,json_parse(read_file("recipes/provision.config.json")));}
+  cfg=merge(cfg,options.overrides);
+  if(options.lmprov_id!="") {cfg.lmprov_id=options.lmprov_id;}
+  if(options.cap_explicit) {cfg.cap_usd=options.cap;}
+  cfg.dry=options.dry;
+  assert(regex_test(str(cfg.lmprov_id),"^[a-z][a-z0-9-]{2,48}$"), "lmprov_id must be lowercase and stable");
+  assert(cfg.region=="us-east-1", "provisioning is limited to us-east-1");
+  assert(cfg.instance_type=="t4g.nano", "only t4g.nano is supported");
+  assert(is_number(cfg.volume_gib) && cfg.volume_gib>=1 && cfg.volume_gib<=20 && floor(cfg.volume_gib)==cfg.volume_gib, "volume_gib must be 1..20 GiB");
+  assert(!has_key(cfg,"iam_instance_profile") && !has_key(cfg,"key_name") && !has_key(cfg,"spot") && !has_key(cfg,"eip"), "IAM profiles, key pairs, spot and EIP are not supported");
+  return cfg;
+}
+
+fn provision_private_directory(live) {
+  if(getenv("OS","")!="Windows_NT") {
+    let locked=system(["sh","-c","test ! -L .lmaws-local && test ! -L .lmaws-local/provision && umask 077 && mkdir -p .lmaws-local/provision && chmod 700 .lmaws-local .lmaws-local/provision"],10000);
+    assert(locked.code==0,"cannot create the private provisioning directory");
+  } else {assert(!live,"live job directory ACL setup is not qualified on Windows; use the Linux runbook");mkdir(".lmaws-local/provision",true);}
+}
+fn provision_record_path(id) { return ".lmaws-local/provision/"+id+".json"; }
+fn provision_execute(program, options) {
+  let path=temp_file();savedsl(program,path);
+  let settings={AWS_PROFILE:options.profile,AWS_DEFAULT_PROFILE:options.profile,AWS_REGION:options.region,AWS_DEFAULT_REGION:options.region,LMAWS_LIVE:options.live ? "1":"0",LMAWS_APPLY:options.apply ? "1":"0",LMAWS_MAX_COST_USD:str(options.cap),LMAWS_LEDGER_DIR:".lmaws-local/provision/requests",LMPROV_LEDGER_DIR:recipe_env("LMPROV_LEDGER_DIR",".lmaws-local/provision/host")};
+  if(!options.live) {settings.LMAWS_ENDPOINT="";}
+  let argv=concat(dsl_cli(program),options.apply ? ["--apply","--dsl",path] : ["--dsl",path]);
+  if(getenv("OS","")!="Windows_NT") {let prefix=["env"];for(key in keys(settings)) {push(prefix,key+"="+str(settings[key]));}argv=concat(prefix,argv);}
+  else if(options.live) {for(key in keys(settings)) {assert(getenv(key,"")==str(settings[key]),"Windows: set "+key+" in the parent environment first");}}
+  let r=system(argv,{timeoutMs:options.timeout_ms});remove_file(path);assert(r.code==0,"provisioning host failed; inspect private receipts and journal before retrying");return r;
+}
+fn provision_local(program) {
+  let path=temp_file(); savedsl(program,path); let r=system(concat(dsl_cli(program),["--dsl",path]),120000); remove_file(path); assert(r.code==0,"lmfiles registry operation failed"); return r;
+}
+fn provision_record(id) {
+  let dbpath=".lmaws-local/provision/"+id+".mv";
+  if(!file_exists(dbpath)) {return {lmprov_id:id,stage:"",history:[]};}
+  let output=temp_file();
+  let read=_lmcode_ cli="lmfiles" install="github:lmctl-ai/lmfiles@latest";
+let db=registry.open(${dbpath},"provision","{}");let snapshot=db.snapshot();let cursor=snapshot.query("{\"all\":true}","{}");file_write(${output},cursor.next_json(2,1048576));cursor.close();snapshot.close();db.close();
+end _lmcode_
+  provision_local(read); let rows=json_parse(read_file(output));remove_file(output);assert(len(rows)==1 && rows[0].identity==id,"registry identity does not match lmprov_id");
+  let row=rows[0];return {lmprov_id:id,mode:get(row,"mode",get(get(row,"last_receipt",{}),"synthetic",true) ? "demo":"aws"),stage:get(row,"stage",""),history:get(row,"history",[]),history_trimmed:get(row,"history_trimmed",0),config:get(row,"config",{}),last_receipt:get(row,"last_receipt",{}),pending_operation:get(row,"pending_operation","")};
+}
+fn provision_save_record(id,record,stage,status,receipt,cfg) {
+  mkdir(".lmaws-local/provision",true);
+  let output=temp_file();let fields=merge(record,{instance_type:cfg.instance_type,volume_gib:cfg.volume_gib,region:cfg.region,ami_id:get(receipt,"ami_id",""),config_hash:get(receipt,"config_hash",sha256(json_stringify(cfg))),instance_id:get(receipt,"instance_id",""),volume_id:get(receipt,"volume_id",""),last_status:get(receipt,"state",get(receipt,"status","")),last_aws_error_code:get(receipt,"error_code",""),last_aws_error_message:get(receipt,"message",""),updated_at:get(receipt,"finished",str(now()))});
+  let upsert=_lmcode_ cli="lmfiles" install="github:lmctl-ai/lmfiles@latest";
+let db=registry.open(${".lmaws-local/provision/"+id+".mv"},"provision","{}");file_write(${output},db.item_upsert(${json_stringify({id:id,aliases:[{kind:"lmprov_id",namespace:"provision",value:id}]})},${json_stringify(fields)}));db.close();
+end _lmcode_
+  provision_local(upsert);let up=json_parse(read_file(output));remove_file(output);assert(up.status=="ok");
+  if(stage!="") {
+    let stage_program=_lmcode_ cli="lmfiles" install="github:lmctl-ai/lmfiles@latest";
+let db=registry.open(${".lmaws-local/provision/"+id+".mv"},"provision","{}");db.stage_record(${up.item},${json_stringify({stage:stage,namespace:"provision",status:status,source_revision:up.revision,metadata:{receipt:receipt,config:cfg}})});db.close();
+end _lmcode_
+    provision_local(stage_program);
+  }
+  write_file(provision_record_path(id),json_stringify(record,2));return record;
+}
+fn provision_stage(id,stage,receipt,cfg,confirmed) {
+  let prior=provision_record(id);cfg=get(receipt,"config",get(prior,"config",cfg));let record=merge(prior,{lmprov_id:id,mode:get(receipt,"synthetic",get(prior,"mode","demo")=="demo") ? "demo":"aws",config:cfg,last_receipt:receipt});
+  let status="ok";
+  if(!confirmed && get(receipt,"ok",true)==false && !get(receipt,"dry_run",false)) {stage="failed";status="failed";}
+  else if(!confirmed) {stage="";if(get(receipt,"pending",false)) {record.pending_operation=get(receipt,"operation","");}}
+  if(stage!="") {
+    let entry={stage:stage,timestamp:get(receipt,"finished",str(now())),receipt:receipt,confirmed:confirmed};push(record.history,entry);
+    if(len(record.history)>64) {let recent=[];for(i in range(len(record.history)-64,len(record.history))) {push(recent,record.history[i]);}record.history_trimmed=get(record,"history_trimmed",0)+len(record.history)-64;record.history=recent;}
+    if(status=="ok") {record.stage=stage;record.pending_operation="";}
+  }
+  return provision_save_record(id,record,stage,status,receipt,cfg);
+}
+
+fn recipe_provision(options) {
+  let o=recipe_normalize(options); let id=o.lmprov_id; assert(id!="", "--lmprov-id is required"); assert(!o.live || !contains(["create","stop","start","terminate"],o.operation) || o.apply || o.dry,"live mutations require --live --apply; --dry is read-only"); assert(!o.live || o.profile=="default","live provisioning uses AWS_PROFILE=default only");
+  let cfg=provision_config(o); let op=o.operation; assert(contains(["create","status","stop","start","terminate","errors","verify","console"],op), "--operation must be create, status, stop, start, terminate or errors");
+  o.cap=cfg.cap_usd;o.region=cfg.region;
+  if(o.preview) { println(json_stringify({operation:op,lmprov_id:id,config:cfg,preview:true},2)); println("estimated cost: $0.00"); return {rows:[],preview:true}; }
+  provision_private_directory(o.live);
+  let before=provision_record(id);let expected_mode=o.live ? "aws":"demo";assert(before.stage=="" || get(before,"mode",expected_mode)==expected_mode,"registry mode mismatch; use the same live/demo mode as the original job");
+  let p_live=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud=aws.region(${cfg.region}); let receipt="";
+if (${op}=="create") { receipt=cloud.ec2_provision_run(${json_stringify(cfg)}); }
+if (${op}=="status") { receipt=cloud.ec2_provision_describe(${id}); }
+if (!${o.dry} && ${op}=="stop") { receipt=cloud.ec2_provision_stop(${id}); }
+if (!${o.dry} && ${op}=="start") { receipt=cloud.ec2_provision_start(${id}); }
+if (!${o.dry} && ${op}=="terminate") { receipt=cloud.ec2_provision_terminate(${id}); }
+if (${o.dry} && ${op}=="stop") { receipt=cloud.ec2_provision_dry_run(${id},"stop"); }
+if (${o.dry} && ${op}=="start") { receipt=cloud.ec2_provision_dry_run(${id},"start"); }
+if (${o.dry} && ${op}=="terminate") { receipt=cloud.ec2_provision_dry_run(${id},"terminate"); }
+if (${op}=="errors") { receipt=cloud.ec2_provision_describe(${id}); }
+if (${op}=="verify") { receipt=cloud.ec2_provision_verify(${id}); }
+if (${op}=="console") { receipt=cloud.ec2_provision_console(${id}); }
+file_write(${".lmaws-local/provision/"+id+".receipt.json"},receipt);
+end _dsl_
+  let p_demo=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud=aws.demo(); let receipt="";
+if (${op}=="create") { receipt=cloud.ec2_provision_run(${json_stringify(cfg)}); }
+if (${op}=="status") { receipt=cloud.ec2_provision_describe(${id}); }
+if (!${o.dry} && ${op}=="stop") { receipt=cloud.ec2_provision_stop(${id}); }
+if (!${o.dry} && ${op}=="start") { receipt=cloud.ec2_provision_start(${id}); }
+if (!${o.dry} && ${op}=="terminate") { receipt=cloud.ec2_provision_terminate(${id}); }
+if (${o.dry} && ${op}=="stop") { receipt=cloud.ec2_provision_dry_run(${id},"stop"); }
+if (${o.dry} && ${op}=="start") { receipt=cloud.ec2_provision_dry_run(${id},"start"); }
+if (${o.dry} && ${op}=="terminate") { receipt=cloud.ec2_provision_dry_run(${id},"terminate"); }
+if (${op}=="errors") { receipt=cloud.ec2_provision_describe(${id}); }
+if (${op}=="verify") { receipt=cloud.ec2_provision_verify(${id}); }
+if (${op}=="console") { receipt=cloud.ec2_provision_console(${id}); }
+file_write(${".lmaws-local/provision/"+id+".receipt.json"},receipt);
+end _dsl_
+  let request_receipt={ok:true,requested:true,stage:"requested",synthetic:!o.live,timestamp:str(now())};
+  if(op=="create" && before.stage=="" && !o.dry) { let requested=provision_stage(id,"requested",request_receipt,cfg,true); }
+  let result=provision_execute(o.live ? p_live : p_demo,o);
+  let receipt=json_parse(read_file(".lmaws-local/provision/"+id+".receipt.json"));
+  let stage=op=="status" ? get(receipt,"state",get(receipt,"stage","unknown")) : (op=="create" ? (get(receipt,"status","")=="created" ? "created" : get(receipt,"stage",get(receipt,"state","created"))) : (op=="start" ? "started" : (op=="stop" ? "stopped" : (op=="terminate" ? "terminated" : op))));
+  let confirmed=get(receipt,"confirmed",get(receipt,"ok",false)) && !get(receipt,"pending",false) && !contains(["errors","console","verify"],op) && !cfg.dry;
+  if(op=="create" && confirmed && contains(["","requested"],before.stage) && get(receipt,"instance_id","")!="" && get(receipt,"state","")!="terminated") {stage="created";}
+  if(op=="stop" && get(receipt,"state","")!="stopped") {confirmed=false;}
+  if(op=="start" && get(receipt,"state","")!="running") {confirmed=false;}
+  if(op=="terminate" && get(receipt,"state","")!="terminated") {confirmed=false;}
+  if(op=="status" && !contains(["running","stopped","terminated"],get(receipt,"state",""))) {confirmed=false;}
+  if(op=="status" && get(receipt,"state","")=="running" && before.pending_operation=="StartInstances" && confirmed) {provision_stage(id,"started",receipt,cfg,true);}
+  if(get(receipt,"health_failed",false)) {receipt.ok=false;receipt.error_code="StatusChecksFailed";receipt.message="AWS reported failed instance/system status checks";confirmed=false;}
+  let rec=provision_stage(id,stage,receipt,cfg,confirmed);
+  let errors=[];for(entry in rec.history) {if(entry.stage=="failed") {push(errors,entry.receipt);}}
+  if(op=="errors") {
+    let journal=get(receipt,"journal_path","");
+    if(journal!="" && file_exists(journal)) {
+      errors=[];
+      for(line in lines(read_file(journal))) {if(trim(line)!="") {let event=json_parse(line);let payload=event.payload;if(payload.event=="receipt") {let data=payload.data;if(!get(data,"ok",true) || get(data,"health_failed",false)) {push(errors,data);}if(has_key(data,"console_error")) {push(errors,data.console_error);}}}}
+    }
+    println(json_stringify({errors:errors,current:receipt},2));
+  }
+  println(json_stringify({operation:op,record:rec,receipt:receipt},2)); println("estimated cost: $"+str(get(get(receipt,"cost",{}),"estimated_cost_usd","0.00"))+(o.live ? " (resource estimate; continues until explicit termination)" : " (offline demo)")); return {rows:[{kind:stage,lmprov_id:id}],record:rec,receipt:receipt,result:result};
+}

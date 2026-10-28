@@ -64,3 +64,5 @@ Read-only Spend reports are an explicit paid-query exception: Cost Explorer
 $0.01/page and CloudWatch metrics are admitted before dispatch, including failed
 attempts. Billing estimates are not hidden as $0.00 merely because no resource
 was created. See [spend safety](09-spend-reports.md).
+
+The separate on-demand `ec2_provision_*` API permits default and all three lmaws profiles for verified lmprov-tagged resources, with its own durable per-ID resource-cost journal and a hard $0.25 cap. It changes no existing sandbox/fleet/IAM guard. See [18-provisioning.md](18-provisioning.md). The job live campaign is deferred pending Lead GO.

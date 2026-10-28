@@ -82,8 +82,8 @@ def read_recipe(path: Path) -> Recipe:
             meta.setdefault("function", function_names[0])
     if not meta["function"].strip():
         raise ValueError(f"{path}: function metadata is empty")
-    if meta["access"] not in {"Read-only", "Write with the lmaws profile", "Read-only with the lmaws-ec2 profile", "Write with the lmaws-ec2 profile", "Write with the admin profile"}:
-        raise ValueError(f"{path}: access must be Read-only or Write with the lmaws/lmaws-ec2/admin profile")
+    if meta["access"] not in {"Read-only", "Write with the lmaws profile", "Write with the default profile", "Read-only with the lmaws-ec2 profile", "Write with the lmaws-ec2 profile", "Write with the admin profile"}:
+        raise ValueError(f"{path}: access must be Read-only or Write with the default/lmaws/lmaws-ec2/admin profile")
     if meta["category"] not in CATEGORIES:
         raise ValueError(f"{path}: unknown category {meta['category']!r}")
     return Recipe(path.relative_to(ROOT), meta)

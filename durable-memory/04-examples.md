@@ -1,6 +1,6 @@
 # Examples and cost labels
 
-There are 125 runnable `.lms` examples: eight spend reports, 85 synthetic-only recipe demonstrations
+There are 126 runnable `.lms` examples: eight spend reports, 86 synthetic-only recipe demonstrations
 (including seven EC2 compute recipes, seven hygiene/quickstart recipes, four IAM/session/role recipes, and 28 permission builder/analysis recipes), two account prefix/leftover discovery examples,
 plus the original 30 stories: 19 read-only stories, seven
 write/lifecycle stories and four IAM-dependent stories. See [README](../README.md)
