@@ -1043,6 +1043,13 @@ public final class AwsBackend implements AutoCloseable {
 
     private StsClient sts() { return sts == null ? sts = register(base(StsClient.builder()).build()) : sts; }
     List<Map<String,String>> s3PublishPath(String bucket,String key,String inlinePolicy) { if(!"default".equals(profileName)||!"default".equals(activeProfile())) throw new SecurityException("S3 publish-path reads require the default profile"); return S3PublishPath.inspect(this,bucket,key,inlinePolicy); }
+    private S3Objects objectApi;
+    private S3Client objectClient;
+    S3Objects s3Objects() {if(objectApi==null)objectApi=new S3Objects(this);return objectApi;}
+    void requireS3ObjectRead() {if(!List.of("default","lmaws").contains(profileName)||!profileName.equals(activeProfile()))throw new SecurityException("S3 object reads require default or lmaws");if(!"us-east-1".equals(regionName))throw new SecurityException("S3 object sandbox operations require us-east-1");if(demo)throw new IllegalStateException("object SDK operations are unavailable in demo/dry-run mode; use the synthetic recipe");}
+    void requireS3ObjectWrite() {if(!"lmaws".equals(profileName)||!"lmaws".equals(activeProfile()))throw new SecurityException("S3 object mutations require AWS_PROFILE=lmaws");requireS3ObjectRead();requireWriteEnabled();}
+    void preflightS3Bootstrap(java.math.BigDecimal amount){if(cost!=null)cost.s3BootstrapBudget(amount);}
+    S3Client s3ObjectsClient() {if(objectClient==null)objectClient=register(base(S3Client.builder(),config.toBuilder().retryPolicy(RetryPolicy.builder().numRetries(0).build()).addExecutionInterceptor(S3Objects.interceptor()).build()).build());return objectClient;}
     S3Client s3Client() { return s3(); }
     software.amazon.awssdk.services.sts.model.GetCallerIdentityResponse publishPathIdentity() { return sts().getCallerIdentity(GetCallerIdentityRequest.builder().build()); }
     KmsClient kmsClient() { if(kms==null) kms=register(base(KmsClient.builder()).build()); return kms; }
@@ -1069,7 +1076,8 @@ public final class AwsBackend implements AutoCloseable {
         return iam;
     }
     private CloudFormationClient cloudformation() { return cloudformation == null ? cloudformation = register(base(CloudFormationClient.builder()).build()) : cloudformation; }
-    private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { b.region(region).overrideConfiguration(config); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))).overrideConfiguration(config.toBuilder().putHeader("X-Lmaws-Test-Profile",profileName).build()); else b.credentialsProvider(ProfileCredentialsProvider.builder().profileName(profileName).build()); return b; }
+    private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { return base(b,config); }
+    private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b,ClientOverrideConfiguration operationConfig) { b.region(region).overrideConfiguration(operationConfig); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))).overrideConfiguration(operationConfig.toBuilder().putHeader("X-Lmaws-Test-Profile",profileName).build()); else b.credentialsProvider(ProfileCredentialsProvider.builder().profileName(profileName).build()); return b; }
 
     <B extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> B webBuilder(B builder) { return base(builder); }
     private static final class CostInterceptor implements ExecutionInterceptor {

@@ -23,6 +23,7 @@ ITEMS.append(dict(name='policy_lint',category='Identity and access posture',task
 ITEMS.append(dict(name='grant_session_policy',category='Identity and access posture',task='grant_session_policy',library='iam_policy',function='recipe_grant_session_policy',what='Preview statement-level diff or grant the lmaws_session customer-managed IAM policy',access='Write with the admin profile',cost='$0.00 IAM metadata; live apply requires AWS_PROFILE=admin and LMAWS_ADMIN_GRANT=1'))
 ITEMS.append(dict(name='session_doctor',category='Identity and access posture',task='session_doctor',library='iam_policy',function='recipe_session_doctor',what='Inspect profile session types, 0600 credential cache expiry and dry-run/read-only permission probes',access='Read-only',cost='$0.00 synthetic; live read and EC2 DryRun probes create no resources; cap $0.05'))
 ITEMS.append(dict(name='grant_lambda_role',category='Identity and access posture',task='grant_lambda_role',library='iam_role',function='recipe_grant_lambda_role',what='Preview or apply the pre-built lmaws_lambda_exec execution role with the mandatory boundary and scoped data access',access='Write with the admin profile',cost='$0.00 synthetic; live IAM metadata only; apply requires AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1 and --apply'))
+ITEMS.append(dict(name='s3_objects',category='Safe lifecycle sandboxes',task='s3_objects',library='s3_objects',function='recipe_s3_objects',what='Plan guarded object uploads, metadata checks, bounded listing and selective deletion in an owned lmaws- bucket',access='Write with the lmaws profile',cost='Synthetic $0.00; live request estimate from the persistent ledger; cap $0.05',args='--profile lmaws --region us-east-1 --output data/s3_objects [--live --apply]'))
 
 
 COMPUTE_ARGS='--region us-east-1 --profile default --output data/NAME [--live]'
@@ -138,6 +139,7 @@ def generate(check=False):
   if item['library']=='compute':exbody+='recipe_compute_picture(report,"'+item['task']+'","'+example+'");\n'
   elif item['library']=='hygiene':exbody+='recipe_hygiene_picture(report,"'+item['task']+'","'+example+'");\n'
   elif item['library']=='policy_builder':exbody+='recipe_policy_picture(report,"'+item['task']+'","'+example+'");\n'
+  elif item['library']=='s3_objects':exbody+='recipe_s3_objects_picture(report,"'+example+'");\n'
   else:exbody+='recipe_picture(report.rows,"'+item['what']+'","'+example+'");\n'
   if item['library']=='spend':
    exbody=exbody.replace('let report=recipe_spend(options);','options.cap=0.25;\nlet report=recipe_spend(options);')

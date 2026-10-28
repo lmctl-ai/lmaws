@@ -1,0 +1,32 @@
+# Access: Write with the lmaws profile for owned sandbox mutations; synthetic by default.
+# What: Exercise the generic object lifecycle contract without contacting AWS in this example.
+# When: Before a bounded lmfiles upload run; use the host methods from a current lmaws build.
+# Run: lmctl recipes/s3_objects.lms --preview
+# Preview: the generated example is synthetic and never creates a bucket or object.
+import "./common.lms";
+
+fn recipe_s3_objects(options) {
+  let o=recipe_normalize(options);if(o.preview){return recipe_preview(o,"s3_objects");}
+  assert(!o.live&&!o.apply,"this recipe is synthetic only; an explicitly authorized live job must use the guarded host bindings");
+  let rows=[
+    {operation:"s3_bucket_create_exact",bucket:"lmaws-synthetic-run",run_id:"synthetic",status:"owned",planned_operations:1},
+    {operation:"s3_bucket_attach",run_id:"synthetic",status:"recovered",planned_operations:1},
+    {operation:"s3_put_file",key:"objects/a.txt",bytes:12,status:"ok",etag:"\"synthetic-a\"",planned_operations:1},
+    {operation:"s3_head_object",key:"objects/a.txt",exists:true,size:12,status:"ok",planned_operations:1},
+    {operation:"s3_list_objects",prefix:"objects/",keys:2,status:"ok",planned_operations:1},
+    {operation:"s3_delete_objects",keys:2,status:"ok",planned_operations:1},
+    {operation:"s3_bucket_delete",bucket:"lmaws-synthetic-run",status:"empty",planned_operations:1},
+    {operation:"s3_ledger_summary",status:"local_only",planned_operations:1}
+  ];
+  let report={rows:rows,output_file:o.output+".json",synthetic:true,ledger_requests:0,estimated_cost:"$0.00",api_contract:["s3_bucket_create_exact","s3_bucket_attach","s3_bucket_delete","s3_put_file","s3_head_object","s3_list_objects","s3_delete_objects","s3_ledger_summary"]};
+  mkdir(dirname(o.output),true);write_file(report.output_file,json_stringify(report,2));write_csv(o.output+".csv",rows);return report;
+}
+fn recipe_s3_objects_picture(report,name) {
+  mkdir("images");mkdir("data");let labels={s3_bucket_create_exact:"Create tagged",s3_bucket_attach:"Attach/recover",s3_put_file:"PUT checksum",s3_head_object:"HEAD metadata",s3_list_objects:"List keys",s3_delete_objects:"Delete keys",s3_bucket_delete:"Delete empty",s3_ledger_summary:"Local ledger"};let csv="operation,count\n";for(row in report.rows){csv=csv+labels[row.operation]+",1\n";}write_file("data/"+name+".csv",csv);
+  let chart=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${"images/"+name+".png"},900,560);
+plot.cmd("set datafile separator ','; set title 'Synthetic S3 object lifecycle'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.65; set ylabel 'Illustrative stages (not requests)'; set yrange [0:2]; set ytics 1; set grid ytics; set xtics rotate by -30; set bmargin 6");
+plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});plot.close();
+end _dsl_
+  let bytecode=temp_file();savedsl(chart,bytecode);let r=system(concat(dsl_cli(chart),["--dsl",bytecode]),120000);remove_file(bytecode);assert(r.code==0);
+}

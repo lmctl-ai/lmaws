@@ -1306,12 +1306,12 @@ fixed-call parallelism, reget/reput, mkdir/rename or local move_file).
 | Blocked example variant | Exact small addition needed | Why the current call is insufficient |
 |---|---|---|
 | A: byte-exact arbitrary/large artifact download and append-resume | `Request.download_to_file(path, offset) -> Response` in lmcurl, a bounded raw artifact sink | Response.save/body/file_append buffer and redact output; they cannot promise arbitrary byte-exact streaming. Keep log redaction; do not redact artifact bytes |
-| B1/B2/B4: persistent arbitrary-file S3 writes with headers and integrity | `Cloud.s3_put_file(bucket,key,local_path,options_json,run_id) -> Row`, options contain content_type/cache_control/**expected_sha256** | Current sandbox string writes cannot do this; verify transferred bytes with S3 ChecksumSHA256 and report confirmed digest/ETag/version, never attach the current mutable-file hash |
+| B1/B2/B4: persistent arbitrary-file S3 writes with headers and integrity | `Cloud.s3_put_file(bucket,key,local_path,options_json) -> string` (JSON receipt; create/attach binds the run), options contain content_type/cache_control/**expected_sha256** | Current sandbox string writes cannot do this; verify transferred bytes with S3 ChecksumSHA256 and report confirmed digest/ETag/version, never attach the current mutable-file hash |
 | A: transport-error-tolerant HTTP batch | `Request.allow_error(bool) -> Request` (proposed spelling; Argon2 adding a non-throwing option) | Current send throws on transport error; verify the landed signature before using one persistent Session across a bounded manifest |
 | B: repeatable explicit invalidation | `Cloud.cloudfront_invalidate(distribution_id,paths_json,caller_ref,run_id) -> Row` | Current Web step hardcodes /*, no-ops on repeat and tears down on exceptions |
-| B: script-chosen old-release/object cleanup | `Cloud.s3_delete_objects(bucket,keys_json,run_id) -> Row` | No arbitrary object-delete binding for a persistent target; return per-key outcomes, keep partial failures unconfirmed |
+| B: script-chosen old-release/object cleanup | `Cloud.s3_delete_objects(bucket,keys_json) -> Rows` (create/attach binds the run) | No arbitrary object-delete binding for a persistent target; return per-key outcomes, keep partial failures unconfirmed |
 | B3: conditional release activation/rollback | `Web.step("origin_path", args_json) -> Row` selector on the existing Web API | That selector is absent today; current distribution/setup/cache methods do not perform this switch |
-| B5: S3 spot-check | `Cloud.s3_head_object(bucket,key,run_id) -> Row` | No generic per-object HEAD is bound; bucket inventory or a PUT-presigned URL is not a substitute |
+| B5: S3 spot-check | `Cloud.s3_head_object(bucket,key) -> string` (JSON receipt; create/attach binds the run) | No generic per-object HEAD is bound; bucket inventory or a PUT-presigned URL is not a substitute |
 
 The PUT options validate expected_sha256 format, pass the expected content
 checksum to the SDK and return factual verified digest/ETag/version/size fields.
@@ -1540,6 +1540,8 @@ implemented live executor or evidence of S3 convergence. Until released APIs are
 usable, every live phase/round/check stays NOT RUN, convergence/max skew null.
 
 ### Released-host capability block (v0.1.22)
+
+The following records the released v0.1.22 blocker. The exact-name create/attach/delete, file PUT, HEAD/list/delete and durable ledger APIs are now implemented on main for the Lead's v0.1.23 release; see [S3_OBJECTS.md](S3_OBJECTS.md) for the actual signatures and limits. Fake transport/local qualification does not mean the100-object live test ran. Sol2 must use the released capabilities before starting that separately authorized run.
 
 The installed release schema offers Run.put(Row,key,string)->void, Run.bucket,
 Run.cleanup and Cloud.resource_exists. It has no generic S3 file PUT with headers,

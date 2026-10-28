@@ -250,6 +250,7 @@ println("matched rows:",len(report.rows));
 | File | What it does | Access | Arguments | Typical cost |
 |---|---|---|---|---|
 | [`lifecycle.lms`](recipes/lifecycle.lms) | Select a disposable queue/topic/table/bucket/parameter/log-group lifecycle | Write with the lmaws profile | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile lmaws --output data/lifecycle [--live] [--apply] | Synthetic $0.00; live generally below $0.0001; cap $0.05 |
+| [`s3_objects.lms`](recipes/s3_objects.lms) | Plan guarded object uploads, metadata checks, bounded listing and selective deletion in an owned lmaws- bucket | Write with the lmaws profile | --profile lmaws --region us-east-1 --output data/s3_objects [--live --apply] | Synthetic $0.00; live request estimate from the persistent ledger; cap $0.05 |
 | [`sandbox_bucket.lms`](recipes/sandbox_bucket.lms) | Create and tear down one owned bucket with its run ledger | Write with the lmaws profile | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile lmaws --output data/sandbox_bucket [--live] [--apply] | Synthetic $0.00; live generally below $0.0001; cap $0.05 |
 | [`sandbox_log_group.lms`](recipes/sandbox_log_group.lms) | Create and tear down one owned log group with its run ledger | Write with the lmaws profile | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile lmaws --output data/sandbox_log_group [--live] [--apply] | Synthetic $0.00; live generally below $0.0001; cap $0.05 |
 | [`sandbox_parameter.lms`](recipes/sandbox_parameter.lms) | Create and tear down one owned parameter with its run ledger | Write with the lmaws profile | --task TASK --period 30 --top 10 --prefix lmaws --region us-east-1 --profile lmaws --output data/sandbox_parameter [--live] [--apply] | Synthetic $0.00; live generally below $0.0001; cap $0.05 |
@@ -912,6 +913,15 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 Example: [`examples/recipe_lifecycle.lms`](examples/recipe_lifecycle.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/lifecycle.lms`; function `recipe_lifecycle`.
 
+#### s3_objects
+
+![Plan guarded object uploads, metadata checks, bounded listing and selective deletion in an owned lmaws- bucket](docs/images/recipe_s3_objects.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_s3_objects.lms`
+
+Example: [`examples/recipe_s3_objects.lms`](examples/recipe_s3_objects.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/s3_objects.lms`; function `recipe_s3_objects`.
+
 #### sandbox_bucket
 
 ![Create and tear down one owned bucket with its run ledger](docs/images/recipe_sandbox_bucket.png)
@@ -1225,3 +1235,7 @@ The main-source [remaining web scenario APIs](docs/REMAINING_SCENARIOS.md) add o
 ### Read-only S3 upload-path evidence
 
 `cloud.s3_publish_path(bucket, key, inlinePolicyJson)` reads bucket policy, encryption, ownership and public-access settings with `default`, plus KMS metadata when required. It returns per-layer evidence and exact missing read permissions. An inline Allow or successful metadata read never proves a successful PUT. It performs no test upload or other mutation. See [the diagnostic contract and limitations](docs/S3_PUBLISH_PATH.md).
+
+### Persistent sandbox S3 objects
+
+Exact-name tagged bucket create/attach, conditional file PUT with SHA-256 receipts, checksum HEAD, bounded object listing and per-key deletion are implemented on main for v0.1.23. Run-scoped request ledgers survive executor restarts; a local ledger summary needs no AWS call. Mutations retain the lmaws/us-east-1/name/tag guards. See [S3_OBJECTS](docs/S3_OBJECTS.md) for signatures, recovery, caps and limits. The Lead owns the release; the live lmfiles test has not run as part of these changes.

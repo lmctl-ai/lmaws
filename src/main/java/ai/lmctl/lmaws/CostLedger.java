@@ -58,11 +58,20 @@ public final class CostLedger {
     private static BigDecimal unitPrice(String svc,String op){
         if(svc.equals("costexplorer"))return PRICES.get("costexplorer.primary_view_request");
         if(svc.equals("cloudwatch"))return op.equals("getmetricdata")?PRICES.get("cloudwatch.metric_requested"):op.equals("getmetricstatistics")?PRICES.get("cloudwatch.statistics_request"):BigDecimal.ZERO;
-        if(svc.equals("s3")){if(Set.of("listbuckets","createbucket","deletebucket","deleteobject").contains(op))return BigDecimal.ZERO;return PRICES.get(op.startsWith("get")||op.startsWith("head")?"s3.get_or_head_request":"s3.write_or_list_request");}
+        if(svc.equals("s3")){if(Set.of("listbuckets","createbucket","deletebucket","deleteobject","deleteobjects").contains(op))return BigDecimal.ZERO;return PRICES.get(op.startsWith("get")||op.startsWith("head")?"s3.get_or_head_request":"s3.write_or_list_request");}
         if(svc.equals("sqs"))return PRICES.get("sqs.request_64kib");if(svc.equals("sns"))return PRICES.get("sns.request_64kib");
         if(svc.equals("dynamodb"))return op.equals("putitem")?PRICES.get("dynamodb.write_1kib"):BigDecimal.ZERO;
         if(Set.of("ssm","logs","free_metadata").contains(svc))return BigDecimal.ZERO;
         if(svc.equals("secretsmanager"))return PRICES.get("secretsmanager.api_request");return PRICES.get("conservative_unknown_api_request");
+    }
+    /** Package-visible price lookup for persistent provider ledgers. */
+    static BigDecimal s3PriceForOperation(String operation){
+        String op=(operation==null?"":operation).toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]","");
+        return unitPrice("s3",op);
+    }
+    synchronized void s3BootstrapBudget(BigDecimal amount){requireBudget(amount,"creating and verifying an S3 bucket tag");}
+    static Map<String,BigDecimal> s3PriceTable(){
+        return Map.of("s3.write_or_list_request",PRICES.get("s3.write_or_list_request"),"s3.get_or_head_request",PRICES.get("s3.get_or_head_request"));
     }
     private BigDecimal reserved(){return resources.values().stream().filter(r->r.end<0).map(r->HEADROOM).reduce(BigDecimal.ZERO,BigDecimal::add).add(pending==null?BigDecimal.ZERO:HEADROOM);}
     private void requireBudget(BigDecimal extra,String action){if(cleanupDepth==0 && total().add(reserved()).add(extra).compareTo(cap)>0){refusals++;write(Map.of("event","cost_refused","action",action,"estimated_with_reserve_usd",total().add(reserved()).add(extra)));throw new BudgetExceeded("estimated cost cap exceeded before "+action+" (LMAWS_MAX_COST_USD)");}}

@@ -19,6 +19,7 @@ Current maintenance notes:
 - [13-lambda-role.md](13-lambda-role.md): bounded admin Lambda execution-role grant, PassRole lint and pending session rollout.
 - [14-remaining-scenarios.md](14-remaining-scenarios.md): queue/worker, conditional writes, presigning, cache bounds and pending live scenario handoff.
 - [15-iam-cheat-sheet.md](15-iam-cheat-sheet.md): IAM cheat sheet mapping every lmaws capability to its statements, scope rationale, failure messages and minimal builder fixes.
+- [../docs/S3_OBJECTS.md](../docs/S3_OBJECTS.md): guarded S3 object bindings, receipts, pagination and restart-safe request ledger.
 
 Current release/comparison evidence:
 
