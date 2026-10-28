@@ -1354,8 +1354,16 @@ public final class IamPolicies {
             List<String> actions,
             List<String> resources,
             String condLower) {
+        // 1. Read-only Describe* on * with region lock
+        Set<String> describeActions = Set.of(
+            "ec2:describeinstances", "ec2:describeinstancestatus", "ec2:describeimages",
+            "ec2:describevolumes", "ec2:describesubnets", "ec2:describesecuritygroups",
+            "ec2:describevpcs", "ec2:describeavailabilityzones", "ec2:describetags",
+            "ec2:describeinstancetypes"
+        );
         for (String action : actions) {
             String lower = action.trim().toLowerCase(Locale.ROOT);
+            if (describeActions.contains(lower)) continue;
             if ("*".equals(lower) || lower.endsWith(":*") || lower.startsWith("iam:") || lower.startsWith("sts:")
                     || lower.startsWith("organizations:") || lower.contains("spot") || lower.contains("keypair")
                     || lower.contains("securitygroup") || lower.contains("address") || lower.contains("instanceprofile")
@@ -1364,14 +1372,6 @@ public final class IamPolicies {
                     + "]: refuses forbidden action '" + action + "' in provisioner Allow statement";
             }
         }
-
-        // 1. Read-only Describe* / GetConsoleOutput on * with region lock or read-only
-        Set<String> describeActions = Set.of(
-            "ec2:describeinstances", "ec2:describeinstancestatus", "ec2:describeimages",
-            "ec2:describevolumes", "ec2:describesubnets", "ec2:describesecuritygroups",
-            "ec2:describevpcs", "ec2:describeavailabilityzones", "ec2:describetags",
-            "ec2:describeinstancetypes"
-        );
         if (actions.stream().allMatch(a -> describeActions.contains(a.trim().toLowerCase(Locale.ROOT)))) {
             if (resources.equals(List.of("*")) && condLower.contains("\"aws:requestedregion\":")) {
                 return "READ:read-only EC2 Describe* status and inventory (" + ALLOWLIST_STAR_READ + ")";
