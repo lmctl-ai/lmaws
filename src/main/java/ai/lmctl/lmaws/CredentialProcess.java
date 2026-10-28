@@ -68,8 +68,14 @@ public final class CredentialProcess {
     public static final String DEFAULT_SOURCE_PROFILE = "agent-issuer";
     public static final String READ_ONLY_POLICY_ARN = "arn:aws:iam::aws:policy/ReadOnlyAccess";
     public static final int INLINE_SESSION_LIMIT = 2048;
+    public static final int MAX_SESSION_POLICY_ARNS = 10;
     public static final int DEFAULT_DURATION_SECONDS = 3600;
     public static final Duration EXPIRY_SAFETY_MARGIN = Duration.ofMinutes(5);
+
+    private static final java.util.regex.Pattern EXTRA_POLICY_NAME_PATTERN =
+        java.util.regex.Pattern.compile("^(?:lmaws|lmctl)_[a-z0-9_-]{1,64}$");
+    private static final java.util.regex.Pattern EXTRA_POLICY_ARN_PATTERN =
+        java.util.regex.Pattern.compile("^arn:aws:iam::([0-9]{12}):policy/((?:lmaws|lmctl)_[a-z0-9_-]{1,64})$");
 
     public static final Set<String> SUPPORTED_MODES = Set.of("default", "lmaws", "lmaws-ec2", "lmaws-web");
     public static final Map<String, String> MANAGED_POLICY_BY_MODE = Map.of(
@@ -193,6 +199,10 @@ public final class CredentialProcess {
 
     /** Match Python json.dumps(..., separators=(",", ":")), including ensure_ascii. */
     static String readInlinePolicy(Path path) {
+        return readInlinePolicy(path, List.of());
+    }
+
+    static String readInlinePolicy(Path path, List<String> extraPolicies) {
         try {
             if (Files.size(path) > 1024 * 1024) throw new IllegalArgumentException("policy file is too large");
             Object parsed = Json.parse(Files.readString(path, StandardCharsets.UTF_8));
@@ -207,6 +217,11 @@ public final class CredentialProcess {
             }
             String result = ascii.toString();
             int length = result.length() + READ_ONLY_POLICY_ARN.length();
+            if (extraPolicies != null) {
+                for (String extra : extraPolicies) {
+                    length += resolvedExtraPolicyArnLength(extra);
+                }
+            }
             if (length > INLINE_SESSION_LIMIT) {
                 throw new PolicyLimitExceeded(length);
             }
@@ -214,6 +229,119 @@ public final class CredentialProcess {
         } catch (IOException e) {
             throw new IllegalArgumentException("session policy file unavailable");
         }
+    }
+
+    public static String validateExtraPolicyEntry(String rawEntry) {
+        if (rawEntry == null) {
+            throw new IllegalArgumentException("extra policy entry is required");
+        }
+        String entry = rawEntry.trim();
+        if (entry.isEmpty()
+                || entry.toLowerCase(Locale.ROOT).contains("admin")
+                || entry.contains("*")) {
+            throw new IllegalArgumentException("invalid or forbidden extra policy entry");
+        }
+        if (EXTRA_POLICY_NAME_PATTERN.matcher(entry).matches()
+                || EXTRA_POLICY_ARN_PATTERN.matcher(entry).matches()) {
+            return entry;
+        }
+        throw new IllegalArgumentException(
+            "extra policy must be an lmaws_/lmctl_ policy name or full customer-managed IAM policy ARN");
+    }
+
+    static int resolvedExtraPolicyArnLength(String rawEntry) {
+        String entry = validateExtraPolicyEntry(rawEntry);
+        if (entry.startsWith("arn:aws:iam::")) {
+            return entry.length();
+        }
+        return "arn:aws:iam::000000000000:policy/".length() + entry.length();
+    }
+
+    static String resolveExtraPolicyArn(String rawEntry, String accountId) {
+        String entry = validateExtraPolicyEntry(rawEntry);
+        var matcher = EXTRA_POLICY_ARN_PATTERN.matcher(entry);
+        if (matcher.matches()) {
+            if (accountId != null && !accountId.isBlank() && !accountId.equals(matcher.group(1))) {
+                throw new IllegalArgumentException("extra policy ARN account mismatch");
+            }
+            return entry;
+        }
+        if (accountId == null || !accountId.matches("^[0-9]{12}$")) {
+            throw new IllegalArgumentException("valid 12-digit AWS account ID required for extra managed policy ARN");
+        }
+        return "arn:aws:iam::" + accountId + ":policy/" + entry;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static List<String> parseExtraPolicySpecs(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        String trimmed = raw.trim();
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        if (trimmed.startsWith("[")) {
+            Object parsed = Json.parse(trimmed);
+            if (!(parsed instanceof List<?> list)) {
+                throw new IllegalArgumentException("extra policy JSON must be an array");
+            }
+            for (Object item : list) {
+                if (!(item instanceof String s)) {
+                    throw new IllegalArgumentException("extra policy JSON entries must be strings");
+                }
+                out.add(validateExtraPolicyEntry(s));
+            }
+        } else {
+            for (String line : trimmed.split("\\r?\\n")) {
+                int hash = line.indexOf('#');
+                String cleanLine = (hash >= 0 ? line.substring(0, hash) : line).trim();
+                if (cleanLine.isEmpty()) continue;
+                for (String token : cleanLine.split(",")) {
+                    String t = token.trim();
+                    if (!t.isEmpty()) {
+                        out.add(validateExtraPolicyEntry(t));
+                    }
+                }
+            }
+        }
+        if (out.size() > MAX_SESSION_POLICY_ARNS - 1) {
+            throw new IllegalArgumentException("STS allows at most 10 PolicyArns (ReadOnlyAccess + up to 9 extra)");
+        }
+        return List.copyOf(out);
+    }
+
+    static List<String> configuredExtraPolicies(Path awsDir, Path policyFile, String cliExtraPolicyArns) {
+        if (cliExtraPolicyArns != null) {
+            return parseExtraPolicySpecs(cliExtraPolicyArns);
+        }
+        String env = System.getenv("LMAWS_DEFAULT_EXTRA_POLICY_ARNS");
+        if (env != null && !env.isBlank()) {
+            return parseExtraPolicySpecs(env);
+        }
+        String envFile = System.getenv("LMAWS_DEFAULT_EXTRA_POLICY_ARNS_FILE");
+        if (envFile != null && !envFile.isBlank()) {
+            Path p = policyPath(envFile);
+            try {
+                if (Files.size(p) > 64 * 1024) throw new IllegalArgumentException("extra policy file is too large");
+                return parseExtraPolicySpecs(Files.readString(p, StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                throw new IllegalArgumentException("extra policy file unavailable");
+            }
+        }
+        Path dir = (policyFile != null && policyFile.getParent() != null)
+            ? policyFile.getParent()
+            : (awsDir == null ? null : awsDir.resolve("session-tools").resolve("tasks").resolve("iam-snapshots"));
+        if (dir != null) {
+            Path sibling = dir.resolve("local-default-extra-policy-arns.txt");
+            if (Files.isRegularFile(sibling)) {
+                try {
+                    if (Files.size(sibling) > 64 * 1024) throw new IllegalArgumentException("extra policy file is too large");
+                    return parseExtraPolicySpecs(Files.readString(sibling, StandardCharsets.UTF_8));
+                } catch (IOException e) {
+                    throw new IllegalArgumentException("extra policy file unavailable");
+                }
+            }
+        }
+        return List.of();
     }
 
     private static final class PolicyLimitExceeded extends IllegalArgumentException {
@@ -226,13 +354,23 @@ public final class CredentialProcess {
      * Build the STS GetFederationToken specification for the given mode.
      *
      * <ul>
-     *   <li>{@code default}: {@code ReadOnlyAccess} managed policy + the supplied real inline session policy
-     *       (verified {@code <= 2048} combined characters).
+     *   <li>{@code default}: {@code ReadOnlyAccess} managed policy (+ optional extra customer-managed
+     *       {@code PolicyArns}) + the supplied real inline session policy (verified {@code <= 2048}
+     *       combined characters).
      *   <li>{@code lmaws}, {@code lmaws-ec2}, {@code lmaws-web}: {@code arn:aws:iam::<account>:policy/lmaws_session},
      *       no inline policy.
      * </ul>
      */
     public static FederationSpec buildFederationSpec(String mode, int durationSeconds, String accountId, String inlinePolicy) {
+        return buildFederationSpec(mode, durationSeconds, accountId, inlinePolicy, List.of());
+    }
+
+    public static FederationSpec buildFederationSpec(
+            String mode,
+            int durationSeconds,
+            String accountId,
+            String inlinePolicy,
+            List<String> extraPolicySpecs) {
         if (mode == null || !SUPPORTED_MODES.contains(mode)) {
             throw new IllegalArgumentException("expected default, lmaws, lmaws-ec2 or lmaws-web");
         }
@@ -242,6 +380,9 @@ public final class CredentialProcess {
         String federatedName = "awsspot-local-" + mode;
         String managedName = MANAGED_POLICY_BY_MODE.get(mode);
         if (managedName != null) {
+            if (extraPolicySpecs != null && !extraPolicySpecs.isEmpty()) {
+                throw new IllegalArgumentException("extra policy ARNs are only supported in default mode");
+            }
             if (accountId == null || !accountId.matches("^[0-9]{12}$")) {
                 throw new IllegalArgumentException("valid 12-digit AWS account ID required for managed policy ARN");
             }
@@ -249,7 +390,21 @@ public final class CredentialProcess {
             return new FederationSpec(mode, federatedName, durationSeconds, List.of(arn), null);
         }
         if (inlinePolicy == null) throw new IllegalArgumentException("default mode requires a policy file");
-        int combinedLen = inlinePolicy.length() + READ_ONLY_POLICY_ARN.length();
+        List<String> policyArns = new ArrayList<>();
+        policyArns.add(READ_ONLY_POLICY_ARN);
+        if (extraPolicySpecs != null && !extraPolicySpecs.isEmpty()) {
+            List<String> normalized = parseExtraPolicySpecs(String.join(",", extraPolicySpecs));
+            for (String raw : normalized) {
+                String arn = resolveExtraPolicyArn(raw, accountId);
+                if (!policyArns.contains(arn)) {
+                    policyArns.add(arn);
+                }
+            }
+        }
+        if (policyArns.size() > MAX_SESSION_POLICY_ARNS) {
+            throw new IllegalArgumentException("STS allows at most 10 PolicyArns");
+        }
+        int combinedLen = inlinePolicy.length() + policyArns.stream().mapToInt(String::length).sum();
         if (combinedLen > INLINE_SESSION_LIMIT) {
             throw new PolicyLimitExceeded(combinedLen);
         }
@@ -257,7 +412,7 @@ public final class CredentialProcess {
             mode,
             federatedName,
             durationSeconds,
-            List.of(READ_ONLY_POLICY_ARN),
+            List.copyOf(policyArns),
             inlinePolicy
         );
     }
@@ -357,9 +512,22 @@ public final class CredentialProcess {
     }
 
     private static String issuanceScope(String mode, String source, StaticCredentialsProvider provider, String inline) {
+        return issuanceScope(mode, source, provider, inline, List.of());
+    }
+
+    private static String issuanceScope(
+            String mode,
+            String source,
+            StaticCredentialsProvider provider,
+            String inline,
+            List<String> extraPolicies) {
         var credentials = provider.resolveCredentials();
-        return mode + "-v2-" + shortSha256(source + "\n" + credentials.accessKeyId() + "\n"
-            + credentials.secretAccessKey() + "\n" + (inline == null ? "managed:lmaws_session" : inline));
+        String base = source + "\n" + credentials.accessKeyId() + "\n"
+            + credentials.secretAccessKey() + "\n" + (inline == null ? "managed:lmaws_session" : inline);
+        if (extraPolicies != null && !extraPolicies.isEmpty()) {
+            base = base + "\nextra:" + String.join(",", extraPolicies);
+        }
+        return mode + "-v2-" + shortSha256(base);
     }
 
     private static String cacheKey(String mode, int durationSeconds, URI endpoint, Path awsDir, Path cacheDir) {
@@ -527,8 +695,12 @@ public final class CredentialProcess {
         try {
             String source = configuredSourceProfile();
             requireSourceProfile(source);
+            Path policyFile = defaultPolicyPath(awsDir);
+            List<String> extras = "default".equals(mode)
+                ? configuredExtraPolicies(awsDir, policyFile, null)
+                : List.of();
             scope = issuanceScope(mode, source, loadIsolatedSourceCredentials(source, awsDir),
-                "default".equals(mode) ? readInlinePolicy(defaultPolicyPath(awsDir)) : null);
+                "default".equals(mode) ? readInlinePolicy(policyFile, extras) : null, extras);
         } catch (Exception ignored) {
             return new CacheMetadata(mode, false, "not_cached", 0L);
         }
@@ -578,6 +750,31 @@ public final class CredentialProcess {
             URI endpointOverride,
             boolean useCache,
             Clock clock, Path policyFile) {
+        return issueOrGetCached(
+            mode,
+            durationSeconds,
+            sourceProfile,
+            awsDir,
+            cacheDir,
+            endpointOverride,
+            useCache,
+            clock,
+            policyFile,
+            "default".equals(mode) ? configuredExtraPolicies(awsDir, policyFile, null) : List.of()
+        );
+    }
+
+    public static TokenResult issueOrGetCached(
+            String mode,
+            int durationSeconds,
+            String sourceProfile,
+            Path awsDir,
+            Path cacheDir,
+            URI endpointOverride,
+            boolean useCache,
+            Clock clock,
+            Path policyFile,
+            List<String> extraPolicySpecs) {
         if (mode == null || !SUPPORTED_MODES.contains(mode)) {
             throw new IllegalArgumentException("expected default, lmaws, lmaws-ec2 or lmaws-web");
         }
@@ -585,10 +782,16 @@ public final class CredentialProcess {
             throw new IllegalArgumentException("durationSeconds must be 3600 to match the scoped session helper");
         }
         requireSourceProfile(sourceProfile);
-        String inlinePolicy = "default".equals(mode) ? readInlinePolicy(policyFile) : null;
+        List<String> extras = extraPolicySpecs == null || extraPolicySpecs.isEmpty()
+            ? List.of()
+            : parseExtraPolicySpecs(String.join(",", extraPolicySpecs));
+        if (!"default".equals(mode) && !extras.isEmpty()) {
+            throw new IllegalArgumentException("extra policy ARNs are only supported in default mode");
+        }
+        String inlinePolicy = "default".equals(mode) ? readInlinePolicy(policyFile, extras) : null;
         // Validate the explicitly selected file credentials BEFORE consulting either cache.
         StaticCredentialsProvider sourceCredentials = loadIsolatedSourceCredentials(sourceProfile, awsDir);
-        String scope = issuanceScope(mode, sourceProfile, sourceCredentials, inlinePolicy);
+        String scope = issuanceScope(mode, sourceProfile, sourceCredentials, inlinePolicy, extras);
         Instant now = clock.instant();
         String key = cacheKey(scope, durationSeconds, endpointOverride, awsDir, cacheDir);
 
@@ -622,13 +825,13 @@ public final class CredentialProcess {
         TokenResult fresh;
         try (StsClient sts = builder.build()) {
             String accountId = null;
-            if (MANAGED_POLICY_BY_MODE.containsKey(mode)) {
+            if (MANAGED_POLICY_BY_MODE.containsKey(mode) || !extras.isEmpty()) {
                 accountId = sts.getCallerIdentity().account();
                 if (accountId == null || !accountId.matches("^[0-9]{12}$")) {
                     throw new IllegalStateException("STS identity lookup failed");
                 }
             }
-            FederationSpec spec = buildFederationSpec(mode, durationSeconds, accountId, inlinePolicy);
+            FederationSpec spec = buildFederationSpec(mode, durationSeconds, accountId, inlinePolicy, extras);
             GetFederationTokenRequest.Builder req = GetFederationTokenRequest.builder()
                 .name(spec.federatedUserName())
                 .durationSeconds(spec.durationSeconds())
@@ -690,7 +893,9 @@ public final class CredentialProcess {
             String mode = null;
             int durationSeconds = DEFAULT_DURATION_SECONDS;
             String sourceProfile = configuredSourceProfile();
-            Path policyFile = defaultPolicyPath(defaultAwsDir());
+            Path awsDir = defaultAwsDir();
+            Path policyFile = defaultPolicyPath(awsDir);
+            String cliExtraPolicyArns = null;
             boolean useCache = !"0".equals(System.getenv("LMAWS_CREDENTIAL_PROCESS_CACHE"));
 
             for (int i = 0; i < args.length; i++) {
@@ -713,6 +918,9 @@ public final class CredentialProcess {
                 } else if ("--policy-file".equals(arg)) {
                     if (i + 1 >= args.length) throw new IllegalArgumentException("missing policy file");
                     policyFile = policyPath(args[++i]);
+                } else if ("--extra-policy-arns".equals(arg)) {
+                    if (i + 1 >= args.length) throw new IllegalArgumentException("missing extra policy ARNs");
+                    cliExtraPolicyArns = args[++i];
                 } else if ("--no-cache".equals(arg)) {
                     useCache = false;
                 } else {
@@ -722,16 +930,24 @@ public final class CredentialProcess {
             if (mode == null) {
                 throw new IllegalArgumentException("one profile mode is required");
             }
+            if (!"default".equals(mode) && cliExtraPolicyArns != null && !cliExtraPolicyArns.isBlank()) {
+                throw new IllegalArgumentException("extra policy ARNs are only supported in default mode");
+            }
+            List<String> extras = "default".equals(mode)
+                ? configuredExtraPolicies(awsDir, policyFile, cliExtraPolicyArns)
+                : List.of();
             URI endpoint = checkedLoopbackEndpoint(System.getenv("LMAWS_ENDPOINT"));
             TokenResult token = issueOrGetCached(
                 mode,
                 durationSeconds,
                 sourceProfile,
-                defaultAwsDir(),
+                awsDir,
                 defaultCacheDir(),
                 endpoint,
                 useCache,
-                Clock.systemUTC(), policyFile
+                Clock.systemUTC(),
+                policyFile,
+                extras
             );
             System.out.println(token.toCredentialProcessJson());
             return 0;

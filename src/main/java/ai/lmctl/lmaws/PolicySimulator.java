@@ -525,9 +525,13 @@ public final class PolicySimulator {
         String opLower = operator.toLowerCase(Locale.ROOT);
         boolean ifExists = opLower.endsWith("ifexists");
         String baseOp = ifExists ? opLower.substring(0, opLower.length() - "ifexists".length()) : opLower;
+        boolean forAll = false;
+        boolean forAny = false;
         if (baseOp.startsWith("forallvalues:")) {
+            forAll = true;
             baseOp = baseOp.substring("forallvalues:".length());
         } else if (baseOp.startsWith("foranyvalue:")) {
+            forAny = true;
             baseOp = baseOp.substring("foranyvalue:".length());
         }
 
@@ -540,6 +544,27 @@ public final class PolicySimulator {
             return ifExists;
         }
 
+        if ((forAll || forAny) && (actual.contains(",") || actual.contains("|"))) {
+            String[] parts = actual.split("[,|]+");
+            List<String> tokens = new ArrayList<>(parts.length);
+            for (String p : parts) {
+                String t = p.trim();
+                if (!t.isEmpty()) tokens.add(t);
+            }
+            if (tokens.isEmpty()) {
+                return forAll;
+            }
+            String finalBaseOp = baseOp;
+            if (forAll) {
+                return tokens.stream().allMatch(tok -> evaluateSingleValueOp(finalBaseOp, tok, expectedVals));
+            }
+            return tokens.stream().anyMatch(tok -> evaluateSingleValueOp(finalBaseOp, tok, expectedVals));
+        }
+
+        return evaluateSingleValueOp(baseOp, actual, expectedVals);
+    }
+
+    private static boolean evaluateSingleValueOp(String baseOp, String actual, List<String> expectedVals) {
         return switch (baseOp) {
             case "stringequals", "arnequals", "bool", "ipaddress" ->
                 expectedVals.stream().anyMatch(e -> e.equalsIgnoreCase(actual));

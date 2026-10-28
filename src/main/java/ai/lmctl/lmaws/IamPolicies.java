@@ -19,7 +19,7 @@ public final class IamPolicies {
     public static final int MAX_POLICY_VERSIONS = 5;
     public static final String EXPECTED_VERSION = "2012-10-17";
 
-    private static final Pattern POLICY_NAME_PATTERN = Pattern.compile("^lmaws_[a-z0-9_-]{1,64}$");
+    private static final Pattern POLICY_NAME_PATTERN = Pattern.compile("^(?:lmaws|lmctl)_[a-z0-9_-]{1,64}$");
 
     public static final String ALLOWLIST_STAR_READ = "STAR_READ_ALLOWLIST";
     public static final String RULE_STAR_READ = ALLOWLIST_STAR_READ;
@@ -45,6 +45,20 @@ public final class IamPolicies {
     public static final String RULE_INSTANCE_ROLE_SECRETS_READ_ONLY = "INSTANCE_ROLE_SECRETS_READ_ONLY";
     public static final String RULE_INSTANCE_ROLE_COGNITO_NO_DELETE = "INSTANCE_ROLE_COGNITO_NO_DELETE";
     public static final String RULE_INSTANCE_ROLE_ORIGIN_GUARD = "INSTANCE_ROLE_ORIGIN_AND_REGION_GUARD";
+
+    // Separate lint mode rule IDs for dedicated on-demand EC2 provisioning policy (lmctl_default_provision)
+    public static final String RULE_PROVISION_NO_ADMIN = "PROVISION_POLICY_NO_ADMIN_OR_PASSROLE";
+    public static final String RULE_PROVISION_ONLY_EC2_LIFECYCLE = "PROVISION_POLICY_ONLY_EC2_LIFECYCLE";
+    public static final String RULE_PROVISION_RUN_TAG_AND_GUARDS = "PROVISION_POLICY_RUN_TAG_AND_GUARDS";
+    public static final String RULE_PROVISION_LIFECYCLE_TAG_SCOPED = "PROVISION_POLICY_LIFECYCLE_TAG_SCOPED";
+    public static final String RULE_PROVISION_TAG_ON_CREATE_ONLY = "PROVISION_POLICY_TAG_ON_CREATE_ONLY";
+    public static final String RULE_PROVISION_MANDATORY_DENIES = "PROVISION_POLICY_MANDATORY_DENIES";
+    public static final String RULE_PROVISION_RUN_SCOPED = "PROVISION_RUN_INSTANCES_SCOPED";
+    public static final String RULE_PROVISION_CANONICAL_AMI_ONLY = "PROVISION_CANONICAL_AMI_ONLY";
+    public static final String RULE_PROVISION_VOLUME_BOUNDED = "PROVISION_VOLUME_BOUNDED";
+    public static final String RULE_PROVISION_NO_SPOT = "PROVISION_NO_SPOT_INSTANCES";
+    public static final String RULE_PROVISION_NO_IAM_KEY_SG_EIP = "PROVISION_NO_IAM_KEY_SG_EIP";
+    public static final String RULE_PROVISION_REGION_GUARD = "PROVISION_REGION_GUARD";
 
     /**
      * Reviewable one-line-per-entry data table of read/inventory actions and their required scope.
@@ -209,6 +223,7 @@ public final class IamPolicies {
         if (!(statements instanceof List<?> list)) return;
         for (Object item : list) {
             if (!(item instanceof Map<?, ?> raw)) continue;
+            if ("Deny".equalsIgnoreCase(String.valueOf(raw.get("Effect")))) continue;
             Object actions = raw.get("Action");
             for (String action : stringList(actions)) {
                 if (LAMBDA_PASS_ROLE.equals(action.trim().toLowerCase(Locale.ROOT))
@@ -438,6 +453,10 @@ public final class IamPolicies {
         if (!(stmtObj instanceof List<?> stmtList) || stmtList.isEmpty()) {
             findings.add("Policy Statement must be a non-empty JSON array");
             return new LintResult(false, compactLen, version, 0, 0, 0, 0, checks, findings, statementChecks, compact, pretty);
+        }
+
+        if (isProvisionPolicyDocument(stmtList)) {
+            return lintProvision(rawJson);
         }
 
         checks.add("no_forbidden_actions(iam:*,sts:AssumeRole*,organizations:*,account:*,kms:*,secretsmanager:*,*)");
@@ -1057,6 +1076,414 @@ public final class IamPolicies {
 
         return "ERROR:statement " + sid + " [rule=" + RULE_SCOPED_WRITE_REQUIRED
             + "]: unapproved action(s) " + actions + " on resource(s) " + resources + " for fleet instance role";
+    }
+
+    @SuppressWarnings("unchecked")
+    private static boolean isProvisionPolicyDocument(List<?> stmtList) {
+        if (stmtList == null || stmtList.isEmpty()) return false;
+        for (Object item : stmtList) {
+            if (!(item instanceof Map<?, ?> rawStmt)) continue;
+            Map<String, Object> stmt = (Map<String, Object>) rawStmt;
+            String sid = String.valueOf(stmt.getOrDefault("Sid", "")).trim();
+            if (sid.startsWith("Provision") || sid.equals("DenySpotMarket") || sid.equals("DenyNonProvisionerLifecycle")) {
+                return true;
+            }
+            String condLower = compactJson(stmt.get("Condition")).toLowerCase(Locale.ROOT);
+            if (condLower.contains("aws:requesttag/provisioner") || condLower.contains("aws:resourcetag/provisioner")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Lints a customer-managed on-demand EC2 provisioning policy (such as {@code lmctl_default_provision})
+     * attached via {@code PolicyArns} for the {@code default} profile.
+     */
+    @SuppressWarnings("unchecked")
+    public static LintResult lintProvision(String rawJson) {
+        List<String> checks = new ArrayList<>();
+        List<String> findings = new ArrayList<>();
+        List<StatementCheck> statementChecks = new ArrayList<>();
+
+        checks.add("json_syntax");
+        if (rawJson == null || rawJson.isBlank()) {
+            findings.add("Policy document is empty");
+            return new LintResult(false, 0, "", 0, 0, 0, 0, checks, findings, statementChecks, "", "");
+        }
+
+        Object parsedObj;
+        try {
+            parsedObj = Json.parse(decodeAwsDocument(rawJson));
+        } catch (RuntimeException ex) {
+            findings.add("Invalid JSON document: " + Jsons.mask(ex.getMessage()));
+            return new LintResult(false, 0, "", 0, 0, 0, 0, checks, findings, statementChecks, "", "");
+        }
+        if (!(parsedObj instanceof Map<?, ?> rawMap)) {
+            findings.add("Policy document root must be a JSON object");
+            return new LintResult(false, 0, "", 0, 0, 0, 0, checks, findings, statementChecks, "", "");
+        }
+
+        Map<String, Object> doc = (Map<String, Object>) rawMap;
+
+        String compact = compactJson(doc);
+        String pretty = prettyJson(doc);
+        int compactLen = compact.length();
+        checks.add("size <= " + MANAGED_POLICY_LIMIT + " (" + compactLen + " chars)");
+        if (compactLen > MANAGED_POLICY_LIMIT) {
+            findings.add("Compact policy length " + compactLen + " exceeds managed policy limit " + MANAGED_POLICY_LIMIT);
+        }
+
+        String version = String.valueOf(doc.getOrDefault("Version", ""));
+        checks.add("version == " + EXPECTED_VERSION);
+        if (!EXPECTED_VERSION.equals(version)) {
+            findings.add("Policy Version must be '" + EXPECTED_VERSION + "', got '" + version + "'");
+        }
+
+        checks.add("statements_non_empty");
+        Object stmtObj = doc.get("Statement");
+        if (!(stmtObj instanceof List<?> stmtList) || stmtList.isEmpty()) {
+            findings.add("Policy Statement must be a non-empty JSON array");
+            return new LintResult(false, compactLen, version, 0, 0, 0, 0, checks, findings, statementChecks, compact, pretty);
+        }
+
+        checks.add("provision_run_instances_scoped(" + RULE_PROVISION_RUN_SCOPED + ","
+            + RULE_PROVISION_CANONICAL_AMI_ONLY + "," + RULE_PROVISION_VOLUME_BOUNDED + ")");
+        checks.add("provision_tag_on_create_only(" + RULE_PROVISION_TAG_ON_CREATE_ONLY + ")");
+        checks.add("provision_lifecycle_tag_scoped(" + RULE_PROVISION_LIFECYCLE_TAG_SCOPED + ")");
+        checks.add("provision_guardrails_present(" + RULE_PROVISION_NO_SPOT + ","
+            + RULE_PROVISION_NO_IAM_KEY_SG_EIP + "," + RULE_PROVISION_REGION_GUARD + ")");
+
+        boolean hasInstanceRunAllow = false;
+        boolean hasAmiRunAllow = false;
+        boolean hasVolumeRunAllow = false;
+        boolean hasNetworkEniRunAllow = false;
+        boolean hasSubnetSgRunAllow = false;
+        boolean hasCreateTagsOnCreateAllow = false;
+        boolean hasLifecycleAllow = false;
+        boolean hasDenySpotRun = false;
+        boolean hasDenySpotActions = false;
+        boolean hasDenyPostLaunchTags = false;
+        boolean hasDenyDeleteTags = false;
+        boolean hasDenyPassRoleAndProfile = false;
+        boolean hasDenyKeySgEip = false;
+        boolean hasDenyNonProvisioner = false;
+        boolean hasDenyAwsspot = false;
+        boolean hasDenyRegion = false;
+
+        Set<String> seenSids = new LinkedHashSet<>();
+        int allowCount = 0;
+        int denyCount = 0;
+        int readOnlyCount = 0;
+        int writeScopedCount = 0;
+        int idx = 0;
+
+        for (Object item : stmtList) {
+            idx++;
+            if (!(item instanceof Map<?, ?> rawStmt)) {
+                findings.add("Statement[" + idx + "] is not a JSON object");
+                continue;
+            }
+            Map<String, Object> stmt = (Map<String, Object>) rawStmt;
+            String sid = String.valueOf(stmt.getOrDefault("Sid", "")).trim();
+            if (sid.isEmpty()) {
+                findings.add("Statement[" + idx + "] missing non-empty Sid");
+                sid = "Statement_" + idx;
+            } else if (!seenSids.add(sid)) {
+                findings.add("Duplicate Sid '" + sid + "'");
+            }
+
+            String effect = String.valueOf(stmt.getOrDefault("Effect", ""));
+            if (!"Allow".equals(effect) && !"Deny".equals(effect)) {
+                findings.add("Statement " + sid + " has invalid Effect '" + effect + "'");
+            }
+            if (stmt.containsKey("Principal") || stmt.containsKey("NotPrincipal")) {
+                findings.add("Statement " + sid + " must not contain Principal/NotPrincipal in an IAM permission policy");
+            }
+
+            List<String> actions = stringList(stmt.getOrDefault("Action", stmt.get("NotAction")));
+            List<String> resources = stringList(stmt.getOrDefault("Resource", stmt.get("NotResource")));
+            if (actions.isEmpty()) {
+                findings.add("Statement " + sid + " has empty Action");
+            }
+            if (resources.isEmpty()) {
+                findings.add("Statement " + sid + " has empty Resource");
+            }
+            String condLower = compactJson(stmt.get("Condition")).toLowerCase(Locale.ROOT);
+
+            if ("Deny".equals(effect)) {
+                denyCount++;
+                if (hasActionIgnoreCase(actions, "ec2:RunInstances")
+                        && (condLower.contains("\"ec2:instancemarkettype\":\"spot\"")
+                            || resources.stream().anyMatch(r -> r.contains(":spot-instances-request/")))) {
+                    hasDenySpotRun = true;
+                }
+                if (hasActionIgnoreCase(actions, "ec2:RequestSpotInstances")
+                        && hasActionIgnoreCase(actions, "ec2:RequestSpotFleet")) {
+                    hasDenySpotActions = true;
+                }
+                if (hasActionIgnoreCase(actions, "ec2:CreateTags")
+                        && (condLower.contains("\"ec2:createaction\":\"runinstances\"")
+                            || condLower.contains("\"ec2:createaction\":\"true\""))) {
+                    hasDenyPostLaunchTags = true;
+                }
+                if (hasActionIgnoreCase(actions, "ec2:DeleteTags")) {
+                    hasDenyDeleteTags = true;
+                }
+                if (hasActionIgnoreCase(actions, "iam:PassRole")
+                        && hasActionIgnoreCase(actions, "ec2:AssociateIamInstanceProfile")
+                        && hasActionIgnoreCase(actions, "ec2:ReplaceIamInstanceProfileAssociation")) {
+                    hasDenyPassRoleAndProfile = true;
+                }
+                if (hasActionIgnoreCase(actions, "ec2:CreateKeyPair")
+                        && hasActionIgnoreCase(actions, "ec2:CreateSecurityGroup")
+                        && hasActionIgnoreCase(actions, "ec2:AllocateAddress")
+                        && hasActionIgnoreCase(actions, "ec2:AssociateAddress")) {
+                    hasDenyKeySgEip = true;
+                }
+                if ((hasActionIgnoreCase(actions, "ec2:StartInstances") || hasActionIgnoreCase(actions, "ec2:TerminateInstances"))
+                        && condLower.contains("\"aws:resourcetag/provisioner\"")) {
+                    hasDenyNonProvisioner = true;
+                }
+                if (condLower.contains("\"aws:resourcetag/project\":\"awsspot\"")) {
+                    hasDenyAwsspot = true;
+                }
+                if ((hasActionIgnoreCase(actions, "ec2:*") || actions.contains("*"))
+                        && condLower.contains("\"aws:requestedregion\":")) {
+                    hasDenyRegion = true;
+                }
+                statementChecks.add(new StatementCheck(sid, effect, "deny_guardrail", actions.size(), resources.size(),
+                    true, "explicit Deny guardrail"));
+                continue;
+            }
+
+            allowCount++;
+            String scopeResult = checkProvisionAllowStatement(sid, actions, resources, condLower);
+            if (scopeResult.startsWith("READ:")) {
+                readOnlyCount++;
+                statementChecks.add(new StatementCheck(sid, effect, "allow_read", actions.size(), resources.size(),
+                    true, scopeResult.substring("READ:".length())));
+            } else if (scopeResult.startsWith("SCOPED:")) {
+                writeScopedCount++;
+                String detail = scopeResult.substring("SCOPED:".length());
+                if (detail.startsWith("run_instance:")) hasInstanceRunAllow = true;
+                if (detail.startsWith("run_ami:")) hasAmiRunAllow = true;
+                if (detail.startsWith("run_volume:")) hasVolumeRunAllow = true;
+                if (detail.startsWith("run_eni:")) hasNetworkEniRunAllow = true;
+                if (detail.startsWith("run_net_refs:")) hasSubnetSgRunAllow = true;
+                if (detail.startsWith("run_net_all:")) {
+                    hasNetworkEniRunAllow = true;
+                    hasSubnetSgRunAllow = true;
+                }
+                if (detail.startsWith("create_tags:")) hasCreateTagsOnCreateAllow = true;
+                if (detail.startsWith("lifecycle:")) hasLifecycleAllow = true;
+                statementChecks.add(new StatementCheck(sid, effect, "allow_scoped_write", actions.size(), resources.size(),
+                    true, detail));
+            } else {
+                String msg = scopeResult.startsWith("ERROR:") ? scopeResult.substring("ERROR:".length()) : scopeResult;
+                findings.add(msg);
+                statementChecks.add(new StatementCheck(sid, effect, "violation", actions.size(), resources.size(),
+                    false, msg));
+            }
+        }
+
+        if (!hasInstanceRunAllow) {
+            findings.add("Provision policy [rule=" + RULE_PROVISION_RUN_SCOPED
+                + "] requires an Allow statement for ec2:RunInstances on instance/* conditioned on ec2:InstanceType, aws:RequestTag/provisioner=lmprov, ForAllValues:StringEquals aws:TagKeys, and aws:RequestedRegion");
+        }
+        if (!hasAmiRunAllow) {
+            findings.add("Provision policy [rule=" + RULE_PROVISION_CANONICAL_AMI_ONLY
+                + "] requires an Allow statement for ec2:RunInstances on image/* conditioned on ec2:Owner=099720109477 (Canonical) and aws:RequestedRegion");
+        }
+        if (!hasVolumeRunAllow) {
+            findings.add("Provision policy [rule=" + RULE_PROVISION_VOLUME_BOUNDED
+                + "] requires an Allow statement for ec2:RunInstances on volume/* conditioned on ec2:VolumeType=gp3, NumericLessThanEquals ec2:VolumeSize, and aws:RequestTag/provisioner=lmprov");
+        }
+        if (!hasNetworkEniRunAllow || !hasSubnetSgRunAllow) {
+            findings.add("Provision policy [rule=" + RULE_PROVISION_RUN_SCOPED
+                + "] requires Allow statement(s) for ec2:RunInstances on network-interface/* (with aws:RequestTag/provisioner=lmprov) and subnet/* + security-group/*");
+        }
+        if (!hasCreateTagsOnCreateAllow) {
+            findings.add("Provision policy [rule=" + RULE_PROVISION_TAG_ON_CREATE_ONLY
+                + "] requires an Allow statement for ec2:CreateTags conditioned on ec2:CreateAction=RunInstances, aws:RequestTag/provisioner=lmprov, and ForAllValues:StringEquals aws:TagKeys");
+        }
+        if (!hasLifecycleAllow) {
+            findings.add("Provision policy [rule=" + RULE_PROVISION_LIFECYCLE_TAG_SCOPED
+                + "] requires an Allow statement for instance lifecycle actions conditioned on aws:ResourceTag/provisioner=lmprov and aws:RequestedRegion");
+        }
+        if (!hasDenySpotRun || !hasDenySpotActions) {
+            findings.add("Provision policy [rule=" + RULE_PROVISION_NO_SPOT
+                + "] requires explicit Deny statements blocking ec2:RunInstances with spot market options (ec2:InstanceMarketType=spot / spot-instances-request/*) and ec2:RequestSpotInstances/RequestSpotFleet");
+        }
+        if (!hasDenyPostLaunchTags || !hasDenyDeleteTags) {
+            findings.add("Provision policy [rule=" + RULE_PROVISION_TAG_ON_CREATE_ONLY
+                + "] requires explicit Deny statements blocking post-launch ec2:CreateTags and all ec2:DeleteTags");
+        }
+        if (!hasDenyPassRoleAndProfile || !hasDenyKeySgEip) {
+            findings.add("Provision policy [rule=" + RULE_PROVISION_NO_IAM_KEY_SG_EIP
+                + "] requires explicit Deny statements blocking iam:PassRole, IAM instance profile attachment, key-pair/security-group mutation, and Elastic IP allocation/association");
+        }
+        if (!hasDenyNonProvisioner || !hasDenyAwsspot) {
+            findings.add("Provision policy [rule=" + RULE_PROVISION_LIFECYCLE_TAG_SCOPED
+                + "] requires explicit Deny statements protecting non-provisioner instances and Project=awsspot fleet resources");
+        }
+        if (!hasDenyRegion) {
+            findings.add("Provision policy [rule=" + RULE_PROVISION_REGION_GUARD
+                + "] requires an explicit Deny statement locking ec2:* to the configured region");
+        }
+
+        boolean valid = findings.isEmpty();
+        return new LintResult(
+            valid,
+            compactLen,
+            version,
+            stmtList.size(),
+            readOnlyCount,
+            writeScopedCount,
+            denyCount,
+            checks,
+            findings,
+            statementChecks,
+            compact,
+            pretty
+        );
+    }
+
+    private static String checkProvisionAllowStatement(
+            String sid,
+            List<String> actions,
+            List<String> resources,
+            String condLower) {
+        for (String action : actions) {
+            String lower = action.trim().toLowerCase(Locale.ROOT);
+            if ("*".equals(lower) || lower.endsWith(":*") || lower.startsWith("iam:") || lower.startsWith("sts:")
+                    || lower.startsWith("organizations:") || lower.contains("spot") || lower.contains("keypair")
+                    || lower.contains("securitygroup") || lower.contains("address") || lower.contains("instanceprofile")
+                    || lower.equals("ec2:deletetags")) {
+                return "ERROR:statement " + sid + " [rule=" + RULE_PROVISION_NO_IAM_KEY_SG_EIP
+                    + "]: refuses forbidden action '" + action + "' in provisioner Allow statement";
+            }
+        }
+
+        // 1. Read-only Describe* / GetConsoleOutput on * with region lock or read-only
+        Set<String> describeActions = Set.of(
+            "ec2:describeinstances", "ec2:describeinstancestatus", "ec2:describeimages",
+            "ec2:describevolumes", "ec2:describesubnets", "ec2:describesecuritygroups",
+            "ec2:describevpcs", "ec2:describeavailabilityzones", "ec2:describetags",
+            "ec2:describeinstancetypes"
+        );
+        if (actions.stream().allMatch(a -> describeActions.contains(a.trim().toLowerCase(Locale.ROOT)))) {
+            if (resources.equals(List.of("*")) && condLower.contains("\"aws:requestedregion\":")) {
+                return "READ:read-only EC2 Describe* status and inventory (" + ALLOWLIST_STAR_READ + ")";
+            }
+            return "ERROR:statement " + sid + " [rule=" + RULE_PROVISION_REGION_GUARD
+                + "]: EC2 Describe* statement must use Resource '*' and Condition aws:RequestedRegion";
+        }
+
+        // 2. RunInstances sub-resource statements
+        if (actions.size() == 1 && "ec2:runinstances".equalsIgnoreCase(actions.get(0).trim())) {
+            boolean allInstanceRes = !resources.isEmpty() && resources.stream().allMatch(r ->
+                r.trim().matches("arn:aws:ec2:[a-z0-9-]+:(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):instance/\\*"));
+            if (allInstanceRes) {
+                boolean hasInstanceType = condLower.contains("\"ec2:instancetype\":") && !condLower.contains("\"ec2:instancetype\":\"*\"");
+                boolean hasProvTag = condLower.contains("\"aws:requesttag/provisioner\":\"lmprov\"");
+                boolean hasTagKeys = condLower.contains("forallvalues:stringequals") && condLower.contains("\"aws:tagkeys\":");
+                boolean hasRegion = condLower.contains("\"aws:requestedregion\":");
+                if (hasInstanceType && hasProvTag && hasTagKeys && hasRegion) {
+                    return "SCOPED:run_instance:scoped RunInstances on instance/* with ec2:InstanceType, aws:RequestTag/provisioner=lmprov, and aws:TagKeys (" + RULE_PROVISION_RUN_SCOPED + ")";
+                }
+                return "ERROR:statement " + sid + " [rule=" + RULE_PROVISION_RUN_SCOPED
+                    + "]: RunInstances on instance/* requires non-wildcard ec2:InstanceType, aws:RequestTag/provisioner=lmprov, ForAllValues:StringEquals aws:TagKeys, and aws:RequestedRegion";
+            }
+
+            boolean allImageRes = !resources.isEmpty() && resources.stream().allMatch(r ->
+                r.trim().matches("arn:aws:ec2:[a-z0-9-]+::image/\\*"));
+            if (allImageRes) {
+                boolean hasCanonicalOwner = condLower.contains("\"ec2:owner\":\"099720109477\"");
+                boolean hasRegion = condLower.contains("\"aws:requestedregion\":");
+                if (hasCanonicalOwner && hasRegion) {
+                    return "SCOPED:run_ami:scoped RunInstances on image/* owned by Canonical 099720109477 (" + RULE_PROVISION_CANONICAL_AMI_ONLY + ")";
+                }
+                return "ERROR:statement " + sid + " [rule=" + RULE_PROVISION_CANONICAL_AMI_ONLY
+                    + "]: RunInstances on image/* requires ec2:Owner=099720109477 (Canonical) and aws:RequestedRegion";
+            }
+
+            boolean allVolumeRes = !resources.isEmpty() && resources.stream().allMatch(r ->
+                r.trim().matches("arn:aws:ec2:[a-z0-9-]+:(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):volume/\\*"));
+            if (allVolumeRes) {
+                boolean hasGp3 = condLower.contains("\"ec2:volumetype\":\"gp3\"");
+                boolean hasMaxSize = condLower.contains("numericlessthanequals") && condLower.contains("\"ec2:volumesize\":");
+                boolean hasProvTag = condLower.contains("\"aws:requesttag/provisioner\":\"lmprov\"");
+                boolean hasRegion = condLower.contains("\"aws:requestedregion\":");
+                if (hasGp3 && hasMaxSize && hasProvTag && hasRegion) {
+                    return "SCOPED:run_volume:scoped RunInstances on volume/* with gp3, VolumeSize cap, and aws:RequestTag/provisioner=lmprov (" + RULE_PROVISION_VOLUME_BOUNDED + ")";
+                }
+                return "ERROR:statement " + sid + " [rule=" + RULE_PROVISION_VOLUME_BOUNDED
+                    + "]: RunInstances on volume/* requires ec2:VolumeType=gp3, NumericLessThanEquals ec2:VolumeSize, aws:RequestTag/provisioner=lmprov, and aws:RequestedRegion";
+            }
+
+            boolean allEniRes = !resources.isEmpty() && resources.stream().allMatch(r ->
+                r.trim().matches("arn:aws:ec2:[a-z0-9-]+:(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):network-interface/\\*"));
+            if (allEniRes) {
+                boolean hasProvTag = condLower.contains("\"aws:requesttag/provisioner\":\"lmprov\"");
+                boolean hasRegion = condLower.contains("\"aws:requestedregion\":");
+                if (hasProvTag && hasRegion) {
+                    return "SCOPED:run_eni:scoped RunInstances on network-interface/* with aws:RequestTag/provisioner=lmprov (" + RULE_PROVISION_RUN_SCOPED + ")";
+                }
+                return "ERROR:statement " + sid + " [rule=" + RULE_PROVISION_RUN_SCOPED
+                    + "]: RunInstances on network-interface/* requires aws:RequestTag/provisioner=lmprov and aws:RequestedRegion";
+            }
+
+            boolean hasSubnetAndSg = resources.size() >= 2
+                && resources.stream().anyMatch(r -> r.trim().matches("arn:aws:ec2:[a-z0-9-]+:(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):subnet/\\*"))
+                && resources.stream().anyMatch(r -> r.trim().matches("arn:aws:ec2:[a-z0-9-]+:(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):security-group/\\*"))
+                && resources.stream().allMatch(r -> r.trim().matches("arn:aws:ec2:[a-z0-9-]+:(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):(?:subnet|security-group)/\\*"));
+            if (hasSubnetAndSg) {
+                boolean hasRegion = condLower.contains("\"aws:requestedregion\":");
+                if (hasRegion) {
+                    return "SCOPED:run_net_refs:scoped RunInstances on existing subnet/* and security-group/* (" + RULE_PROVISION_RUN_SCOPED + ")";
+                }
+                return "ERROR:statement " + sid + " [rule=" + RULE_PROVISION_RUN_SCOPED
+                    + "]: RunInstances on subnet/* and security-group/* requires aws:RequestedRegion";
+            }
+
+            return "ERROR:statement " + sid + " [rule=" + RULE_PROVISION_RUN_SCOPED
+                + "]: unapproved or unscoped ec2:RunInstances resource set " + resources;
+        }
+
+        // 3. CreateTags on-create only
+        if (actions.size() == 1 && "ec2:createtags".equalsIgnoreCase(actions.get(0).trim())) {
+            boolean validTagRes = !resources.isEmpty() && resources.stream().allMatch(r ->
+                r.trim().matches("arn:aws:ec2:[a-z0-9-]+:(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):(?:instance|volume|network-interface)/\\*"));
+            boolean hasRunCreateAction = condLower.contains("\"ec2:createaction\":\"runinstances\"");
+            boolean hasProvTag = condLower.contains("\"aws:requesttag/provisioner\":\"lmprov\"");
+            boolean hasTagKeys = condLower.contains("forallvalues:stringequals") && condLower.contains("\"aws:tagkeys\":");
+            if (validTagRes && hasRunCreateAction && hasProvTag && hasTagKeys) {
+                return "SCOPED:create_tags:scoped ec2:CreateTags on RunInstances creation only (" + RULE_PROVISION_TAG_ON_CREATE_ONLY + ")";
+            }
+            return "ERROR:statement " + sid + " [rule=" + RULE_PROVISION_TAG_ON_CREATE_ONLY
+                + "]: ec2:CreateTags requires instance/volume/network-interface ARNs, ec2:CreateAction=RunInstances, aws:RequestTag/provisioner=lmprov, and ForAllValues:StringEquals aws:TagKeys";
+        }
+
+        // 4. Lifecycle + GetConsoleOutput on provisioner=lmprov instances
+        Set<String> allowedLifecycle = Set.of(
+            "ec2:startinstances", "ec2:stopinstances", "ec2:terminateinstances",
+            "ec2:rebootinstances", "ec2:modifyinstanceattribute", "ec2:getconsoleoutput"
+        );
+        if (!actions.isEmpty() && actions.stream().allMatch(a -> allowedLifecycle.contains(a.trim().toLowerCase(Locale.ROOT)))) {
+            boolean allInstanceRes = !resources.isEmpty() && resources.stream().allMatch(r ->
+                r.trim().matches("arn:aws:ec2:[a-z0-9-]+:(?:\\$\\{aws:PrincipalAccount\\}|\\*|[0-9]{12}):instance/\\*"));
+            boolean hasResourceTag = condLower.contains("\"aws:resourcetag/provisioner\":\"lmprov\"");
+            boolean hasRegion = condLower.contains("\"aws:requestedregion\":");
+            if (allInstanceRes && hasResourceTag && hasRegion) {
+                return "SCOPED:lifecycle:scoped instance lifecycle/console operations on aws:ResourceTag/provisioner=lmprov (" + RULE_PROVISION_LIFECYCLE_TAG_SCOPED + ")";
+            }
+            return "ERROR:statement " + sid + " [rule=" + RULE_PROVISION_LIFECYCLE_TAG_SCOPED
+                + "]: instance lifecycle/console actions require arn:aws:ec2:<region>:*:instance/* with aws:ResourceTag/provisioner=lmprov and aws:RequestedRegion";
+        }
+
+        return "ERROR:statement " + sid + " [rule=" + RULE_SCOPED_WRITE_REQUIRED
+            + "]: unapproved action(s) " + actions + " on resource(s) " + resources + " in provisioner policy";
     }
 
     private static String checkWriteScope(

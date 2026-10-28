@@ -22,7 +22,7 @@ public final class PublishGrantProbeChecks {
     public static void run() throws Exception {
         // 1. Closed probe catalog and refusal of unknown kinds.
         List<Map<String, String>> kinds = PublishGrantProbes.describeKinds();
-        check(kinds.size() == 10, "expected 10 safe probe kinds");
+        check(kinds.size() == 15, "expected 15 safe probe kinds");
         for (String badKind : List.of("", "s3_put_unconditional", "s3_delete_existing", "iam_attach_policy", "exec")) {
             boolean refused = false;
             try {
@@ -77,6 +77,32 @@ public final class PublishGrantProbeChecks {
                 checkRefused(() -> PublishGrantProbes.runSingle(demo, "ssm_get_nonexistent", "/real/production/param", ""));
                 checkRefused(() -> PublishGrantProbes.runSingle(demo, "cloudfront_invalidate_nonexistent_dist", "E1REALDIST1234", "cafe01"));
                 checkRefused(() -> PublishGrantProbes.runSingle(demo, "cloudfront_invalidate_opt_in", "E1SYNTHETIC123", "cafe01"));
+
+                // Demo checks for the 5 EC2 DryRun probes.
+                String ec2BatchSpec = Jsons.encodeRaw(List.of(
+                    Map.of("id", "vpc1", "kind", "ec2_default_vpc_sg_sanity", "target", "us-east-1", "extra", ""),
+                    Map.of("id", "ami1", "kind", "ec2_canonical_ami_sanity", "target", "", "extra", ""),
+                    Map.of("id", "run1", "kind", "ec2_run_instances_dryrun", "target", "allowed_t4g_nano",
+                        "extra", "{\"instance_type\":\"t4g.nano\",\"image_id\":\"auto\",\"volume_size_gib\":10,\"provisioner_tag\":\"lmprov\",\"expect\":\"DryRunOperation\"}"),
+                    Map.of("id", "life1", "kind", "ec2_lifecycle_dryrun", "target", "nonexistent",
+                        "extra", "{\"action\":\"terminate\",\"expect\":\"UnauthorizedOperation\"}"),
+                    Map.of("id", "tag1", "kind", "ec2_tags_dryrun", "target", "delete_tags",
+                        "extra", "{\"expect\":\"UnauthorizedOperation\"}")
+                ));
+                List<Map<String, String>> ec2DemoRows = PublishGrantProbes.runBatch(demo, ec2BatchSpec);
+                check(ec2DemoRows.size() == 5, "all 5 EC2 demo probes executed");
+                for (Map<String, String> row : ec2DemoRows) {
+                    check("PASS".equals(row.get("status")) && "true".equals(row.get("passed")),
+                        "EC2 demo probe must pass: " + row.get("probe_id"));
+                }
+
+                // Masking check: real instance/VPC/SG IDs are masked while i-00000000000000000 is preserved.
+                String maskedSample = PublishGrantProbes.maskAll("instance i-0abc1234def567890 in vpc-08f61234abcd and sg-0da15678ef90 vs i-00000000000000000");
+                check(!maskedSample.contains("i-0abc1234def567890")
+                        && !maskedSample.contains("vpc-08f61234abcd")
+                        && !maskedSample.contains("sg-0da15678ef90")
+                        && maskedSample.contains("i-00000000000000000"),
+                    "maskAll must scrub real EC2 IDs and preserve synthetic i-00000000000000000: " + maskedSample);
             }
 
             // 4. Loopback fake transport tests: happy path, wrongly-granted 403 PutObject, and 204 DeleteObject immediate stop.

@@ -172,7 +172,7 @@ with tempfile.TemporaryDirectory(prefix="lmaws-publish-probes-") as tmp:
     ])
     _, model = run_dsl(
         "happy",
-        f'let cloud = aws.region("us-east-1"); check(cloud.publish_grant_probe_kinds().len() == 10); let rows = cloud.publish_grant_probes({json.dumps(batch_spec)}); file_write({json.dumps(str(out_file))}, rows.json());',
+        f'let cloud = aws.region("us-east-1"); check(cloud.publish_grant_probe_kinds().len() == 15); let rows = cloud.publish_grant_probes({json.dumps(batch_spec)}); file_write({json.dumps(str(out_file))}, rows.json());',
     )
     rows = json.loads(out_file.read_text())
     assert len(rows) == 10 and all(r["status"] == "PASS" for r in rows), rows

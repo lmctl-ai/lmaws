@@ -67,6 +67,7 @@ def run(extra, *args):
     env = dict(os.environ)
     for key in (
         "LMAWS_ALLOW_ADMIN_SOURCE", "LMAWS_DEFAULT_SESSION_POLICY",
+        "LMAWS_DEFAULT_EXTRA_POLICY_ARNS", "LMAWS_DEFAULT_EXTRA_POLICY_ARNS_FILE",
         "LMAWS_CREDENTIAL_SOURCE_PROFILE", "AWS_CONFIG_FILE",
         "AWS_SHARED_CREDENTIALS_FILE", "AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_STS",
     ):
@@ -251,6 +252,56 @@ def main():
             check(chosen.returncode == 0, chosen.stderr)
             chosen_form = next(request_fields(c) for c in Sts.calls if request_fields(c).get("Action") == "GetFederationToken")
             check(chosen_form["Policy"] == explicit.read_text(), "--policy-file did not override env")
+
+            # Extra PolicyArns in default mode: env or sibling file resolves account ID,
+            # sends ReadOnlyAccess + extra ARN, validates names/limits, and scopes cache.
+            Sts.calls.clear()
+            with_extra = run(
+                dict(base, LMAWS_DEFAULT_SESSION_POLICY=str(policy),
+                     LMAWS_DEFAULT_EXTRA_POLICY_ARNS="lmctl_default_provision"),
+                "--credential-process", "default"
+            )
+            check(with_extra.returncode == 0, with_extra.stderr)
+            extra_fed = next(request_fields(c) for c in Sts.calls if request_fields(c).get("Action") == "GetFederationToken")
+            check(extra_fed.get("PolicyArns.member.1.arn") == "arn:aws:iam::aws:policy/ReadOnlyAccess"
+                  and extra_fed.get("PolicyArns.member.2.arn") == "arn:aws:iam::000000000000:policy/lmctl_default_provision",
+                  f"extra PolicyArns were not resolved or sent properly: {extra_fed}")
+
+            # Sibling file local-default-extra-policy-arns.txt is picked up when present.
+            sibling_extra = policy.parent / "local-default-extra-policy-arns.txt"
+            sibling_extra.write_text("# optional extra managed policies for default\nlmctl_default_provision\n")
+            try:
+                Sts.calls.clear()
+                from_sibling = run(dict(base, LMAWS_DEFAULT_SESSION_POLICY=str(policy)), "--credential-process", "default")
+                check(from_sibling.returncode == 0, from_sibling.stderr)
+                sib_fed = next(request_fields(c) for c in Sts.calls if request_fields(c).get("Action") == "GetFederationToken")
+                check(sib_fed.get("PolicyArns.member.2.arn") == "arn:aws:iam::000000000000:policy/lmctl_default_provision",
+                      "sibling extra policy file was not loaded")
+            finally:
+                sibling_extra.unlink(missing_ok=True)
+
+            # Invalid extra policy names (admin, wildcards, wrong prefix) or combined >2048 fail before STS.
+            before = len(Sts.calls)
+            for bad_extra in ("admin_policy", "lmctl_admin_test", "arn:aws:iam::aws:policy/AdministratorAccess", "lmctl_*"):
+                res_bad = run(
+                    dict(base, LMAWS_DEFAULT_SESSION_POLICY=str(policy), LMAWS_DEFAULT_EXTRA_POLICY_ARNS=bad_extra),
+                    "--credential-process", "default"
+                )
+                check(res_bad.returncode == 1 and len(Sts.calls) == before, f"bad extra policy {bad_extra} was not refused")
+
+            near_limit = root / "near-limit.json"
+            pad_len = 2048 - len("arn:aws:iam::aws:policy/ReadOnlyAccess") - len('{"Version":"2012-10-17","Statement":[{"Sid":""}]}')
+            near_limit.write_text(json.dumps({"Version": "2012-10-17", "Statement": [{"Sid": "x" * pad_len}]}, separators=(",", ":")))
+            check(run(dict(base, LMAWS_DEFAULT_SESSION_POLICY=str(near_limit)), "--credential-process", "default").returncode == 0,
+                  "exact 2048 without extra policy should succeed")
+            before = len(Sts.calls)
+            over_with_extra = run(
+                dict(base, LMAWS_DEFAULT_SESSION_POLICY=str(near_limit),
+                     LMAWS_DEFAULT_EXTRA_POLICY_ARNS="lmctl_default_provision"),
+                "--credential-process", "default"
+            )
+            check(over_with_extra.returncode == 1 and len(Sts.calls) == before,
+                  "combined inline + ReadOnlyAccess + extra policy > 2048 was not refused before STS")
 
             # Cache scope includes the selected source and policy contents.  A
             # policy edit and static-key rotation each force a fresh federation.

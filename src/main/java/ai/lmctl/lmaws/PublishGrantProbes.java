@@ -2,6 +2,10 @@ package ai.lmctl.lmaws;
 
 import io.lmctl.lmcode.Json;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.interceptor.Context;
+import software.amazon.awssdk.core.interceptor.ExecutionAttributes;
+import software.amazon.awssdk.core.interceptor.ExecutionInterceptor;
+import software.amazon.awssdk.core.interceptor.SdkExecutionAttribute;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.cloudfront.CloudFrontClient;
@@ -9,6 +13,33 @@ import software.amazon.awssdk.services.cloudfront.model.CreateInvalidationReques
 import software.amazon.awssdk.services.cloudfront.model.GetInvalidationRequest;
 import software.amazon.awssdk.services.cloudfront.model.InvalidationBatch;
 import software.amazon.awssdk.services.cloudfront.model.Paths;
+import software.amazon.awssdk.services.ec2.Ec2Client;
+import software.amazon.awssdk.services.ec2.model.BlockDeviceMapping;
+import software.amazon.awssdk.services.ec2.model.CreateTagsRequest;
+import software.amazon.awssdk.services.ec2.model.DeleteTagsRequest;
+import software.amazon.awssdk.services.ec2.model.DescribeImagesRequest;
+import software.amazon.awssdk.services.ec2.model.DescribeInstancesRequest;
+import software.amazon.awssdk.services.ec2.model.DescribeSecurityGroupsRequest;
+import software.amazon.awssdk.services.ec2.model.DescribeSubnetsRequest;
+import software.amazon.awssdk.services.ec2.model.DescribeVpcsRequest;
+import software.amazon.awssdk.services.ec2.model.EbsBlockDevice;
+import software.amazon.awssdk.services.ec2.model.Filter;
+import software.amazon.awssdk.services.ec2.model.Image;
+import software.amazon.awssdk.services.ec2.model.Instance;
+import software.amazon.awssdk.services.ec2.model.InstanceMarketOptionsRequest;
+import software.amazon.awssdk.services.ec2.model.MarketType;
+import software.amazon.awssdk.services.ec2.model.RebootInstancesRequest;
+import software.amazon.awssdk.services.ec2.model.ResourceType;
+import software.amazon.awssdk.services.ec2.model.RunInstancesRequest;
+import software.amazon.awssdk.services.ec2.model.SecurityGroup;
+import software.amazon.awssdk.services.ec2.model.StartInstancesRequest;
+import software.amazon.awssdk.services.ec2.model.StopInstancesRequest;
+import software.amazon.awssdk.services.ec2.model.Subnet;
+import software.amazon.awssdk.services.ec2.model.Tag;
+import software.amazon.awssdk.services.ec2.model.TagSpecification;
+import software.amazon.awssdk.services.ec2.model.TerminateInstancesRequest;
+import software.amazon.awssdk.services.ec2.model.VolumeType;
+import software.amazon.awssdk.services.ec2.model.Vpc;
 import software.amazon.awssdk.services.s3.model.Bucket;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetBucketEncryptionRequest;
@@ -28,8 +59,11 @@ import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueReques
 import software.amazon.awssdk.services.ssm.model.GetParameterRequest;
 import software.amazon.awssdk.services.sts.model.GetCallerIdentityRequest;
 
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -76,7 +110,12 @@ public final class PublishGrantProbes {
         "secrets_get_nonexistent",
         "ssm_get_nonexistent",
         "cloudfront_invalidate_nonexistent_dist",
-        "cloudfront_invalidate_opt_in"
+        "cloudfront_invalidate_opt_in",
+        "ec2_default_vpc_sg_sanity",
+        "ec2_canonical_ami_sanity",
+        "ec2_run_instances_dryrun",
+        "ec2_lifecycle_dryrun",
+        "ec2_tags_dryrun"
     );
 
     private static final Set<String> ALLOWED_KIND_SET = Set.copyOf(ALLOWED_KINDS);
@@ -93,7 +132,12 @@ public final class PublishGrantProbes {
             kindRow("secrets_get_nonexistent", "false", "secretsmanager:GetSecretValue on nonexistent __perm_check_nonexistent_<runid> expecting AccessDeniedException (not ResourceNotFoundException)"),
             kindRow("ssm_get_nonexistent", "false", "ssm:GetParameter on nonexistent /__perm_check_nonexistent_<runid> expecting AccessDeniedException (not ParameterNotFound)"),
             kindRow("cloudfront_invalidate_nonexistent_dist", "false", "cloudfront:CreateInvalidation on nonexistent distribution ID E00000... expecting 403 AccessDenied (not 404 NoSuchDistribution)"),
-            kindRow("cloudfront_invalidate_opt_in", "opt_in_nonexistent_path", "Opt-in cloudfront:CreateInvalidation + GetInvalidation for one nonexistent path /__perm_check/<runid> (no wildcards)")
+            kindRow("cloudfront_invalidate_opt_in", "opt_in_nonexistent_path", "Opt-in cloudfront:CreateInvalidation + GetInvalidation for one nonexistent path /__perm_check/<runid> (no wildcards)"),
+            kindRow("ec2_default_vpc_sg_sanity", "false", "Read-only ec2:DescribeVpcs + DescribeSubnets + DescribeSecurityGroups verifying default VPC and default SG has 0 open inbound rules from 0.0.0.0/0 or ::/0"),
+            kindRow("ec2_canonical_ami_sanity", "false", "Read-only ec2:DescribeImages resolving latest Canonical arm64 Ubuntu AMI (owner 099720109477) and checking ssm:GetParameter status"),
+            kindRow("ec2_run_instances_dryrun", "false", "Non-mutating ec2:RunInstances with DryRun=true (enforced by DryRunEnforcingInterceptor) expecting DryRunOperation (412) or UnauthorizedOperation (403)"),
+            kindRow("ec2_lifecycle_dryrun", "false", "Non-mutating ec2:StartInstances/StopInstances/TerminateInstances/RebootInstances with DryRun=true on i-00000000000000000 or masked untagged fleet instance"),
+            kindRow("ec2_tags_dryrun", "false", "Non-mutating ec2:CreateTags/DeleteTags with DryRun=true on i-00000000000000000 expecting UnauthorizedOperation (403)")
         );
     }
 
@@ -155,18 +199,27 @@ public final class PublishGrantProbes {
 
         List<Map<String, String>> results = new ArrayList<>(validated.size());
         String cachedCallerAccount = "";
+        String cachedCanonicalAmi = "";
         for (Map<String, String> spec : validated) {
+            String extraVal = spec.get("extra");
+            if (!cachedCanonicalAmi.isBlank() && "ec2_run_instances_dryrun".equals(spec.get("kind")) && extraVal.contains("\"auto\"")) {
+                extraVal = extraVal.replace("\"auto\"", "\"" + cachedCanonicalAmi + "\"");
+            }
             Map<String, String> row = runSingleInternal(
                 backend,
                 spec.get("id"),
                 spec.get("kind"),
                 spec.get("target"),
-                spec.get("extra"),
+                extraVal,
                 cachedCallerAccount
             );
             String resolvedAccount = row.remove("__caller_account");
             if (resolvedAccount != null && !resolvedAccount.isBlank()) {
                 cachedCallerAccount = resolvedAccount;
+            }
+            String resolvedAmi = row.remove("__canonical_ami_id");
+            if (resolvedAmi != null && !resolvedAmi.isBlank()) {
+                cachedCanonicalAmi = resolvedAmi;
             }
             results.add(Collections.unmodifiableMap(row));
             if ("true".equals(row.get("stop_immediately"))) {
@@ -182,6 +235,7 @@ public final class PublishGrantProbes {
         requireAllowedKind(kind);
         Map<String, String> row = runSingleInternal(backend, kind, kind, target, extra, "");
         row.remove("__caller_account");
+        row.remove("__canonical_ami_id");
         return Collections.unmodifiableMap(row);
     }
 
@@ -208,6 +262,11 @@ public final class PublishGrantProbes {
             case "ssm_get_nonexistent" -> probeSsmGetNonexistent(backend, probeId, safeTarget);
             case "cloudfront_invalidate_nonexistent_dist" -> probeCloudFrontNonexistentDist(backend, probeId, safeTarget, safeExtra);
             case "cloudfront_invalidate_opt_in" -> probeCloudFrontOptIn(backend, probeId, safeTarget, safeExtra);
+            case "ec2_default_vpc_sg_sanity" -> probeEc2DefaultVpcSgSanity(backend, probeId, safeTarget);
+            case "ec2_canonical_ami_sanity" -> probeEc2CanonicalAmiSanity(backend, probeId, safeTarget);
+            case "ec2_run_instances_dryrun" -> probeEc2RunInstancesDryRun(backend, probeId, safeTarget, safeExtra);
+            case "ec2_lifecycle_dryrun" -> probeEc2LifecycleDryRun(backend, probeId, safeTarget, safeExtra);
+            case "ec2_tags_dryrun" -> probeEc2TagsDryRun(backend, probeId, safeTarget, safeExtra);
             default -> throw new IllegalArgumentException("unsupported probe kind: " + kind);
         };
     }
@@ -1183,11 +1242,593 @@ public final class PublishGrantProbes {
         return "****" + trimmed.substring(trimmed.length() - 4);
     }
 
+    private static final String CANONICAL_OWNER_ID = "099720109477";
+    private static final String DEFAULT_CANONICAL_AMI_FILTER = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-arm64-server-*";
+    private static final String DEFAULT_CANONICAL_SSM_PARAM =
+        "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id";
+    private static final String NONEXISTENT_INSTANCE_ID = "i-00000000000000000";
+
+    /**
+     * Execution interceptor that refuses any non-Describe* EC2 HTTP request unless DryRun=true is present in the form body.
+     */
+    static final class DryRunEnforcingInterceptor implements ExecutionInterceptor {
+        @Override
+        public void beforeTransmission(Context.BeforeTransmission context, ExecutionAttributes attributes) {
+            String op = attributes.getOptionalAttribute(SdkExecutionAttribute.OPERATION_NAME).orElse("");
+            String body = "";
+            var reqBody = context.requestBody();
+            if (reqBody.isPresent()) {
+                try (InputStream in = reqBody.get().contentStreamProvider().newStream()) {
+                    body = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    throw new SecurityException("failed to inspect EC2 request body for DryRun=true enforcement: " + e.getMessage(), e);
+                }
+            }
+            boolean isDescribe = op.startsWith("Describe")
+                || body.contains("Action=Describe")
+                || body.startsWith("Action=Describe");
+            if (isDescribe) {
+                return;
+            }
+            boolean hasDryRunTrue = body.contains("DryRun=true") || body.contains("DryRun=True");
+            if (!hasDryRunTrue) {
+                throw new SecurityException(
+                    "PublishGrantProbes DryRunEnforcingInterceptor blocked non-DryRun EC2 operation '" + op + "'");
+            }
+        }
+    }
+
+    private static Ec2Client buildDryRunEc2Client(AwsBackend backend, String regionName) {
+        String targetRegion = (regionName == null || regionName.isBlank()) ? "us-east-1" : regionName.trim();
+        var builder = backend.webBuilder(Ec2Client.builder());
+        var baseCfg = builder.overrideConfiguration();
+        var cfgBuilder = baseCfg != null
+            ? baseCfg.toBuilder()
+            : software.amazon.awssdk.core.client.config.ClientOverrideConfiguration.builder();
+        cfgBuilder.addExecutionInterceptor(new DryRunEnforcingInterceptor());
+        cfgBuilder.putHeader("X-Lmaws-Test-Region", targetRegion);
+        builder.overrideConfiguration(cfgBuilder.build());
+        builder.region(Region.of(targetRegion));
+        return builder.build();
+    }
+
+    private static Map<String, String> probeEc2DefaultVpcSgSanity(
+            AwsBackend backend,
+            String probeId,
+            String target) {
+        String regionName = (target == null || target.isBlank()) ? "us-east-1" : target.trim();
+        String expected = "Default VPC present in " + regionName + " and default SG has 0 open inbound rules (0.0.0.0/0 or ::/0)";
+        if (backend.isDemo()) {
+            Map<String, String> row = buildRow(
+                probeId,
+                "ec2_default_vpc_sg_sanity",
+                "default-vpc/" + regionName,
+                expected,
+                "Default VPC vpc-**** found (subnets=6, public_ip_on_launch=6), default SG sg-**** open_inbound=false (demo)",
+                "200",
+                "",
+                true,
+                "false"
+            );
+            row.put("default_vpc_found", "true");
+            row.put("default_sg_found", "true");
+            row.put("default_sg_open_inbound", "false");
+            row.put("subnet_count", "6");
+            row.put("map_public_ip_subnet_count", "6");
+            return row;
+        }
+
+        try (Ec2Client ec2 = buildDryRunEc2Client(backend, regionName)) {
+            List<Vpc> vpcs = ec2.describeVpcs(DescribeVpcsRequest.builder().build()).vpcs();
+            Vpc defaultVpc = vpcs.stream().filter(v -> Boolean.TRUE.equals(v.isDefault())).findFirst()
+                .orElse(vpcs.isEmpty() ? null : vpcs.get(0));
+            if (defaultVpc == null) {
+                return buildRow(probeId, "ec2_default_vpc_sg_sanity", "default-vpc/" + regionName, expected,
+                    "No VPC found in " + regionName, "200", "NoVpcFound", false, "false");
+            }
+            String vpcId = defaultVpc.vpcId();
+            List<Subnet> subnets = ec2.describeSubnets(DescribeSubnetsRequest.builder()
+                .filters(Filter.builder().name("vpc-id").values(vpcId).build())
+                .build()).subnets();
+            long publicSubnets = subnets.stream().filter(s -> Boolean.TRUE.equals(s.mapPublicIpOnLaunch())).count();
+            long privateSubnets = subnets.size() - publicSubnets;
+
+            List<SecurityGroup> sgs = ec2.describeSecurityGroups(DescribeSecurityGroupsRequest.builder()
+                .filters(
+                    Filter.builder().name("vpc-id").values(vpcId).build(),
+                    Filter.builder().name("group-name").values("default").build()
+                ).build()).securityGroups();
+            if (sgs.isEmpty()) {
+                return buildRow(probeId, "ec2_default_vpc_sg_sanity", "default-vpc/" + regionName, expected,
+                    "Default security group not found in default VPC", "200", "NoDefaultSg", false, "false");
+            }
+            SecurityGroup defaultSg = sgs.get(0);
+            boolean openInbound = defaultSg.ipPermissions().stream().anyMatch(p ->
+                p.ipRanges().stream().anyMatch(r -> "0.0.0.0/0".equals(r.cidrIp()))
+                    || p.ipv6Ranges().stream().anyMatch(r -> "::/0".equals(r.cidrIpv6())));
+            int selfRefRules = defaultSg.ipPermissions().stream()
+                .mapToInt(p -> p.userIdGroupPairs() == null ? 0 : p.userIdGroupPairs().size())
+                .sum();
+            boolean ok = !subnets.isEmpty() && !openInbound;
+            Map<String, String> row = buildRow(
+                probeId,
+                "ec2_default_vpc_sg_sanity",
+                "default-vpc/" + regionName,
+                expected,
+                "Default VPC found (subnets=" + subnets.size()
+                    + ", map_public_ip_true=" + publicSubnets
+                    + ", map_public_ip_false=" + privateSubnets
+                    + "), default SG open_inbound=" + openInbound
+                    + " (self_group_rules=" + selfRefRules + ")",
+                "200",
+                openInbound ? "DefaultSgOpenInbound" : "",
+                ok,
+                "false"
+            );
+            row.put("default_vpc_found", String.valueOf(Boolean.TRUE.equals(defaultVpc.isDefault())));
+            row.put("default_sg_found", "true");
+            row.put("default_sg_open_inbound", String.valueOf(openInbound));
+            row.put("default_sg_self_rules", String.valueOf(selfRefRules));
+            row.put("subnet_count", String.valueOf(subnets.size()));
+            row.put("map_public_ip_subnet_count", String.valueOf(publicSubnets));
+            row.put("private_subnet_count", String.valueOf(privateSubnets));
+            return row;
+        } catch (Exception e) {
+            return buildRow(probeId, "ec2_default_vpc_sg_sanity", "default-vpc/" + regionName, expected,
+                formatException(e), httpStatus(e), errorCode(e), false, "false");
+        }
+    }
+
+    private static Map<String, String> probeEc2CanonicalAmiSanity(
+            AwsBackend backend,
+            String probeId,
+            String target) {
+        String namePattern = (target == null || target.isBlank()) ? DEFAULT_CANONICAL_AMI_FILTER : target.trim();
+        String expected = "ec2:DescribeImages resolves available Canonical (099720109477) arm64 Ubuntu AMI";
+        if (backend.isDemo()) {
+            String demoAmi = "ami-0canonicalarm64demo";
+            Map<String, String> row = buildRow(
+                probeId,
+                "ec2_canonical_ami_sanity",
+                namePattern,
+                expected,
+                "Resolved Canonical arm64 AMI " + demoAmi + " (owner=099720109477, ssm_public_param=AccessDeniedException, demo)",
+                "200",
+                "",
+                true,
+                "false"
+            );
+            row.put("ami_id", demoAmi);
+            row.put("ami_owner", CANONICAL_OWNER_ID);
+            row.put("ami_architecture", "arm64");
+            row.put("ssm_public_param_status", "AccessDeniedException");
+            row.put("__canonical_ami_id", demoAmi);
+            return row;
+        }
+
+        String ssmStatus = "not_checked";
+        try {
+            backend.ssmClientForDoctor().getParameter(
+                GetParameterRequest.builder().name(DEFAULT_CANONICAL_SSM_PARAM).build());
+            ssmStatus = "200_Allowed";
+        } catch (Exception ssmEx) {
+            ssmStatus = errorCode(ssmEx);
+        }
+
+        try (Ec2Client ec2 = buildDryRunEc2Client(backend, "us-east-1")) {
+            List<Image> images = ec2.describeImages(DescribeImagesRequest.builder()
+                .owners(CANONICAL_OWNER_ID)
+                .filters(
+                    Filter.builder().name("name").values(namePattern).build(),
+                    Filter.builder().name("architecture").values("arm64").build(),
+                    Filter.builder().name("state").values("available").build(),
+                    Filter.builder().name("image-type").values("machine").build(),
+                    Filter.builder().name("root-device-type").values("ebs").build()
+                ).build()).images();
+            Image latest = images.stream()
+                .max(Comparator.comparing(img -> Objects.toString(img.creationDate(), "")))
+                .orElse(null);
+            if (latest == null || latest.imageId() == null || latest.imageId().isBlank()) {
+                return buildRow(probeId, "ec2_canonical_ami_sanity", namePattern, expected,
+                    "No matching Canonical arm64 AMI found for pattern " + namePattern, "200", "NoCanonicalAmiFound", false, "false");
+            }
+            String amiId = latest.imageId();
+            String amiName = Objects.toString(latest.name(), "");
+            Map<String, String> row = buildRow(
+                probeId,
+                "ec2_canonical_ami_sanity",
+                namePattern,
+                expected,
+                "Resolved " + amiId + " (" + amiName + ", owner=" + CANONICAL_OWNER_ID
+                    + ", arch=arm64, ssm_public_param=" + ssmStatus + ")",
+                "200",
+                "",
+                true,
+                "false"
+            );
+            row.put("ami_id", amiId);
+            row.put("ami_name", amiName);
+            row.put("ami_owner", CANONICAL_OWNER_ID);
+            row.put("ami_architecture", "arm64");
+            row.put("ssm_public_param_status", ssmStatus);
+            row.put("__canonical_ami_id", amiId);
+            return row;
+        } catch (Exception e) {
+            return buildRow(probeId, "ec2_canonical_ami_sanity", namePattern, expected,
+                formatException(e), httpStatus(e), errorCode(e), false, "false");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parseExtraObject(String extra) {
+        if (extra == null || extra.isBlank()) {
+            return Map.of();
+        }
+        String trimmed = extra.trim();
+        if (trimmed.startsWith("{")) {
+            Object parsed = Json.parse(trimmed);
+            if (parsed instanceof Map<?, ?> m) {
+                return (Map<String, Object>) m;
+            }
+        }
+        return Map.of();
+    }
+
+    private static int intField(Map<String, Object> obj, String key, int fallback) {
+        Object v = obj.get(key);
+        if (v == null) return fallback;
+        if (v instanceof Number n) return n.intValue();
+        String s = String.valueOf(v).trim();
+        if (s.isEmpty()) return fallback;
+        if (s.endsWith(".0")) s = s.substring(0, s.length() - 2);
+        return Integer.parseInt(s);
+    }
+
+    private static Map<String, String> probeEc2RunInstancesDryRun(
+            AwsBackend backend,
+            String probeId,
+            String target,
+            String extra) {
+        Map<String, Object> spec = parseExtraObject(extra);
+        String regionName = stringField(spec, "region", "us-east-1");
+        String instanceType = stringField(spec, "instance_type", "t4g.nano");
+        String imageId = stringField(spec, "image_id", "ami-00000000000000000");
+        if ("auto".equalsIgnoreCase(imageId) || imageId.isBlank()) {
+            imageId = "ami-00000000000000000";
+        }
+        int volumeSizeGib = intField(spec, "volume_size_gib", 10);
+        String volumeType = stringField(spec, "volume_type", "gp3");
+        String provisionerTag = stringField(spec, "provisioner_tag", "lmprov");
+        String extraTagKey = stringField(spec, "extra_tag_key", "");
+        String extraTagValue = stringField(spec, "extra_tag_value", "");
+        String marketType = stringField(spec, "market_type", "on-demand");
+        String expectCode = stringField(spec, "expect", "UnauthorizedOperation");
+
+        String summaryTarget = (target == null || target.isBlank() ? "RunInstances(DryRun)" : target)
+            + " [type=" + instanceType + ", vol=" + volumeSizeGib + "GiB " + volumeType
+            + ", tag=" + (provisionerTag.isEmpty() || "none".equalsIgnoreCase(provisionerTag) ? "none" : "provisioner=" + provisionerTag)
+            + ", market=" + marketType + ", region=" + regionName + "]";
+        String expected = "EC2 DryRun response matches " + expectCode;
+
+        if (backend.isDemo()) {
+            String demoCode = expectCode.contains("|") ? expectCode.split("\\|")[0].trim() : expectCode;
+            String demoHttp = "DryRunOperation".equalsIgnoreCase(demoCode) ? "412" : "403";
+            Map<String, String> row = buildRow(
+                probeId,
+                "ec2_run_instances_dryrun",
+                summaryTarget,
+                expected,
+                demoCode + " (HTTP " + demoHttp + ", DryRun=true, demo)",
+                demoHttp,
+                demoCode,
+                true,
+                "false"
+            );
+            row.put("dry_run", "true");
+            row.put("instance_type", instanceType);
+            row.put("volume_size_gib", String.valueOf(volumeSizeGib));
+            row.put("market_type", marketType);
+            row.put("region", regionName);
+            return row;
+        }
+
+        try (Ec2Client ec2 = buildDryRunEc2Client(backend, regionName)) {
+            RunInstancesRequest.Builder req = RunInstancesRequest.builder()
+                .dryRun(true)
+                .imageId(imageId)
+                .instanceType(instanceType)
+                .minCount(1)
+                .maxCount(1)
+                .blockDeviceMappings(BlockDeviceMapping.builder()
+                    .deviceName("/dev/sda1")
+                    .ebs(EbsBlockDevice.builder()
+                        .volumeSize(volumeSizeGib)
+                        .volumeType(VolumeType.fromValue(volumeType))
+                        .deleteOnTermination(true)
+                        .build())
+                    .build());
+
+            if (!provisionerTag.isBlank() && !"none".equalsIgnoreCase(provisionerTag)) {
+                List<Tag> tags = new ArrayList<>();
+                tags.add(Tag.builder().key("provisioner").value(provisionerTag).build());
+                if (!extraTagKey.isBlank()) {
+                    tags.add(Tag.builder().key(extraTagKey).value(extraTagValue).build());
+                }
+                req.tagSpecifications(
+                    TagSpecification.builder().resourceType(ResourceType.INSTANCE).tags(tags).build(),
+                    TagSpecification.builder().resourceType(ResourceType.VOLUME).tags(tags).build(),
+                    TagSpecification.builder().resourceType(ResourceType.NETWORK_INTERFACE).tags(tags).build()
+                );
+            }
+            if ("spot".equalsIgnoreCase(marketType)) {
+                req.instanceMarketOptions(InstanceMarketOptionsRequest.builder()
+                    .marketType(MarketType.SPOT)
+                    .build());
+            }
+
+            ec2.runInstances(req.build());
+            return buildRow(
+                probeId,
+                "ec2_run_instances_dryrun",
+                summaryTarget,
+                expected,
+                "FAIL: RunInstances(DryRun=true) returned without DryRun/Unauthorized exception",
+                "200",
+                "UnexpectedSuccess",
+                false,
+                "false"
+            );
+        } catch (AwsServiceException e) {
+            String code = errorCode(e);
+            int status = e.statusCode();
+            boolean matched = matchesExpectedCode(expectCode, code);
+            Map<String, String> row = buildRow(
+                probeId,
+                "ec2_run_instances_dryrun",
+                summaryTarget,
+                expected,
+                maskAll(code + " (HTTP " + status + ", DryRun=true)"),
+                String.valueOf(status),
+                code,
+                matched,
+                "false"
+            );
+            row.put("dry_run", "true");
+            row.put("instance_type", instanceType);
+            row.put("volume_size_gib", String.valueOf(volumeSizeGib));
+            row.put("market_type", marketType);
+            row.put("region", regionName);
+            return row;
+        } catch (Exception e) {
+            return buildRow(
+                probeId,
+                "ec2_run_instances_dryrun",
+                summaryTarget,
+                expected,
+                formatException(e),
+                httpStatus(e),
+                errorCode(e),
+                false,
+                "false"
+            );
+        }
+    }
+
+    private static Map<String, String> probeEc2LifecycleDryRun(
+            AwsBackend backend,
+            String probeId,
+            String target,
+            String extra) {
+        Map<String, Object> spec = parseExtraObject(extra);
+        String action = stringField(spec, "action", "terminate").toLowerCase(Locale.ROOT);
+        String expectCode = stringField(spec, "expect", "UnauthorizedOperation");
+        String regionName = stringField(spec, "region", "us-east-1");
+        boolean discoverUntagged = "discovered_untagged_fleet".equalsIgnoreCase(target);
+        String expected = "EC2 " + action + " (DryRun=true) response matches " + expectCode;
+        String displayTarget = discoverUntagged
+            ? action + " on discovered untagged fleet instance (i-****)"
+            : action + " on " + NONEXISTENT_INSTANCE_ID;
+
+        if (backend.isDemo()) {
+            String demoCode = expectCode.contains("|") ? expectCode.split("\\|")[0].trim() : expectCode;
+            String demoHttp = "DryRunOperation".equalsIgnoreCase(demoCode) ? "412" : "403";
+            Map<String, String> row = buildRow(
+                probeId,
+                "ec2_lifecycle_dryrun",
+                displayTarget,
+                expected,
+                demoCode + " (HTTP " + demoHttp + ", DryRun=true, demo)",
+                demoHttp,
+                demoCode,
+                true,
+                "false"
+            );
+            row.put("dry_run", "true");
+            row.put("lifecycle_action", action);
+            row.put("target_mode", discoverUntagged ? "discovered_untagged_fleet" : "nonexistent");
+            return row;
+        }
+
+        try (Ec2Client ec2 = buildDryRunEc2Client(backend, regionName)) {
+            String instanceId = NONEXISTENT_INSTANCE_ID;
+            if (discoverUntagged) {
+                String discovered = findFirstNonProvisionerInstanceId(ec2);
+                if (discovered == null || discovered.isBlank()) {
+                    instanceId = NONEXISTENT_INSTANCE_ID;
+                } else {
+                    instanceId = discovered;
+                }
+            }
+            switch (action) {
+                case "start" -> ec2.startInstances(StartInstancesRequest.builder().dryRun(true).instanceIds(instanceId).build());
+                case "stop" -> ec2.stopInstances(StopInstancesRequest.builder().dryRun(true).instanceIds(instanceId).build());
+                case "terminate" -> ec2.terminateInstances(TerminateInstancesRequest.builder().dryRun(true).instanceIds(instanceId).build());
+                case "reboot" -> ec2.rebootInstances(RebootInstancesRequest.builder().dryRun(true).instanceIds(instanceId).build());
+                default -> throw new IllegalArgumentException("unsupported ec2_lifecycle_dryrun action: " + action);
+            }
+            return buildRow(
+                probeId,
+                "ec2_lifecycle_dryrun",
+                displayTarget,
+                expected,
+                "FAIL: " + action + "(DryRun=true) returned without exception",
+                "200",
+                "UnexpectedSuccess",
+                false,
+                "false"
+            );
+        } catch (AwsServiceException e) {
+            String code = errorCode(e);
+            int status = e.statusCode();
+            boolean matched = matchesExpectedCode(expectCode, code);
+            Map<String, String> row = buildRow(
+                probeId,
+                "ec2_lifecycle_dryrun",
+                displayTarget,
+                expected,
+                maskAll(code + " (HTTP " + status + ", DryRun=true)"),
+                String.valueOf(status),
+                code,
+                matched,
+                "false"
+            );
+            row.put("dry_run", "true");
+            row.put("lifecycle_action", action);
+            row.put("target_mode", discoverUntagged ? "discovered_untagged_fleet" : "nonexistent");
+            return row;
+        } catch (Exception e) {
+            return buildRow(
+                probeId,
+                "ec2_lifecycle_dryrun",
+                displayTarget,
+                expected,
+                formatException(e),
+                httpStatus(e),
+                errorCode(e),
+                false,
+                "false"
+            );
+        }
+    }
+
+    private static String findFirstNonProvisionerInstanceId(Ec2Client ec2) {
+        var resp = ec2.describeInstances(DescribeInstancesRequest.builder().build());
+        for (var r : resp.reservations()) {
+            for (Instance inst : r.instances()) {
+                boolean isProvisioner = inst.tags() != null && inst.tags().stream()
+                    .anyMatch(t -> "provisioner".equals(t.key()) && "lmprov".equals(t.value()));
+                if (!isProvisioner && inst.instanceId() != null && !inst.instanceId().isBlank()) {
+                    return inst.instanceId();
+                }
+            }
+        }
+        return null;
+    }
+
+    private static Map<String, String> probeEc2TagsDryRun(
+            AwsBackend backend,
+            String probeId,
+            String target,
+            String extra) {
+        Map<String, Object> spec = parseExtraObject(extra);
+        String expectCode = stringField(spec, "expect", "UnauthorizedOperation");
+        String opMode = (target == null || target.isBlank()) ? "create_tags_post_launch" : target.trim().toLowerCase(Locale.ROOT);
+        String expected = "EC2 " + opMode + " (DryRun=true) response matches " + expectCode;
+        String displayTarget = opMode + " on " + NONEXISTENT_INSTANCE_ID;
+
+        if (backend.isDemo()) {
+            String demoCode = expectCode.contains("|") ? expectCode.split("\\|")[0].trim() : expectCode;
+            Map<String, String> row = buildRow(
+                probeId,
+                "ec2_tags_dryrun",
+                displayTarget,
+                expected,
+                demoCode + " (HTTP 403, DryRun=true, demo)",
+                "403",
+                demoCode,
+                true,
+                "false"
+            );
+            row.put("dry_run", "true");
+            row.put("tag_operation", opMode);
+            return row;
+        }
+
+        try (Ec2Client ec2 = buildDryRunEc2Client(backend, "us-east-1")) {
+            if ("delete_tags".equals(opMode)) {
+                ec2.deleteTags(DeleteTagsRequest.builder()
+                    .dryRun(true)
+                    .resources(NONEXISTENT_INSTANCE_ID)
+                    .tags(Tag.builder().key("provisioner").value("lmprov").build())
+                    .build());
+            } else {
+                ec2.createTags(CreateTagsRequest.builder()
+                    .dryRun(true)
+                    .resources(NONEXISTENT_INSTANCE_ID)
+                    .tags(Tag.builder().key("provisioner").value("lmprov").build())
+                    .build());
+            }
+            return buildRow(
+                probeId,
+                "ec2_tags_dryrun",
+                displayTarget,
+                expected,
+                "FAIL: " + opMode + "(DryRun=true) returned without exception",
+                "200",
+                "UnexpectedSuccess",
+                false,
+                "false"
+            );
+        } catch (AwsServiceException e) {
+            String code = errorCode(e);
+            int status = e.statusCode();
+            boolean matched = matchesExpectedCode(expectCode, code);
+            Map<String, String> row = buildRow(
+                probeId,
+                "ec2_tags_dryrun",
+                displayTarget,
+                expected,
+                maskAll(code + " (HTTP " + status + ", DryRun=true)"),
+                String.valueOf(status),
+                code,
+                matched,
+                "false"
+            );
+            row.put("dry_run", "true");
+            row.put("tag_operation", opMode);
+            return row;
+        } catch (Exception e) {
+            return buildRow(
+                probeId,
+                "ec2_tags_dryrun",
+                displayTarget,
+                expected,
+                formatException(e),
+                httpStatus(e),
+                errorCode(e),
+                false,
+                "false"
+            );
+        }
+    }
+
+    private static boolean matchesExpectedCode(String expectSpec, String actualCode) {
+        if (expectSpec == null || expectSpec.isBlank()) return true;
+        if (actualCode == null) return false;
+        for (String token : expectSpec.split("\\|")) {
+            if (token.trim().equalsIgnoreCase(actualCode.trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static String maskAll(String value) {
         if (value == null) return "";
         return Jsons.mask(value)
             .replaceAll("(?<![0-9])[0-9]{12}(?![0-9])", "************")
-            .replaceAll("[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", "[masked-id]");
+            .replaceAll("[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", "[masked-id]")
+            .replaceAll("\\b(i|vpc|subnet|sg|vol|eni|eipalloc)-(?!0{8,17}\\b)[0-9a-f]{8,17}\\b", "$1-****");
     }
 
     private static Map<String, String> buildRow(

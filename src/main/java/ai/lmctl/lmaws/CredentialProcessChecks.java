@@ -66,6 +66,22 @@ public final class CredentialProcessChecks {
         expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec("lmaws", 600, "111122223333", null));
         expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec("lmaws", 200000, "111122223333", null));
         expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec("lmaws", 3600, "not-an-account", null));
+
+        // Extra PolicyArns in default mode: resolves short names with account ID and checks combined 2048 budget
+        CredentialProcess.FederationSpec defWithExtra = CredentialProcess.buildFederationSpec(
+            "default", 3600, "111122223333", "{\"Statement\":[]}", List.of("lmctl_default_provision"));
+        require(defWithExtra.policyArns().equals(List.of(
+            CredentialProcess.READ_ONLY_POLICY_ARN,
+            "arn:aws:iam::111122223333:policy/lmctl_default_provision")),
+            "Default mode with extra policy must include ReadOnlyAccess and resolved lmctl_default_provision ARN");
+        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec(
+            "default", 3600, "111122223333", "{\"Statement\":[]}", List.of("admin_policy")));
+        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec(
+            "default", 3600, "111122223333", "{\"Statement\":[]}", List.of("arn:aws:iam::aws:policy/AdministratorAccess")));
+        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec(
+            "default", 3600, "111122223333", "{\"Statement\":[]}", List.of("arn:aws:iam::999999999999:policy/lmctl_default_provision")));
+        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec(
+            "lmaws", 3600, "111122223333", null, List.of("lmctl_default_provision")));
     }
 
     private static void checkPolicyFilesAndPaths() throws Exception {
@@ -308,6 +324,20 @@ public final class CredentialProcessChecks {
                 "lmaws", 3600, "agent-issuer", awsDir, cacheDir, endpoint, true, clockNearExpiry);
             require("ASIAFAKEKEY3".equals(lmawsTokenRefreshed.accessKeyId()), "Near-expiry token must refresh");
             require(federationCalls.get() == 3, "Expected 3rd GetFederationToken call on refresh");
+
+            // 4b. Issue 'default' mode token WITH extra PolicyArns (lmctl_default_provision):
+            //     must resolve account via GetCallerIdentity, send both PolicyArns, and use a distinct cache scope.
+            var defWithExtraToken = CredentialProcess.issueOrGetCached(
+                "default", 3600, "agent-issuer", awsDir, cacheDir, endpoint, true, clockValid,
+                policyFile, List.of("lmctl_default_provision"));
+            require("ASIAFAKEKEY4".equals(defWithExtraToken.accessKeyId()), "Default with extra policy must mint a fresh token");
+            require(identityCalls.get() == 3, "Default mode with extra policy name must call GetCallerIdentity");
+            require(federationCalls.get() == 4, "Expected 4th GetFederationToken call");
+            Map<String, String> defExtraReq = capturedFederationParams.get(3);
+            require(CredentialProcess.READ_ONLY_POLICY_ARN.equals(defExtraReq.get("PolicyArns.member.1.arn")),
+                "Member 1 must be ReadOnlyAccess");
+            require("arn:aws:iam::111122223333:policy/lmctl_default_provision".equals(defExtraReq.get("PolicyArns.member.2.arn")),
+                "Member 2 must be resolved lmctl_default_provision ARN");
 
             // 5. Error redaction: STS failure or invalid argument prints ONLY generic message to stderr and nothing to stdout
             failSts.set(true);
