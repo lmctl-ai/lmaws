@@ -33,26 +33,27 @@ public final class CredentialProcessChecks {
 
     public static void run() throws Exception {
         checkFederationSpecs();
+        checkPolicyFilesAndPaths();
         checkSourceProfileAndIsolationGuards();
         checkCachePermissionsAndExpiry();
         checkLoopbackStsAndErrorRedaction();
         checkDemoSessionDoctor();
         System.out.println(
-            "PASS credential-process modes, admin-only source profile isolation, 0600 cache expiry, fake STS and redaction checks");
+            "PASS credential-process modes, isolated source profile loading, 0600 cache expiry, fake STS and redaction checks");
     }
 
     private static void checkFederationSpecs() {
-        CredentialProcess.FederationSpec def = CredentialProcess.buildFederationSpec("default", 3600, null);
+        CredentialProcess.FederationSpec def = CredentialProcess.buildFederationSpec("default", 3600, null, "{\"Statement\":[]}");
         require("awsspot-local-default".equals(def.federatedUserName()), "Unexpected default federated user name");
         require(def.durationSeconds() == 3600, "Unexpected default duration");
         require(def.policyArns().equals(List.of(CredentialProcess.READ_ONLY_POLICY_ARN)), "Unexpected default policyArns");
-        require(def.inlinePolicy() != null && def.inlinePolicy().contains("DenySecretValueRetrieval"),
-            "Default mode must include inline DenySecretValueRetrieval policy");
+        require(def.inlinePolicy() != null && def.inlinePolicy().contains("Statement"),
+            "Default mode must include supplied inline policy");
         require(def.inlinePolicy().length() + CredentialProcess.READ_ONLY_POLICY_ARN.length() <= 2048,
             "Default session policy must fit within 2048 characters");
 
         for (String mode : List.of("lmaws", "lmaws-ec2", "lmaws-web")) {
-            CredentialProcess.FederationSpec spec = CredentialProcess.buildFederationSpec(mode, 3600, "111122223333");
+            CredentialProcess.FederationSpec spec = CredentialProcess.buildFederationSpec(mode, 3600, "111122223333", null);
             require(("awsspot-local-" + mode).equals(spec.federatedUserName()), "Unexpected federated user for " + mode);
             require(
                 spec.policyArns().equals(List.of("arn:aws:iam::111122223333:policy/lmaws_session")),
@@ -60,18 +61,39 @@ public final class CredentialProcessChecks {
             require(spec.inlinePolicy() == null, "Managed mode must not set an inline policy");
         }
 
-        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec("admin", 3600, "111122223333"));
-        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec("unknown", 3600, "111122223333"));
-        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec("lmaws", 600, "111122223333"));
-        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec("lmaws", 200000, "111122223333"));
-        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec("lmaws", 3600, "not-an-account"));
+        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec("admin", 3600, "111122223333", null));
+        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec("unknown", 3600, "111122223333", null));
+        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec("lmaws", 600, "111122223333", null));
+        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec("lmaws", 200000, "111122223333", null));
+        expectThrows(IllegalArgumentException.class, () -> CredentialProcess.buildFederationSpec("lmaws", 3600, "not-an-account", null));
+    }
+
+    private static void checkPolicyFilesAndPaths() throws Exception {
+        Path file = Files.createTempFile("lmaws-policy-contract-", ".json");
+        try {
+            String prefix = "{\"Statement\":[],\"Pad\":\"";
+            String suffix = "\"}";
+            int padding = 2048 - CredentialProcess.READ_ONLY_POLICY_ARN.length() - prefix.length() - suffix.length();
+            Files.writeString(file, prefix + "x".repeat(padding) + suffix);
+            require(CredentialProcess.readInlinePolicy(file).length()
+                + CredentialProcess.READ_ONLY_POLICY_ARN.length() == 2048, "inclusive STS size boundary");
+            Files.writeString(file, prefix + "x".repeat(padding + 1) + suffix);
+            expectThrows(IllegalArgumentException.class, () -> CredentialProcess.readInlinePolicy(file));
+            Files.writeString(file, "{ \"Statement\" : [], \"Sid\" : \"café\\u007f\" }");
+            require(CredentialProcess.readInlinePolicy(file).equals(
+                "{\"Statement\":[],\"Sid\":\"caf\\u00e9\\u007f\"}"), "Python ASCII compact policy semantics");
+            Path home = Path.of(System.getProperty("user.home", "."));
+            require(CredentialProcess.policyPath("~/policy.json").equals(home.resolve("policy.json")), "Unix home expansion");
+            require(CredentialProcess.policyPath("~\\policy.json").equals(home.resolve("policy.json")), "Windows home expansion");
+            require(CredentialProcess.policyPath("relative policy.json").equals(Path.of("relative policy.json")), "relative path with spaces");
+        } finally { Files.deleteIfExists(file); }
     }
 
     private static void checkSourceProfileAndIsolationGuards() throws Exception {
-        for (String badProfile : List.of("", "default", "lmaws", "lmaws-ec2", "agentcore-poc")) {
-            expectThrows(IllegalStateException.class, () -> CredentialProcess.requireAdminSourceProfile(badProfile));
+        for (String badProfile : List.of("", "admin", "prod-ADMIN", "admin-helper")) {
+            expectThrows(IllegalArgumentException.class, () -> CredentialProcess.requireSourceProfile(badProfile));
         }
-        CredentialProcess.requireAdminSourceProfile("admin");
+        CredentialProcess.requireSourceProfile("agent-issuer");
 
         Path tempAws = Files.createTempDirectory("lmaws-cred-isolation-");
         try {
@@ -83,18 +105,18 @@ public final class CredentialProcessChecks {
                 System.setProperty("aws.secretAccessKey", "AMBIENT_SECRET_MUST_BE_IGNORED");
                 expectThrows(
                     IllegalStateException.class,
-                    () -> CredentialProcess.loadIsolatedAdminCredentials("admin", tempAws));
+                    () -> CredentialProcess.loadIsolatedSourceCredentials("agent-issuer", tempAws));
 
-                // 2. Credentials file has [default] and [lmaws], but no [admin] -> refused
+                // 2. Credentials file has [default] and [lmaws], but no [agent-issuer] -> refused
                 Files.writeString(
                     tempAws.resolve("credentials"),
                     "[default]\naws_access_key_id = AKIA_DEFAULT\naws_secret_access_key = SECRET_DEFAULT\n",
                     StandardCharsets.UTF_8);
                 expectThrows(
                     IllegalStateException.class,
-                    () -> CredentialProcess.loadIsolatedAdminCredentials("admin", tempAws));
+                    () -> CredentialProcess.loadIsolatedSourceCredentials("agent-issuer", tempAws));
 
-                // 3. [admin] has role_arn / credential_process / web_identity_token_file / aws_session_token -> refused
+                // 3. [agent-issuer] has role_arn / credential_process / web_identity_token_file / aws_session_token -> refused
                 for (String forbiddenLine : List.of(
                         "aws_session_token = SESSION_TOK",
                         "role_arn = arn:aws:iam::111122223333:role/Admin",
@@ -104,23 +126,23 @@ public final class CredentialProcessChecks {
                         "sso_start_url = https://example.awsapps.com/start")) {
                     Files.writeString(
                         tempAws.resolve("credentials"),
-                        "[admin]\naws_access_key_id = AKIA_ADMIN_TEST\naws_secret_access_key = SECRET_ADMIN_TEST\n"
+                        "[agent-issuer]\naws_access_key_id = AKIA_ADMIN_TEST\naws_secret_access_key = SECRET_ADMIN_TEST\n"
                             + forbiddenLine + "\n",
                         StandardCharsets.UTF_8);
                     expectThrows(
                         IllegalStateException.class,
-                        () -> CredentialProcess.loadIsolatedAdminCredentials("admin", tempAws));
+                        () -> CredentialProcess.loadIsolatedSourceCredentials("agent-issuer", tempAws));
                 }
 
-                // 4. Valid static [admin] credentials -> resolves exact static keys from file, ignoring ambient properties
+                // 4. Valid static [agent-issuer] credentials -> resolves exact static keys from file, ignoring ambient properties
                 Files.writeString(
                     tempAws.resolve("credentials"),
-                    "[admin]\naws_access_key_id = AKIA_STATIC_ADMIN_OK\naws_secret_access_key = SECRET_STATIC_ADMIN_OK\n",
+                    "[agent-issuer]\naws_access_key_id = AKIA_STATIC_ADMIN_OK\naws_secret_access_key = SECRET_STATIC_ADMIN_OK\n",
                     StandardCharsets.UTF_8);
-                var provider = CredentialProcess.loadIsolatedAdminCredentials("admin", tempAws);
+                var provider = CredentialProcess.loadIsolatedSourceCredentials("agent-issuer", tempAws);
                 var resolved = provider.resolveCredentials();
-                require("AKIA_STATIC_ADMIN_OK".equals(resolved.accessKeyId()), "Must resolve static admin access key from file");
-                require("SECRET_STATIC_ADMIN_OK".equals(resolved.secretAccessKey()), "Must resolve static admin secret key from file");
+                require("AKIA_STATIC_ADMIN_OK".equals(resolved.accessKeyId()), "Must resolve static source access key from file");
+                require("SECRET_STATIC_ADMIN_OK".equals(resolved.secretAccessKey()), "Must resolve static source secret key from file");
             } finally {
                 if (oldAk == null) System.clearProperty("aws.accessKeyId");
                 else System.setProperty("aws.accessKeyId", oldAk);
@@ -151,13 +173,6 @@ public final class CredentialProcessChecks {
             var hit = CredentialProcess.readCachedToken(cacheFile, exp.minusSeconds(600));
             require(hit.isPresent() && "ASIA_TEST_KEY".equals(hit.get().accessKeyId()), "Cache must hit when >5m before expiry");
 
-            // Metadata inspection returns expiration and TTL without secret fields
-            var meta = CredentialProcess.inspectCacheMetadata(
-                "lmaws", 3600, URI.create("http://127.0.0.1:9999"), cacheDir, cacheDir, exp.minusSeconds(600));
-            require(meta.cached(), "Metadata must report cached=true");
-            require("2026-10-26T21:00:00Z".equals(meta.expirationIso()), "Unexpected metadata expiration: " + meta.expirationIso());
-            require(meta.ttlSeconds() == 600L, "Unexpected metadata TTL: " + meta.ttlSeconds());
-
             // Within 5 minutes (299s before expiry) -> cache miss
             var miss = CredentialProcess.readCachedToken(cacheFile, exp.minusSeconds(299));
             require(miss.isEmpty(), "Cache must miss when <=5m before expiry");
@@ -180,9 +195,12 @@ public final class CredentialProcessChecks {
         Path awsDir = tempDir.resolve(".aws");
         Path cacheDir = tempDir.resolve("cache");
         Files.createDirectories(awsDir);
+        Path policyFile = awsDir.resolve("session-tools/tasks/iam-snapshots/local-default-session.json");
+        Files.createDirectories(policyFile.getParent());
+        Files.writeString(policyFile, "{\"Statement\":[{\"Sid\":\"FromPolicyFile\",\"Effect\":\"Deny\",\"Action\":\"secretsmanager:GetSecretValue\",\"Resource\":\"*\"}]}");
         Files.writeString(
             awsDir.resolve("credentials"),
-            "[admin]\naws_access_key_id = AKIA_FAKE_ADMIN\naws_secret_access_key = SECRET_FAKE_ADMIN\n",
+            "[agent-issuer]\naws_access_key_id = AKIA_FAKE_ADMIN\naws_secret_access_key = SECRET_FAKE_ADMIN\n",
             StandardCharsets.UTF_8);
 
         AtomicInteger identityCalls = new AtomicInteger();
@@ -255,7 +273,7 @@ public final class CredentialProcessChecks {
 
             // 1. Issue 'default' mode token (no GetCallerIdentity needed, inline policy + ReadOnlyAccess)
             var defToken = CredentialProcess.issueOrGetCached(
-                "default", 3600, "admin", awsDir, cacheDir, endpoint, true, clockValid);
+                "default", 3600, "agent-issuer", awsDir, cacheDir, endpoint, true, clockValid);
             require("ASIAFAKEKEY1".equals(defToken.accessKeyId()), "Unexpected default token key");
             require(identityCalls.get() == 0, "default mode should not need GetCallerIdentity");
             require(federationCalls.get() == 1, "Expected 1 GetFederationToken call");
@@ -263,12 +281,12 @@ public final class CredentialProcessChecks {
             require("awsspot-local-default".equals(defReq.get("Name")), "Unexpected federated Name for default");
             require(CredentialProcess.READ_ONLY_POLICY_ARN.equals(defReq.get("PolicyArns.member.1.arn")),
                 "Unexpected PolicyArns for default");
-            require(defReq.getOrDefault("Policy", "").contains("DenySecretValueRetrieval"),
-                "Expected inline deny policy for default");
+            require(defReq.getOrDefault("Policy", "").contains("FromPolicyFile"),
+                "Expected inline file policy for default");
 
             // 2. Issue 'lmaws' mode token (resolves account via GetCallerIdentity -> arn:aws:iam::111122223333:policy/lmaws_session)
             var lmawsToken1 = CredentialProcess.issueOrGetCached(
-                "lmaws", 3600, "admin", awsDir, cacheDir, endpoint, true, clockValid);
+                "lmaws", 3600, "agent-issuer", awsDir, cacheDir, endpoint, true, clockValid);
             require("ASIAFAKEKEY2".equals(lmawsToken1.accessKeyId()), "Unexpected lmaws token key");
             require(identityCalls.get() == 1, "lmaws mode must call GetCallerIdentity once");
             require(federationCalls.get() == 2, "Expected 2nd GetFederationToken call");
@@ -281,13 +299,13 @@ public final class CredentialProcessChecks {
             // 3. Repeated call within validity window hits cache (in-memory and disk) -> 0 new STS calls
             CredentialProcess.clearMemoryCache(); // Force disk cache read
             var lmawsTokenCached = CredentialProcess.issueOrGetCached(
-                "lmaws", 3600, "admin", awsDir, cacheDir, endpoint, true, clockValid);
+                "lmaws", 3600, "agent-issuer", awsDir, cacheDir, endpoint, true, clockValid);
             require("ASIAFAKEKEY2".equals(lmawsTokenCached.accessKeyId()), "Must return cached token");
             require(identityCalls.get() == 1 && federationCalls.get() == 2, "Cache hit must make 0 STS calls");
 
             // 4. Call at 4 minutes before expiry (< 5m margin) refreshes from STS
             var lmawsTokenRefreshed = CredentialProcess.issueOrGetCached(
-                "lmaws", 3600, "admin", awsDir, cacheDir, endpoint, true, clockNearExpiry);
+                "lmaws", 3600, "agent-issuer", awsDir, cacheDir, endpoint, true, clockNearExpiry);
             require("ASIAFAKEKEY3".equals(lmawsTokenRefreshed.accessKeyId()), "Near-expiry token must refresh");
             require(federationCalls.get() == 3, "Expected 3rd GetFederationToken call on refresh");
 

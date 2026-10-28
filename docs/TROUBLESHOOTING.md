@@ -8,7 +8,7 @@
 | `The 'admin' profile is reserved exclusively for lmaws_ IAM policy grants` | `admin` used for a non-IAM write | Use `lmaws`; `admin` is only for the grant recipes |
 | `live writes require LMAWS_LIVE=1` | Host program run directly without live mode | Recipes set it from `--live`; direct runs export `LMAWS_LIVE=1` |
 | `live AWS credentials are disabled in CI` | `CI=true` in the environment | Expected in CI; run live tests locally |
-| `AWS scoped profile unavailable; check the explicit admin source profile.` | `--credential-process` could not read the static `admin` profile or STS refused it | `lmctl recipes/session_doctor.lms --live`; check `~/.aws/credentials` has `[admin]` with static keys |
+| `AWS scoped profile unavailable; check the isolated source profile and session policy; agents never use admin.` | `--credential-process` could not read the selected static issuer, load the session policy, or STS refused issuance | `lmctl recipes/session_doctor.lms --live`; check the explicitly selected issuer (default `agent-issuer`) and session policy file; agents never use admin |
 | `AWS AccessDenied (HTTP 403)` / `UnauthorizedOperation` | The session policy does not allow the call | `lmctl examples/recipe_policy_explain_denial.lms` explains denials; ask an administrator |
 | `unknown recipe argument --x` | Typo in a flag | The `# Arguments:` line at the top of every recipe lists its flags |
 | `--top must be a whole number 1..1000; got NaN` | A flag value is not a number | Pass a number, e.g. `--top 10` |

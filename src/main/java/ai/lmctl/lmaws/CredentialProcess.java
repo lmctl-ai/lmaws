@@ -55,7 +55,7 @@ import software.amazon.awssdk.services.sts.model.PolicyDescriptorType;
  * read-only session doctor (`cloud.session_doctor()`).
  *
  * <p>Second documented exception to the profile guard: {@code lmaws --credential-process <mode>}
- * reads ONLY the static {@code admin} profile from the shared credentials/config files to call
+ * reads ONLY the selected static source profile from the shared credentials/config files to call
  * {@code sts:GetCallerIdentity} and {@code sts:GetFederationToken} in {@code us-east-1}. It creates
  * no AWS resources, changes no IAM permissions, ignores all ambient credentials (environment
  * variables, system properties, web identity, container, and instance metadata), caches tokens in
@@ -64,13 +64,11 @@ import software.amazon.awssdk.services.sts.model.PolicyDescriptorType;
  */
 public final class CredentialProcess {
     public static final String GENERIC_ERROR =
-        "AWS scoped profile unavailable; check the explicit admin source profile.";
-    public static final String REQUIRED_SOURCE_PROFILE = "admin";
+        "AWS scoped profile unavailable; check the isolated source profile and session policy; agents never use admin.";
+    public static final String DEFAULT_SOURCE_PROFILE = "agent-issuer";
     public static final String READ_ONLY_POLICY_ARN = "arn:aws:iam::aws:policy/ReadOnlyAccess";
     public static final int INLINE_SESSION_LIMIT = 2048;
     public static final int DEFAULT_DURATION_SECONDS = 3600;
-    public static final int MIN_DURATION_SECONDS = 900;
-    public static final int MAX_DURATION_SECONDS = 129600;
     public static final Duration EXPIRY_SAFETY_MARGIN = Duration.ofMinutes(5);
 
     public static final Set<String> SUPPORTED_MODES = Set.of("default", "lmaws", "lmaws-ec2", "lmaws-web");
@@ -80,10 +78,10 @@ public final class CredentialProcess {
         "lmaws-web", "lmaws_session"
     );
 
-    public static final String DEFAULT_INLINE_DENY_POLICY =
-        "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"DenySecretValueRetrieval\",\"Effect\":\"Deny\",\"Action\":[\"secretsmanager:GetSecretValue\",\"secretsmanager:BatchGetSecretValue\",\"ssm:GetParameter\",\"ssm:GetParameters\",\"ssm:GetParametersByPath\",\"kms:Decrypt\"],\"Resource\":\"*\"}]}";
+    public static final String ADMIN_SOURCE_ERROR =
+        "Admin source profiles are refused: agents never use admin. Only a human may set LMAWS_ALLOW_ADMIN_SOURCE=1.";
 
-    private static final Set<String> FORBIDDEN_ADMIN_PROFILE_PROPERTIES = Set.of(
+    private static final Set<String> FORBIDDEN_SOURCE_PROFILE_PROPERTIES = Set.of(
         "aws_session_token",
         "aws_security_token",
         "role_arn",
@@ -160,15 +158,67 @@ public final class CredentialProcess {
         MEMORY_CACHE.clear();
     }
 
-    /**
-     * Guard check for the second documented profile exception: only the explicit {@code admin}
-     * source profile may be used to issue scoped federated session tokens.
-     */
-    public static void requireAdminSourceProfile(String sourceProfile) {
-        String clean = sourceProfile == null ? "" : sourceProfile.trim();
-        if (!REQUIRED_SOURCE_PROFILE.equals(clean)) {
-            throw new IllegalStateException(
-                "credential-process requires explicit source profile 'admin', got '" + clean + "'");
+    /** Explicit names only; no credentials provider chain or implicit admin source. */
+    public static void requireSourceProfile(String sourceProfile) {
+        if (sourceProfile == null || !sourceProfile.matches("[A-Za-z0-9_.@+-]{1,128}")) {
+            throw new IllegalArgumentException("invalid source profile name");
+        }
+        if (sourceProfile.toLowerCase(Locale.ROOT).contains("admin")
+                && !"1".equals(System.getenv("LMAWS_ALLOW_ADMIN_SOURCE"))) {
+            throw new AdminSourceRefused();
+        }
+    }
+
+    private static final class AdminSourceRefused extends IllegalArgumentException {}
+
+    static String configuredSourceProfile() {
+        return System.getenv().getOrDefault("LMAWS_CREDENTIAL_SOURCE_PROFILE", DEFAULT_SOURCE_PROFILE);
+    }
+
+    static Path policyPath(String value) {
+        if (value == null || value.isBlank()) throw new IllegalArgumentException("policy path is required");
+        if (value.equals("~")) return Path.of(System.getProperty("user.home", "."));
+        if (value.startsWith("~/") || value.startsWith("~\\")) {
+            return Path.of(System.getProperty("user.home", ".")).resolve(value.substring(2));
+        }
+        return Path.of(value);
+    }
+
+    static Path defaultPolicyPath(Path awsDir) {
+        String env = System.getenv("LMAWS_DEFAULT_SESSION_POLICY");
+        return env == null || env.isBlank()
+            ? awsDir.resolve("session-tools").resolve("tasks").resolve("iam-snapshots")
+                .resolve("local-default-session.json") : policyPath(env);
+    }
+
+    /** Match Python json.dumps(..., separators=(",", ":")), including ensure_ascii. */
+    static String readInlinePolicy(Path path) {
+        try {
+            if (Files.size(path) > 1024 * 1024) throw new IllegalArgumentException("policy file is too large");
+            Object parsed = Json.parse(Files.readString(path, StandardCharsets.UTF_8));
+            if (!(parsed instanceof Map<?, ?> doc) || !doc.containsKey("Statement")) {
+                throw new IllegalArgumentException("expected a policy document");
+            }
+            String compact = IamPolicies.compactJson(parsed);
+            StringBuilder ascii = new StringBuilder();
+            for (char c : compact.toCharArray()) {
+                if (c >= 127) ascii.append(String.format(Locale.ROOT, "\\u%04x", (int)c));
+                else ascii.append(c);
+            }
+            String result = ascii.toString();
+            int length = result.length() + READ_ONLY_POLICY_ARN.length();
+            if (length > INLINE_SESSION_LIMIT) {
+                throw new PolicyLimitExceeded(length);
+            }
+            return result;
+        } catch (IOException e) {
+            throw new IllegalArgumentException("session policy file unavailable");
+        }
+    }
+
+    private static final class PolicyLimitExceeded extends IllegalArgumentException {
+        PolicyLimitExceeded(int length) {
+            super("Session policy plus ReadOnlyAccess ARN is " + length + " characters; STS limit is 2048. Refusing issuance.");
         }
     }
 
@@ -176,18 +226,18 @@ public final class CredentialProcess {
      * Build the STS GetFederationToken specification for the given mode.
      *
      * <ul>
-     *   <li>{@code default}: {@code ReadOnlyAccess} managed policy + inline deny of secret retrieval
+     *   <li>{@code default}: {@code ReadOnlyAccess} managed policy + the supplied real inline session policy
      *       (verified {@code <= 2048} combined characters).
      *   <li>{@code lmaws}, {@code lmaws-ec2}, {@code lmaws-web}: {@code arn:aws:iam::<account>:policy/lmaws_session},
      *       no inline policy.
      * </ul>
      */
-    public static FederationSpec buildFederationSpec(String mode, int durationSeconds, String accountId) {
+    public static FederationSpec buildFederationSpec(String mode, int durationSeconds, String accountId, String inlinePolicy) {
         if (mode == null || !SUPPORTED_MODES.contains(mode)) {
             throw new IllegalArgumentException("expected default, lmaws, lmaws-ec2 or lmaws-web");
         }
-        if (durationSeconds < MIN_DURATION_SECONDS || durationSeconds > MAX_DURATION_SECONDS) {
-            throw new IllegalArgumentException("durationSeconds must be between 900 and 129600");
+        if (durationSeconds != DEFAULT_DURATION_SECONDS) {
+            throw new IllegalArgumentException("durationSeconds must be 3600 to match the scoped session helper");
         }
         String federatedName = "awsspot-local-" + mode;
         String managedName = MANAGED_POLICY_BY_MODE.get(mode);
@@ -198,26 +248,27 @@ public final class CredentialProcess {
             String arn = "arn:aws:iam::" + accountId + ":policy/" + managedName;
             return new FederationSpec(mode, federatedName, durationSeconds, List.of(arn), null);
         }
-        int combinedLen = DEFAULT_INLINE_DENY_POLICY.length() + READ_ONLY_POLICY_ARN.length();
+        if (inlinePolicy == null) throw new IllegalArgumentException("default mode requires a policy file");
+        int combinedLen = inlinePolicy.length() + READ_ONLY_POLICY_ARN.length();
         if (combinedLen > INLINE_SESSION_LIMIT) {
-            throw new IllegalStateException("session policy exceeds the STS 2048-character limit");
+            throw new PolicyLimitExceeded(combinedLen);
         }
         return new FederationSpec(
             mode,
             federatedName,
             durationSeconds,
             List.of(READ_ONLY_POLICY_ARN),
-            DEFAULT_INLINE_DENY_POLICY
+            inlinePolicy
         );
     }
 
     /**
-     * Resolve static {@code admin} credentials strictly from the shared credentials/config files.
+     * Resolve selected static source credentials strictly from the shared credentials/config files.
      * Never reads environment variables, system properties, web identity tokens, container
      * credentials, or EC2 instance metadata, and refuses assumed roles or recursive credential_process.
      */
-    public static StaticCredentialsProvider loadIsolatedAdminCredentials(String sourceProfile, Path awsDir) {
-        requireAdminSourceProfile(sourceProfile);
+    public static StaticCredentialsProvider loadIsolatedSourceCredentials(String sourceProfile, Path awsDir) {
+        requireSourceProfile(sourceProfile);
         if (awsDir == null) {
             throw new IllegalStateException("AWS configuration directory is required");
         }
@@ -245,20 +296,20 @@ public final class CredentialProcess {
             throw new IllegalStateException("shared AWS credentials/config files not found");
         }
         ProfileFile profileFile = aggregator.build();
-        Profile adminProfile = profileFile.profile(REQUIRED_SOURCE_PROFILE)
-            .orElseThrow(() -> new IllegalStateException("explicit 'admin' profile not found in shared credentials"));
+        Profile source = profileFile.profile(sourceProfile)
+            .orElseThrow(() -> new IllegalStateException("selected source profile not found in shared credentials"));
 
-        Map<String, String> props = adminProfile.properties();
+        Map<String, String> props = source.properties();
         for (String propName : props.keySet()) {
             String lower = propName.toLowerCase(Locale.ROOT);
-            if (FORBIDDEN_ADMIN_PROFILE_PROPERTIES.contains(lower)) {
-                throw new IllegalStateException("admin source profile must use static IAM user credentials only");
+            if (FORBIDDEN_SOURCE_PROFILE_PROPERTIES.contains(lower)) {
+                throw new IllegalStateException("source profile must use static IAM user credentials only");
             }
         }
-        String accessKeyId = adminProfile.property("aws_access_key_id").orElse("").trim();
-        String secretAccessKey = adminProfile.property("aws_secret_access_key").orElse("").trim();
+        String accessKeyId = source.property("aws_access_key_id").orElse("").trim();
+        String secretAccessKey = source.property("aws_secret_access_key").orElse("").trim();
         if (accessKeyId.isEmpty() || secretAccessKey.isEmpty()) {
-            throw new IllegalStateException("admin profile is missing static access key credentials");
+            throw new IllegalStateException("source profile is missing static access key credentials");
         }
         return StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKeyId, secretAccessKey));
     }
@@ -303,6 +354,12 @@ public final class CredentialProcess {
             return Path.of(xdgCache.trim(), "lmaws", "credential-process");
         }
         return Path.of(home, ".cache", "lmaws", "credential-process");
+    }
+
+    private static String issuanceScope(String mode, String source, StaticCredentialsProvider provider, String inline) {
+        var credentials = provider.resolveCredentials();
+        return mode + "-v2-" + shortSha256(source + "\n" + credentials.accessKeyId() + "\n"
+            + credentials.secretAccessKey() + "\n" + (inline == null ? "managed:lmaws_session" : inline));
     }
 
     private static String cacheKey(String mode, int durationSeconds, URI endpoint, Path awsDir, Path cacheDir) {
@@ -466,13 +523,22 @@ public final class CredentialProcess {
         if (mode == null || !SUPPORTED_MODES.contains(mode)) {
             return new CacheMetadata(String.valueOf(mode), false, "not_cached", 0L);
         }
-        String key = cacheKey(mode, durationSeconds, endpoint, awsDir, cacheDir);
+        String scope;
+        try {
+            String source = configuredSourceProfile();
+            requireSourceProfile(source);
+            scope = issuanceScope(mode, source, loadIsolatedSourceCredentials(source, awsDir),
+                "default".equals(mode) ? readInlinePolicy(defaultPolicyPath(awsDir)) : null);
+        } catch (Exception ignored) {
+            return new CacheMetadata(mode, false, "not_cached", 0L);
+        }
+        String key = cacheKey(scope, durationSeconds, endpoint, awsDir, cacheDir);
         TokenResult mem = MEMORY_CACHE.get(key);
         if (mem != null && isCacheUsable(mem.expiration(), now)) {
             long ttl = Math.max(0L, Duration.between(now, mem.expiration()).getSeconds());
             return new CacheMetadata(mode, true, mem.expirationIso(), ttl);
         }
-        Path file = cacheFilePath(cacheDir, mode, durationSeconds, endpoint, awsDir);
+        Path file = cacheFilePath(cacheDir, scope, durationSeconds, endpoint, awsDir);
         if (!Files.isRegularFile(file) || !hasStrictOwnerOnlyPermissions(file)) {
             return new CacheMetadata(mode, false, "not_cached", 0L);
         }
@@ -497,6 +563,12 @@ public final class CredentialProcess {
         }
     }
 
+    public static TokenResult issueOrGetCached(String mode, int durationSeconds, String sourceProfile,
+            Path awsDir, Path cacheDir, URI endpointOverride, boolean useCache, Clock clock) {
+        return issueOrGetCached(mode, durationSeconds, sourceProfile, awsDir, cacheDir,
+            endpointOverride, useCache, clock, defaultPolicyPath(awsDir));
+    }
+
     public static TokenResult issueOrGetCached(
             String mode,
             int durationSeconds,
@@ -505,16 +577,20 @@ public final class CredentialProcess {
             Path cacheDir,
             URI endpointOverride,
             boolean useCache,
-            Clock clock) {
+            Clock clock, Path policyFile) {
         if (mode == null || !SUPPORTED_MODES.contains(mode)) {
             throw new IllegalArgumentException("expected default, lmaws, lmaws-ec2 or lmaws-web");
         }
-        if (durationSeconds < MIN_DURATION_SECONDS || durationSeconds > MAX_DURATION_SECONDS) {
-            throw new IllegalArgumentException("durationSeconds must be between 900 and 129600");
+        if (durationSeconds != DEFAULT_DURATION_SECONDS) {
+            throw new IllegalArgumentException("durationSeconds must be 3600 to match the scoped session helper");
         }
-        requireAdminSourceProfile(sourceProfile);
+        requireSourceProfile(sourceProfile);
+        String inlinePolicy = "default".equals(mode) ? readInlinePolicy(policyFile) : null;
+        // Validate the explicitly selected file credentials BEFORE consulting either cache.
+        StaticCredentialsProvider sourceCredentials = loadIsolatedSourceCredentials(sourceProfile, awsDir);
+        String scope = issuanceScope(mode, sourceProfile, sourceCredentials, inlinePolicy);
         Instant now = clock.instant();
-        String key = cacheKey(mode, durationSeconds, endpointOverride, awsDir, cacheDir);
+        String key = cacheKey(scope, durationSeconds, endpointOverride, awsDir, cacheDir);
 
         if (useCache) {
             TokenResult memHit = MEMORY_CACHE.get(key);
@@ -522,7 +598,7 @@ public final class CredentialProcess {
                 return memHit;
             }
             if (cacheDir != null) {
-                Path cacheFile = cacheFilePath(cacheDir, mode, durationSeconds, endpointOverride, awsDir);
+                Path cacheFile = cacheFilePath(cacheDir, scope, durationSeconds, endpointOverride, awsDir);
                 Optional<TokenResult> diskHit = readCachedToken(cacheFile, now);
                 if (diskHit.isPresent()) {
                     MEMORY_CACHE.put(key, diskHit.get());
@@ -531,13 +607,16 @@ public final class CredentialProcess {
             }
         }
 
-        StaticCredentialsProvider adminCredentials = loadIsolatedAdminCredentials(sourceProfile, awsDir);
         StsClientBuilder builder = StsClient.builder()
             .region(Region.US_EAST_1)
-            .credentialsProvider(adminCredentials)
-            .httpClient(UrlConnectionHttpClient.create());
+            .credentialsProvider(sourceCredentials)
+            .httpClient(UrlConnectionHttpClient.create())
+            .endpointProvider(software.amazon.awssdk.services.sts.endpoints.StsEndpointProvider.defaultProvider())
+            .overrideConfiguration(c -> c.apiCallTimeout(Duration.ofSeconds(45)));
         if (endpointOverride != null) {
             builder.endpointOverride(endpointOverride);
+        } else {
+            builder.endpointOverride(URI.create("https://sts.us-east-1.amazonaws.com"));
         }
 
         TokenResult fresh;
@@ -549,7 +628,7 @@ public final class CredentialProcess {
                     throw new IllegalStateException("STS identity lookup failed");
                 }
             }
-            FederationSpec spec = buildFederationSpec(mode, durationSeconds, accountId);
+            FederationSpec spec = buildFederationSpec(mode, durationSeconds, accountId, inlinePolicy);
             GetFederationTokenRequest.Builder req = GetFederationTokenRequest.builder()
                 .name(spec.federatedUserName())
                 .durationSeconds(spec.durationSeconds())
@@ -575,7 +654,7 @@ public final class CredentialProcess {
         if (useCache) {
             MEMORY_CACHE.put(key, fresh);
             if (cacheDir != null) {
-                Path cacheFile = cacheFilePath(cacheDir, mode, durationSeconds, endpointOverride, awsDir);
+                Path cacheFile = cacheFilePath(cacheDir, scope, durationSeconds, endpointOverride, awsDir);
                 try {
                     writeCachedToken(cacheFile, fresh);
                 } catch (IOException e) {
@@ -610,12 +689,8 @@ public final class CredentialProcess {
         try {
             String mode = null;
             int durationSeconds = DEFAULT_DURATION_SECONDS;
-            String envDuration = System.getenv("LMAWS_CREDENTIAL_PROCESS_DURATION");
-            if (envDuration != null && !envDuration.isBlank()) {
-                durationSeconds = Integer.parseInt(envDuration.trim());
-            }
-            String sourceProfile = System.getenv().getOrDefault(
-                "LMAWS_CREDENTIAL_PROCESS_SOURCE_PROFILE", REQUIRED_SOURCE_PROFILE);
+            String sourceProfile = configuredSourceProfile();
+            Path policyFile = defaultPolicyPath(defaultAwsDir());
             boolean useCache = !"0".equals(System.getenv("LMAWS_CREDENTIAL_PROCESS_CACHE"));
 
             for (int i = 0; i < args.length; i++) {
@@ -635,6 +710,9 @@ public final class CredentialProcess {
                         throw new IllegalArgumentException("missing source profile");
                     }
                     sourceProfile = args[++i];
+                } else if ("--policy-file".equals(arg)) {
+                    if (i + 1 >= args.length) throw new IllegalArgumentException("missing policy file");
+                    policyFile = policyPath(args[++i]);
                 } else if ("--no-cache".equals(arg)) {
                     useCache = false;
                 } else {
@@ -653,10 +731,16 @@ public final class CredentialProcess {
                 defaultCacheDir(),
                 endpoint,
                 useCache,
-                Clock.systemUTC()
+                Clock.systemUTC(), policyFile
             );
             System.out.println(token.toCredentialProcessJson());
             return 0;
+        } catch (AdminSourceRefused refused) {
+            System.err.println(ADMIN_SOURCE_ERROR);
+            return 1;
+        } catch (PolicyLimitExceeded refused) {
+            System.err.println(refused.getMessage());
+            return 1;
         } catch (Throwable ignored) {
             // Never relay upstream exception details, account IDs, or secret material.
             System.err.println(GENERIC_ERROR);
@@ -708,7 +792,7 @@ public final class CredentialProcess {
                 ? "federated_readonly"
                 : "federated_managed_lmaws_session";
             String policyScope = "default".equals(mode)
-                ? "ReadOnlyAccess + inline DenySecretValueRetrieval"
+                ? "ReadOnlyAccess + policy-file session policy"
                 : "arn:aws:iam::************:policy/lmaws_session";
             CacheMetadata meta = inspectCacheMetadata(
                 mode, DEFAULT_DURATION_SECONDS, endpoint, awsDir, cacheDir, now);
@@ -974,7 +1058,7 @@ public final class CredentialProcess {
             "3120",
             "config_and_cache",
             "configured",
-            "federated_user=awsspot-local-default; policy=ReadOnlyAccess + inline DenySecretValueRetrieval"
+            "federated_user=awsspot-local-default; policy=ReadOnlyAccess + policy-file session policy"
         ));
         rows.add(doctorRow(
             "profile",

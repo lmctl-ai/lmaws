@@ -248,12 +248,14 @@ lmctl recipes/policy_simulate_probes.lms
 AWS_PROFILE=admin lmctl recipes/policy_simulate_probes.lms --live --profile admin
 ```
 
-## Native `credential_process` and `session_doctor` (v0.1.9)
+## Native `credential_process` and `session_doctor`
 
-`lmaws --credential-process <mode>` replaces the legacy `aws-profile-session.py` (`aws sts get-federation-token`) helper so `lmaws` has zero `aws` CLI dependency. It is the second documented exception to the `admin` profile guard: it reads ONLY the static `admin` profile from `~/.aws/credentials` and `~/.aws/config` (ignoring ambient environment variables, web identity, container, and EC2 metadata sources) to call STS `GetCallerIdentity` and `GetFederationToken` (`awsspot-local-<mode>`, default duration 3,600s), caches the token in memory and in a `0600` file under the user cache directory until 5 minutes before expiry, and creates no AWS resources and changes no IAM permissions:
+`lmaws --credential-process <mode>` needs no AWS CLI or Python. It reads only static credentials from the selected source profile (`--source-profile NAME` / `LMAWS_CREDENTIAL_SOURCE_PROFILE`, default `agent-issuer`), ignoring ambient credentials, recursive helpers, roles, SSO and metadata. Names containing `admin` are refused unless a human explicitly sets `LMAWS_ALLOW_ADMIN_SOURCE=1`; agents never use admin. All modes use `awsspot-local-<mode>` and 3,600 seconds. Owner-only caches are scoped to the source credentials and policy contents and expire five minutes early.
 
-- `default`: `arn:aws:iam::aws:policy/ReadOnlyAccess` + inline `DenySecretValueRetrieval` (`<= 2048` chars)
-- `lmaws`, `lmaws-ec2`, `lmaws-web`: `arn:aws:iam::<account>:policy/lmaws_session` (no inline policy)
+- `default`: actual inline policy from `--policy-file PATH`, `LMAWS_DEFAULT_SESSION_POLICY`, or `~/.aws/session-tools/tasks/iam-snapshots/local-default-session.json`, plus `ReadOnlyAccess`. Combined compact policy and ARN length must be <=2,048; unavailable/malformed/oversized policies fail closed.
+- `lmaws`, `lmaws-ec2`, `lmaws-web`: `arn:aws:iam::<source-account>:policy/lmaws_session`, resolved using the source's STS identity, without an inline policy.
+
+The helper never changes AWS resources or permissions. See [PROFILES.md](PROFILES.md).
 
 Install the native binary at `~/.local/bin/lmaws` on Linux/macOS and `%USERPROFILE%\.local\bin\lmaws.exe` (`C:\Users\<user>\.local\bin\lmaws.exe`) on Windows, then configure `~/.aws/config`:
 

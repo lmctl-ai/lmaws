@@ -9,21 +9,25 @@ Sweeping (`lmaws --sweep DIR --older-than-hours 0` or `Cloud.sweep`) is local,
 dry-run only; it never authorizes deletion of discovered account resources.
 
 Real resource mutations require `LMAWS_LIVE=1` and active profile `lmaws` (service
-sandboxes) or `lmaws-ec2` (EC2 spot nano sandbox) in `us-east-1`. There are two
-documented exceptions where the `admin` profile is permitted (`admin` is refused
-for every other mutating call):
+sandboxes) or `lmaws-ec2` (EC2 spot nano sandbox) in `us-east-1`. The IAM grant interface and scoped credential helper have separate guards; agents
+never use admin:
 1. Customer-managed `lmaws_` IAM policy mutation (`iam_policy_put` and
    `iam_policy_delete`), which requires `AWS_PROFILE=admin`, `LMAWS_ADMIN_GRANT=1`,
    `--apply` (`LMAWS_APPLY=1`), `LMAWS_LIVE=1`, and a policy name matching
    `^lmaws_[a-z0-9_-]{1,64}$`. `lmaws`/`lmaws-ec2` are refused for IAM policy writes.
 2. Federated session credential issuance (`lmaws --credential-process <mode>` for
-   `default`, `lmaws`, `lmaws-ec2`, `lmaws-web`), which reads ONLY the static
-   `admin` profile from shared credentials/config (ignoring ambient environment
-   variables, web identity, container, and EC2 metadata sources) to call STS
-   `GetCallerIdentity` and `GetFederationToken` (`awsspot-local-<mode>`, 3,600s
-   default duration, cached in memory and in a `0600` file under the user cache
-   directory until 5 minutes before expiry); it creates no AWS resources and
-   changes no permissions.
+   `default`, `lmaws`, `lmaws-ec2`, `lmaws-web`) reads ONLY static credentials from the
+   explicitly selected source profile (`--source-profile` or
+   `LMAWS_CREDENTIAL_SOURCE_PROFILE`; default `agent-issuer`) in shared
+   credentials/config files. A source profile whose name contains `admin` is refused unless
+   the human-only `LMAWS_ALLOW_ADMIN_SOURCE=1` override is explicitly set. Ambient environment,
+   SSO, web identity, container and EC2 metadata sources are never used. `default` loads the
+   policy file from `--policy-file`, `LMAWS_DEFAULT_SESSION_POLICY`, or
+   `~/.aws/session-tools/tasks/iam-snapshots/local-default-session.json`, compacts it and sends
+   it with `ReadOnlyAccess`; the combined compact policy and ARN must fit STS's 2,048-character
+   limit. The three `lmaws*` modes resolve the source account with STS and send the account-scoped
+   `lmaws_session` managed-policy ARN. All modes use `awsspot-local-<mode>`, 3,600 seconds, and owner-only cache files until 5 minutes before expiry. Cache scope includes the
+   source profile and policy inputs; no resources or permissions are changed.
 Inline STS session policies are capped at 2,048 characters, whereas customer-managed
 IAM policies allow up to 6,144 compact characters. Before any `iam_policy_put`,
 `IamPolicies.lint` verifies valid JSON, compact length `<= 6144`,

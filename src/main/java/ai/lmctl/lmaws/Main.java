@@ -11,7 +11,7 @@ public final class Main {
     private static final String HELP="""
         lmaws 0.1.23 — AWS SDK for Java v2 scripting host
         usage: lmaws [--dry-run] [--apply] --dsl FILE | --dsl-schema [--json] | --dsl-signatures [--without-std]
-               lmaws --credential-process <default|lmaws|lmaws-ec2|lmaws-web> [--duration SECONDS] [--no-cache]
+               lmaws --credential-process <default|lmaws|lmaws-ec2|lmaws-web> [--source-profile NAME] [--policy-file PATH] [--no-cache]
                lmaws --version | --notices | --help | --self-test
                lmaws --sweep LEDGER_DIR --older-than-hours N
         DSL context: aws.demo() (offline) or aws.region(\"\") (default profile/region).
@@ -22,10 +22,15 @@ public final class Main {
            require AWS_PROFILE=admin, LMAWS_ADMIN_GRANT=1, LMAWS_LIVE=1 and --apply (LMAWS_APPLY=1).
            iam_role_get and live role previews require the same admin/grant/live flags without --apply.
            Role grants require Lambda-only trust and the same-account lmaws_boundary.
-        2. lmaws --credential-process <mode> reads ONLY the static admin source profile
-           from shared credentials/config (ignoring ambient env/web-identity/container/IMDS)
-           to call STS GetCallerIdentity and GetFederationToken (awsspot-local-<mode>, 3600s,
-           0600 file cache until 5m before expiry); it creates no resources and changes no permissions.
+        2. lmaws --credential-process <mode> reads ONLY the selected static source profile
+           (`--source-profile NAME` or LMAWS_CREDENTIAL_SOURCE_PROFILE, default agent-issuer)
+           from shared credentials/config (ignoring ambient env/web-identity/container/IMDS).
+           Names containing admin are refused unless LMAWS_ALLOW_ADMIN_SOURCE=1 is set by a human.
+           `default` uses --policy-file or LMAWS_DEFAULT_SESSION_POLICY (default
+           ~/.aws/session-tools/tasks/iam-snapshots/local-default-session.json) plus ReadOnlyAccess,
+           within STS's 2048-character compact limit; lmaws* modes resolve the source account
+           and use its lmaws_session ARN. All modes use awsspot-local-<mode>, 3600s, and a cache
+           scoped to the source/policy inputs; they create no resources or permissions.
         Every run is cleaned up on success and failure. --sweep is always read-only.
         LMAWS_MAX_MEMORY_MB: positive whole MiB, default 4096; bounded heap and VM data.
         LMAWS_MAX_COST_USD: default 0.05, hard whole-run ceiling 0.25.

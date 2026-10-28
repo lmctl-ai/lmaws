@@ -350,8 +350,11 @@ def run(host):
             # Credential-process CLI + session_doctor fake transport checks
             test_aws_dir=work/"aws_cfg";test_cache_dir=work/"cred_cache"
             test_aws_dir.mkdir();test_cache_dir.mkdir()
-            (test_aws_dir/"credentials").write_text("[admin]\naws_access_key_id = AKIAFAKEADMIN\naws_secret_access_key = SECRETFAKEADMIN\n")
+            (test_aws_dir/"credentials").write_text("[agent-issuer]\naws_access_key_id = AKIAFAKEADMIN\naws_secret_access_key = SECRETFAKEADMIN\n")
             (test_aws_dir/"config").write_text("[default]\nregion = us-east-1\ncredential_process = lmaws --credential-process default\n[profile lmaws]\nregion = us-east-1\ncredential_process = lmaws --credential-process lmaws\n[profile lmaws-ec2]\nregion = us-east-1\ncredential_process = lmaws --credential-process lmaws-ec2\n[profile lmaws-web]\nregion = us-east-1\ncredential_process = lmaws --credential-process lmaws-web\n")
+            test_policy=test_aws_dir/"session-tools/tasks/iam-snapshots/local-default-session.json"
+            test_policy.parent.mkdir(parents=True)
+            test_policy.write_text(json.dumps({"Statement": [{"Sid":"DenySecretValueRetrieval","Effect":"Deny","Action":"secretsmanager:GetSecretValue","Resource":"*"}]}))
             cp_env=dict(env,LMAWS_TEST_AWS_DIR=str(test_aws_dir),LMAWS_CREDENTIAL_CACHE_DIR=str(test_cache_dir))
             for mode in ("default","lmaws"):
                 cp_res=subprocess.run(host_prefix+["--credential-process",mode],cwd=work,env=cp_env,text=True,encoding="utf-8",capture_output=True,timeout=60)
@@ -363,7 +366,7 @@ def run(host):
             cp_cached=subprocess.run(host_prefix+["--credential-process","lmaws"],cwd=work,env=cp_env,text=True,encoding="utf-8",capture_output=True,timeout=60)
             assert cp_cached.returncode==0 and len(Fake.requests)==req_count_before,"disk 0600 cache should avoid STS call"
             cp_bad_src=subprocess.run(host_prefix+["--credential-process","lmaws","--source-profile","lmaws"],cwd=work,env=cp_env,text=True,encoding="utf-8",capture_output=True,timeout=60)
-            assert cp_bad_src.returncode==1 and cp_bad_src.stdout=="" and cp_bad_src.stderr.strip()=="AWS scoped profile unavailable; check the explicit admin source profile."
+            assert cp_bad_src.returncode==1 and cp_bad_src.stdout=="" and cp_bad_src.stderr.strip()=="AWS scoped profile unavailable; check the isolated source profile and session policy; agents never use admin."
 
             doctor_script="\n".join([
                 'let cloud = aws.region("us-east-1");',
