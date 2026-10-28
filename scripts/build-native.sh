@@ -8,5 +8,5 @@ flags=(-O1 -H:+UnlockExperimentalVMOptions -J-Xmx5g -H:NumberOfThreads=2 --no-fa
 if [[ "$(uname -s)" == Linux ]]; then
  flags+=(-H:+StaticExecutableWithDynamicLibC -H:NativeLinkerOption=-static-libstdc++ -H:NativeLinkerOption=-static-libgcc)
 fi
-cp target/lmaws-0.1.22.jar target/native-input.jar
+cp target/lmaws-0.1.23.jar target/native-input.jar
 timeout 2400 native-image "${flags[@]}" -jar target/native-input.jar "${LMAWS_NATIVE_OUTPUT:-target/lmaws}"
