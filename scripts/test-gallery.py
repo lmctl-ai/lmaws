@@ -39,6 +39,28 @@ for name in examples:
 assert len(re.findall(r"lmctl(?: autorun)? https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/", readme)) >= 30
 print(f"gallery: {len(examples)} examples and images verified")
 
+def inspect_outputs(work, name):
+    """Validate declared host evidence, never a chart's script-generated input."""
+    work=Path(work)
+    image=work/"images"/f"{name}.png"
+    if not image.exists() or not image.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
+        return None, f"missing or invalid generated PNG: images/{name}.png from lmplot (workdir={work})"
+    if name=="provision_job":
+        candidates=[(Path("data/provision_job.count"), "lmfiles")]
+    else:
+        candidates=[(Path("data")/f"{name}.csv", "lmaws"),
+                    (Path("data")/name/"topic_chart.csv", "lmaws"),
+                    (Path("data")/f"{name}.count", "lmaws")]
+    for relative, host in candidates:
+        path=work/relative
+        if path.exists():
+            payload=path.read_bytes()
+            if name=="provision_job" and payload.strip()!=b"1":
+                return None, f"invalid host-generated data artifact: {relative.as_posix()} from {host}; expected one persisted registry record (workdir={work})"
+            return payload, None
+    expected="; ".join(f"{relative.as_posix()} from {host}" for relative, host in candidates)
+    return None, f"missing host-generated data artifact; expected {expected} (workdir={work})"
+
 def run_examples():
     runner = shutil.which("lmscript")
     if runner is None:
@@ -57,18 +79,11 @@ def run_examples():
                 evidence["failed"].append({"name": name, "returncode": result.returncode,
                                            "output": (result.stdout + result.stderr)[-4000:]})
                 continue
-            image = Path(work) / "images" / f"{name}.png"
-            if not image.exists() or not image.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
-                evidence["failed"].append({"name": name, "output": "missing or invalid generated PNG"})
+            data,error=inspect_outputs(work,name)
+            if error:
+                evidence["failed"].append({"name":name,"output":error})
                 continue
-            csv = Path(work) / "data" / f"{name}.csv"
-            count_file = Path(work) / "data" / f"{name}.count"
-            spend_chart=Path(work)/"data"/name/"topic_chart.csv"
-            if not csv.exists() and spend_chart.exists():csv=spend_chart
-            if not csv.exists() and not count_file.exists():
-                evidence["failed"].append({"name": name, "output": "missing host-generated data artifact"})
-                continue
-            outputs[name] = (csv.read_bytes() if csv.exists() else count_file.read_bytes())
+            outputs[name]=data
             evidence["passed"].append(name)
     # Inventory is a representative deterministic CSV; lifecycle ledgers are intentionally excluded.
     with tempfile.TemporaryDirectory(prefix="lmaws-gallery-repeat-") as one, tempfile.TemporaryDirectory(prefix="lmaws-gallery-repeat-") as two:

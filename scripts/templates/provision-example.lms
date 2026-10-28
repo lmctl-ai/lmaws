@@ -14,6 +14,15 @@ let record=provision_record(ID);assert(record.stage=="terminated" && len(record.
 let counts={};for(entry in record.history) {counts[entry.stage]=get(counts,entry.stage,0)+1;}
 let data="";for(stage in ["requested","created","running","stopped","started","terminated"]) {data=data+stage+" "+str(get(counts,stage,0))+"\n";}
 mkdir("images");mkdir("build");mkdir("data");write_file("data/provision-stages.dat",data);
+# Gallery evidence must come from the registry host, independently of the chart data.
+let audit=_lmcode_ cli="lmfiles" install="github:lmctl-ai/lmfiles@latest";
+let db=registry.open(${".lmaws-local/provision/"+ID+".mv"},"provision","{}");
+let snapshot=db.snapshot();let cursor=snapshot.query("{\"all\":true}","{}");let rows=cursor.rows(2,1048576);
+file_write("data/provision_job.count",str(rows.len())+"\n");cursor.close();snapshot.close();db.close();
+end _lmcode_
+savedsl(audit,"build/provision-audit.dslb");let audited=system(concat(dsl_cli(audit),["--dsl","build/provision-audit.dslb"]),120000);assert(audited.code==0);
+assert(trim(read_file("data/provision_job.count"))=="1");
+
 let plot=_lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png("images/provision_job.png",900,560);plot.cmd("set title 'Offline on-demand provisioning: confirmed lmfiles stages'; set ylabel 'recorded transitions'; set yrange [0:*]; set style data histograms; set style fill solid 0.8; set grid ytics; plot 'data/provision-stages.dat' using 2:xtic(1) lc rgb '#5db7d1' notitle");plot.close();
 end _lmcode_

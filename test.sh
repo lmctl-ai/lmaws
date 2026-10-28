@@ -68,6 +68,7 @@ if [[ "${LMAWS_NATIVE:-0}" == 1 ]]; then
  timeout 300 python3 scripts/test-spend-transport.py "$exe"
  if [[ "$(uname -s)" == Linux ]]; then timeout 30 python3 scripts/check-linux-linkage.py "$exe"; fi
 fi
+timeout 30 python3 scripts/test-gallery-artifacts.py
 if [[ "${LMAWS_NATIVE:-0}" == 1 ]]; then timeout 1500 python3 scripts/test-gallery.py --run; else echo "note: example images run in the native CI stage; checking committed gallery now"; timeout 30 python3 scripts/test-gallery.py; fi
 
 timeout 60 python3 scripts/test-recipes.py

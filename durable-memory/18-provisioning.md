@@ -29,4 +29,13 @@ boothook appends every boot; the offline shell test runs it twice.
 recipes/provision.lms accepts CONFIG/overrides and lifecycle operations. The
 standalone example is generated from the library and source template, runs real
 demo bindings plus released lmfiles, and plots actual confirmed stage counts.
-Local test.sh is the gate; native/live proof remains outstanding until authorized.
+Local test.sh is the gate. Linux x64 JVM/native fake gates and the full 126-example
+gallery pass with compiler 0.2.420. Live proof still waits for the Lead grant/GO;
+other platforms are qualified by their release lanes.
+
+The gallery requires data/provision_job.count from lmfiles, independently of the
+script's plot input data/provision-stages.dat. The example snapshots the authoritative
+registry and writes its one-row count inside the lmfiles block. Missing artifact
+diagnostics name the exact path and producer; native --run checks this contract.
+The JVM job regression also requires this count, so PNG-only success cannot hide
+a missing data artifact until the native gallery stage.

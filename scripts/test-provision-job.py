@@ -138,6 +138,8 @@ def main() -> int:
         example=run_lmctl(picture,ROOT/"examples/provision_job.lms",env=example_env)
         check(example.returncode==0,example.stdout[-2000:]+example.stderr[-3000:])
         check((picture/"images/provision_job.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n"),"missing real gallery picture")
+        count=picture/"data/provision_job.count"
+        check(count.exists() and count.read_text().strip()=="1","missing lmfiles-generated registry count: data/provision_job.count")
         check('"same_volume":true' in example.stdout and '"boot_count":2' in example.stdout and '"leftovers":0' in example.stdout,"example omitted lifecycle proof")
     print("PASS provisioning job demo lifecycle, dry-run immutability, two-ID isolation, preview and config guards")
     return 0
