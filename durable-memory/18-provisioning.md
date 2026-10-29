@@ -39,3 +39,12 @@ registry and writes its one-row count inside the lmfiles block. Missing artifact
 diagnostics name the exact path and producer; native --run checks this contract.
 The JVM job regression also requires this count, so PNG-only success cannot hide
 a missing data artifact until the native gallery stage.
+
+ProvisionJournal canonicalizes symlinked ancestors (Darwin /var and /tmp) before
+checking directory ownership/0700 and choosing the JVM/file lock identity. The final
+configured/mode directory and lock/journal files cannot be symlinks. New directories
+are atomically 0700; existing too-open/foreign paths are refused, not repaired.
+Safe check/path_class diagnostics identify failures without paths or IDs. File fsync
+and corrupt/torn replay remain strict; no directory-fsync suppression is needed.
+The regression simulates a linked temp parent on Linux and tests final-link, owner
+and permission refusals; the native gate also runs the provisioning SDK transport.

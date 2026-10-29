@@ -71,7 +71,19 @@ requests and receipts. It persists config/hash, selected AMI/network and client 
 before launch. A killed executor re-describes tags and, if still invisible, retries
 identical parameters/token. Missing tags on a recorded instance refuse recreation.
 SDK mutation retries are disabled; torn/corrupt journals fail closed. Demo/AWS roots
-are separate. The job defaults to `.lmaws-local/provision/host/`; override with
+are separate. Ancestor aliases such as macOS /var or /tmp are resolved with toRealPath
+before ownership/permission checks and lock selection. The configured directory and
+mode directory must belong to the current OS user and have exact POSIX mode 0700;
+new directories are created with that mode atomically. Existing permissive/foreign
+directories are refused rather than chmod-repaired. Final configured/mode directory
+symlinks and journal/lock symlinks remain forbidden; regular files require owner-only
+0600. Errors report a safe check and path_class rather than paths or IDs.
+
+Regular journal writes still require FileChannel.force(true); fsync errors remain
+fatal. This journal does not fsync directories, so no macOS directory-fsync exception
+is suppressed and torn/corrupt replay remains fail-closed.
+
+The job defaults to `.lmaws-local/provision/host/`; override with
 `LMPROV_LEDGER_DIR`. Keep this directory for recovery. Bounds: 16 MiB per journal,
 256 KiB per line, bounded inventories/pagination and console output.
 

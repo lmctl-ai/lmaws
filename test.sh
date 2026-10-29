@@ -63,6 +63,7 @@ if [[ "${LMAWS_NATIVE:-0}" == 1 ]]; then
  timeout 300 python3 scripts/test-cli.py "$exe"
  timeout 300 python3 scripts/test-fake.py "$exe"
  timeout 240 python3 scripts/test-iam-role.py "$exe"
+ timeout 300 python3 scripts/test-provision-transport.py
  timeout 180 python3 scripts/test-web-native.py --host "$exe"
  timeout 180 python3 scripts/test-spend-api.py "$exe"
  timeout 300 python3 scripts/test-spend-transport.py "$exe"
