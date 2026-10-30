@@ -34,6 +34,7 @@ timeout 300 python3 scripts/test-cli.py "$jvm"
 timeout 300 python3 scripts/test-fake.py "$jvm"
 timeout 180 python3 scripts/test-credential-process.py
 timeout 240 python3 scripts/test-iam-role.py "$jvm"
+timeout 180 python3 scripts/test-ebs-root-resize.py
 timeout 180 python3 scripts/test-web-fake.py
 timeout 180 python3 scripts/test-web-http.py
 timeout 180 python3 scripts/test-web-ec2.py

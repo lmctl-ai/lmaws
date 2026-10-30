@@ -1,5 +1,9 @@
 # Which AWS profile do I need?
 
+For human-operated online root disk expansion, see
+[guarded EBS root growth](EBS_ROOT_RESIZE.md). This is a separate, explicit admin
+exception; normal resource-mutation and IAM-policy guardrails are unchanged.
+
 lmaws never uses the aws CLI and never picks credentials from the environment for writes: the
 profile name decides what a run may do. Every recipe defaults to synthetic data, so the first row
 needs no AWS account at all.

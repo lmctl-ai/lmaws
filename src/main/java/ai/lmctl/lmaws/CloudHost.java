@@ -255,6 +255,7 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","spot_prices",List.of("string","int"),"Rows",(c,s,a)->rows(compute(s).spotPrices(text(a[0]),a[1].asInt()),c));
         r.method("Cloud","public_parameter",List.of("string"),"string",(c,s,a)->Value.ofString(compute(s).publicParameter(text(a[0]))));
         r.method("Cloud","instance_status",List.of("string"),"Row",(c,s,a)->one(compute(s).status(text(a[0])),c));
+        r.method("Cloud","ebs_root_resize",List.of("string","bool","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.ebsRootResize(text(a[0]),a[1].asBool(),a[2].asBool())));
         r.method("Cloud","spot_run",List.of(),"Spot",(c,s,a)->{
             Session v=session(s);
             if(!spots.isEmpty())throw VmException.host("spot_run: one spot sandbox per host program");

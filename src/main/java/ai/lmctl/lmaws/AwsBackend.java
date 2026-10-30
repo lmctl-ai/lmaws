@@ -1062,6 +1062,9 @@ public final class AwsBackend implements AutoCloseable {
     private CloudWatchLogsClient logs() { return logs == null ? logs = register(base(CloudWatchLogsClient.builder()).build()) : logs; }
     private CloudWatchClient cloudwatch() { return cloudwatch == null ? cloudwatch = register(base(CloudWatchClient.builder()).build()) : cloudwatch; }
     private Ec2Client ec2() { return ec2 == null ? ec2 = register(base(Ec2Client.builder()).build()) : ec2; }
+    Map<String,String> ebsRootResize(String spec, boolean apply, boolean human) { return new EbsResize(this).resize(spec,apply,human); }
+    String accountIdForResize() { return accountId(); }
+    Ec2Client ec2ClientForResize() { return ec2(); }
     private LambdaClient lambda() { return lambda == null ? lambda = register(base(LambdaClient.builder()).build()) : lambda; }
     private EventBridgeClient events() { return events == null ? events = register(base(EventBridgeClient.builder()).build()) : events; }
     private Route53Client route53() { return route53 == null ? route53 = register(base(Route53Client.builder()).build()) : route53; }

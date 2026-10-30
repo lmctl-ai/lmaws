@@ -31,7 +31,11 @@ public final class Main {
            within STS's 2048-character compact limit; lmaws* modes resolve the source account
            and use its lmaws_session ARN. All modes use awsspot-local-<mode>, 3600s, and a cache
            scoped to the source/policy inputs; they create no resources or permissions.
-        Every run is cleaned up on success and failure. --sweep is always read-only.
+        3. ebs_root_resize grows an explicitly identified existing gp3 root volume.
+           Apply requires admin/grant/live/apply plus human=true; never stops or replaces a host.
+           Default can inspect with live=true; admin inspection also requires human=true/grant.
+           Persistent EBS expansion is not automatically undone or covered by request-cost caps.
+        Run-owned test resources are cleaned up on success and failure. --sweep is always read-only.
         LMAWS_MAX_MEMORY_MB: positive whole MiB, default 4096; bounded heap and VM data.
         LMAWS_MAX_COST_USD: default 0.05, hard whole-run ceiling 0.25.
         aws.example(name) selects local profile live mode only when LMAWS_LIVE=1;
