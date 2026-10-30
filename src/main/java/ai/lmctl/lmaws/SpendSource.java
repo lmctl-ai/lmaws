@@ -16,6 +16,7 @@ public interface SpendSource extends AutoCloseable {
     List<Map<String,String>> metrics(List<Metric> queries,Instant start,Instant end);
     /** hourly_usd + basis/status; unknown prices must not silently become zero. */
     Map<String,String> ec2Price(String region,String instanceType,String platform);
+    default List<Map<String,String>> savingsPlanRates(String planId) { throw new Unavailable("savings_plan_rates","UNAVAILABLE"); }
     default Map<String,Object> diagnostics(){return Map.of();}
     @Override void close();
     final class Unavailable extends RuntimeException {

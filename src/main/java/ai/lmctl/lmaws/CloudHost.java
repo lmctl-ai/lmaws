@@ -82,6 +82,15 @@ public final class CloudHost implements AutoCloseable {
         Registry r=new Registry();r.context("aws","Cloud");
         r.function("check",List.of("bool"),"void",(c,s,a)->{if(!a[0].asBool())throw VmException.host("check failed");return Value.none();});
         r.method("Cloud","example",List.of("string"),"Cloud",(c,s,a)->Value.object("Cloud",example(text(a[0]))));
+        r.method("Cloud","fleet_costs",List.of("string","string","string"),"string",(c,s,a)->{
+            Session selected=session(s);
+            if(!AwsBackend.activeProfile().equals("default"))throw VmException.host("fleet costs require AWS_PROFILE=default");
+            try(SpendSource source=selected.backend.isDemo()?new FleetCostsDemo(text(a[0])):new SpendAwsSource(selected.cost)){
+                String report=FleetCosts.collect(source,text(a[0]),text(a[1]),text(a[2]),selected.cost,selected.backend.isDemo());
+                c.charge(256L+report.getBytes(java.nio.charset.StandardCharsets.UTF_8).length*2L);
+                return Value.ofString(report);
+            }
+        });
         r.method("Cloud","find_prefix",List.of("string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.findPrefix(text(a[0])),c)));
         r.method("Cloud","s3_bucket_create_exact",List.of("string","string"),"string",(c,s,a)->Value.ofString(session(s).backend.s3Objects().create(text(a[0]),text(a[1]))));
         r.method("Cloud","s3_bucket_attach",List.of("string","string"),"string",(c,s,a)->Value.ofString(session(s).backend.s3Objects().attach(text(a[0]),text(a[1]))));

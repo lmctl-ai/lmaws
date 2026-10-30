@@ -27,6 +27,7 @@ public final class SpendSourceChecks {
             if(op.isEmpty()&&body.contains("Action=")){for(String part:body.split("&"))if(part.startsWith("Action="))op=URLDecoder.decode(part.substring(7),StandardCharsets.UTF_8);}
             if(op.isEmpty()&&exchange.getRequestURI().getPath().contains("/operation/"))op=exchange.getRequestURI().getPath().substring(exchange.getRequestURI().getPath().lastIndexOf('/')+1);
             if(op.isEmpty()&&exchange.getRequestURI().getPath().contains("functions"))op="ListFunctions";
+            if(op.isEmpty()&&exchange.getRequestURI().getPath().toLowerCase(Locale.ROOT).contains("describesavingsplanrates"))op="DescribeSavingsPlanRates";
             if(op.isEmpty()&&exchange.getRequestURI().getPath().toLowerCase(Locale.ROOT).contains("describesavingsplans"))op="DescribeSavingsPlans";
             operations.add(op);bodies.add(body);int code=200;String response;
             if(mode[0].equals("denied")&&op.startsWith("GetCost")){code=400;response="{\"__type\":\"AccessDeniedException\",\"message\":\"synthetic denied\"}";}
@@ -47,6 +48,12 @@ public final class SpendSourceChecks {
                 if(!report.section("ri_utilization").getFirst().get("unused_amortized_usd").equals("20"))throw new AssertionError("RI unused cost must not use total amortized fee");assertions++;
                 if(!report.section("lambda_spend").getFirst().get("metric_status").equals("complete")||!report.section("dynamodb_spend").getFirst().get("metric_status").equals("complete"))throw new AssertionError("CBOR metric results must actually join workloads");assertions++;
                 if(!report.section("ec2_resources").getFirst().get("hourly_usd").equals("0.0104"))throw new AssertionError("parsed on-demand catalog price");assertions++;
+                var ec2Rows=source.inventory("ec2");
+                if(!ec2Rows.getFirst().containsKey("tag_project")||!ec2Rows.getFirst().containsKey("tag_role")||!ec2Rows.getFirst().containsKey("name")||!ec2Rows.getFirst().containsKey("launch_time"))throw new AssertionError("EC2 tag/launch fields missing");assertions++;
+                var plans=source.inventory("savings_plans");
+                if(!plans.getFirst().containsKey("region")||!plans.getFirst().containsKey("ec2_instance_family")||!plans.getFirst().containsKey("payment_option")||!plans.getFirst().containsKey("upfront_payment_usd")||!plans.getFirst().containsKey("recurring_payment_usd")||!plans.getFirst().containsKey("currency"))throw new AssertionError("Savings Plan detail fields missing");assertions++;
+                var rates=source.savingsPlanRates("11111111-1111-1111-1111-111111111111");
+                if(rates.size()!=2||!"t4g.xlarge".equals(rates.getFirst().get("instance_type"))||!"us-east-1".equals(rates.getFirst().get("region"))||!"Linux/UNIX".equals(rates.getFirst().get("operating_system"))||!"shared".equals(rates.getFirst().get("tenancy")))throw new AssertionError("Savings Plan rate properties missing");assertions++;
                 if(bodies.stream().noneMatch(x->x.contains("Owner.1=self")))throw new AssertionError("snapshots must filter owner self");assertions++;
                 long old=ledger.ceRequests();source.costs(end.minusDays(30),end,"DAILY","SERVICE","",false);if(ledger.ceRequests()!=old)throw new AssertionError("CE cache charged twice");assertions++;
             }
@@ -110,7 +117,11 @@ public final class SpendSourceChecks {
         if(op.equals("GetReservationUtilization"))return "{\"Total\":{\"UtilizationPercentage\":\"80\",\"PurchasedHours\":\"100\",\"TotalActualHours\":\"80\",\"UnusedHours\":\"20\",\"RICostForUnusedHours\":\"20\",\"TotalAmortizedFee\":\"100\"}}";
         if(op.equals("GetReservationCoverage"))return "{\"CoveragesByTime\":[{\"Total\":{\"CoverageHours\":{\"CoverageHoursPercentage\":\"62.5\",\"OnDemandHours\":\"30\",\"ReservedHours\":\"50\",\"TotalRunningHours\":\"80\"}}}]}";
         if(op.equals("GetReservationPurchaseRecommendation"))return "{\"Recommendations\":[{\"RecommendationSummary\":{\"TotalEstimatedMonthlySavingsAmount\":\"7.50\",\"TotalEstimatedMonthlySavingsPercentage\":\"10\",\"CurrencyCode\":\"USD\"}}]}";
-        if(op.equals("DescribeSavingsPlans"))return mode.equals("empty")?"{\"savingsPlans\":[]}":"{\"savingsPlans\":[{\"savingsPlanId\":\"synthetic-plan\",\"state\":\"active\",\"savingsPlanType\":\"Compute\",\"start\":\"2026-01-01\",\"end\":\"2027-01-01\",\"commitment\":\"1.0\"}]}";
+        if(op.equals("DescribeSavingsPlans"))return mode.equals("empty")?"{\"savingsPlans\":[]}":"{\"savingsPlans\":[{\"savingsPlanId\":\"synthetic-plan\",\"state\":\"active\",\"savingsPlanType\":\"EC2Instance\",\"start\":\"2026-01-01\",\"end\":\"2027-01-01\",\"commitment\":\"1.0\",\"region\":\"us-east-1\",\"ec2InstanceFamily\":\"t4g\",\"paymentOption\":\"All Upfront\",\"upfrontPaymentAmount\":\"1378.82\",\"recurringPaymentAmount\":\"0\",\"currency\":\"USD\",\"productTypes\":[\"EC2\"]}]}";
+        if(op.equals("DescribeSavingsPlanRates")){
+            String rate="{\"rate\":\"0.0393\",\"currency\":\"USD\",\"unit\":\"Hrs\",\"productType\":\"EC2\",\"serviceCode\":\"AmazonEC2\",\"properties\":[{\"name\":\"instanceType\",\"value\":\"t4g.xlarge\"},{\"name\":\"region\",\"value\":\"us-east-1\"},{\"name\":\"productDescription\",\"value\":\"Linux/UNIX\"},{\"name\":\"tenancy\",\"value\":\"shared\"}]}";
+            return "{\"savingsPlanId\":\"11111111-1111-1111-1111-111111111111\",\"searchResults\":["+rate+"]"+(body.contains("rates-next")?"":" ,\"nextToken\":\"rates-next\"")+"}";
+        }
         if(op.equals("GetProducts")){String price=Jsons.encodeRaw(Map.of("terms",Map.of("OnDemand",Map.of("term",Map.of("priceDimensions",Map.of("dimension",Map.of("unit","Hrs","pricePerUnit",Map.of("USD","0.0104"))))))));return Jsons.encodeRaw(Map.of("PriceList",List.of(price)));}
         if(op.equals("ListFunctions"))return "{\"Functions\":[{\"FunctionName\":\"synthetic-function\",\"FunctionArn\":\"arn:aws:lambda:us-east-1:123456789012:function:synthetic-function\",\"MemorySize\":512,\"Architectures\":[\"x86_64\"]}]}";
         if(op.equals("ListTables"))return "{\"TableNames\":[\"synthetic-table\"]}";
@@ -125,7 +136,7 @@ public final class SpendSourceChecks {
             return Jsons.encodeRaw(response);
         }
         String payload=switch(op){
-            case "DescribeInstances"->"<reservationSet><item><instancesSet><item><instanceId>i-synthetic</instanceId><instanceType>t3.micro</instanceType><instanceState><name>running</name><code>16</code></instanceState><platformDetails>Linux/UNIX</platformDetails></item></instancesSet></item></reservationSet>";
+            case "DescribeInstances"->"<reservationSet><item><instancesSet><item><instanceId>i-synthetic</instanceId><instanceType>t3.micro</instanceType><instanceState><name>running</name><code>16</code></instanceState><platformDetails>Linux/UNIX</platformDetails><launchTime>2026-10-01T00:00:00Z</launchTime><tagSet><item><key>Project</key><value>awsspot</value></item><item><key>Role</key><value>current</value></item><item><key>Name</key><value>t4g1</value></item></tagSet></item></instancesSet></item></reservationSet>";
             case "DescribeNetworkInterfaces"->"<networkInterfaceSet><item><networkInterfaceId>eni-synthetic</networkInterfaceId><association><publicIp>198.51.100.9</publicIp></association><interfaceType>interface</interfaceType></item></networkInterfaceSet>";
             case "DescribeAddresses"->"<addressesSet><item><allocationId>eipalloc-synthetic</allocationId><publicIp>198.51.100.7</publicIp></item></addressesSet>";
             case "DescribeVolumes"->"<volumeSet><item><volumeId>vol-synthetic</volumeId><size>40</size><volumeType>gp2</volumeType><status>available</status><iops>120</iops></item></volumeSet>";

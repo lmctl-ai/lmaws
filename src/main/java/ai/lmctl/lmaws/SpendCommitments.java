@@ -55,7 +55,7 @@ final class SpendCommitments {
     static List<Map<String,String>> plans(SavingsplansClient plans,CostLedger ledger){
         List<Map<String,String>> out=new ArrayList<>();Set<String> seen=new HashSet<>();String token=null;
         do{if(ledger!=null)ledger.request("savingsplans","DescribeSavingsPlans");var response=plans.describeSavingsPlans(DescribeSavingsPlansRequest.builder().nextToken(token).build());
-            for(var value:response.savingsPlans())out.add(row("plan_id",value.savingsPlanId(),"start",value.start(),"end",value.end(),"state",value.stateAsString(),"plan_type",value.savingsPlanTypeAsString(),"commitment_hourly",value.commitment()));
+            for(var value:response.savingsPlans())out.add(row("plan_id",value.savingsPlanId(),"start",value.start(),"end",value.end(),"state",value.stateAsString(),"plan_type",value.savingsPlanTypeAsString(),"commitment_hourly",value.commitment(),"region",value.region(),"ec2_instance_family",value.ec2InstanceFamily(),"payment_option",value.paymentOptionAsString(),"upfront_payment_usd",value.upfrontPaymentAmount(),"recurring_payment_usd",value.recurringPaymentAmount(),"currency",value.currencyAsString(),"product_types",String.join(",",value.productTypesAsStrings())));
             token=next(response.nextToken(),seen);if(out.size()>10000)throw new SpendSource.Unavailable("savings_plans","RESULT_LIMIT_EXCEEDED");
         }while(token!=null);return out;
     }

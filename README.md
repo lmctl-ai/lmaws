@@ -17,6 +17,11 @@ Then the same recipe against your account, read-only: `lmctl https://raw.githubu
 
 ## Detailed spend report — read-only
 
+For a tag-selected EC2 fleet with compute, gp3 disks, public IPv4, charged CPU
+surplus and Savings Plan amortization, see the
+[read-only fleet cost API](docs/FLEET_COSTS.md). It keeps current monthly
+references separate from resource-level billing and account-wide cross-checks.
+
 The new report covers EC2, Savings Plans/Reserved Instances, public IPv4, EBS/snapshots, transfer, Lambda and DynamoDB. **Every committed picture below uses synthetic fixtures.** Normal runs contact no AWS endpoint; live mode is a separate explicit opt-in using `AWS_PROFILE=default`. Real CSV/JSON/SVG/PNG output is confined to ignored `.lmaws-local/spend/` and must never be committed.
 
 <img src="docs/images/spend_detail.png" width="900" alt="Synthetic stacked daily AWS spend by service">
