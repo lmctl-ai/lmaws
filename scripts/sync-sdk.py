@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch the released Java SDK by immutable commit and verify its archive digest."""
+"""Fetch the pinned Java SDK by immutable commit and verify its archive digest."""
 import argparse
 import hashlib
 import io

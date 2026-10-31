@@ -33,6 +33,6 @@ else
     [ -n "$candidate" ] && "$candidate" "$WORK/probe.lms" "$WORK/probe.dslb" 2>&1 | head -10 >&2
     ls -la "$WORK" >&2
   fi
-  echo "error: no implicit-std lmcode v6 compiler found; install @lmctl-ai/lmctl@0.2.420 so lmscript is on PATH, or set LMSCRIPT_BIN" >&2
+  echo "error: no implicit-std lmcode v6 compiler found; build mono main with the host-flag cutover so lmscript is on PATH, or set LMSCRIPT_BIN" >&2
   exit 2
 fi
