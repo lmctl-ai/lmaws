@@ -28,5 +28,5 @@ plot.png(${"images/"+name+".png"},900,560);
 plot.cmd("set datafile separator ','; set title 'Synthetic S3 object lifecycle'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.65; set ylabel 'Illustrative stages (not requests)'; set yrange [0:2]; set ytics 1; set grid ytics; set xtics rotate by -30; set bmargin 6");
 plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});plot.close();
 end _dsl_
-  let bytecode=temp_file();savedsl(chart,bytecode);let r=system(concat(dsl_cli(chart),["--dsl",bytecode]),120000);remove_file(bytecode);assert(r.code==0);
+  let bytecode=temp_file();savedsl(chart,bytecode);let r=system(concat(dsl_cli(chart),["--lmcode",bytecode]),120000);remove_file(bytecode);assert(r.code==0);
 }

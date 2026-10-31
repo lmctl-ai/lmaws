@@ -10,7 +10,7 @@ if (cloud.is_demo()) { check(roles.len() == 3); }
 file_write("data/read_only_audit.count", "identity=" + str(identity.len()) + ", secrets=" + str(secrets.len()) + ", roles=" + str(roles.len()));
 end _dsl_
 savedsl(aws, "read_only_audit-aws.dslb");
-r = system ${dsl_cli(aws)} --dsl "read_only_audit-aws.dslb";
+r = system ${dsl_cli(aws)} --lmcode "read_only_audit-aws.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 let cost_line = "";
@@ -29,7 +29,7 @@ scene.line(320.0, 264.0, 580.0, 264.0, "#f5c16c", 3.0).set_attr("marker-end", "a
 scene.render_png("images/read_only_audit.png", 900, 560, 1);
 end _dsl_
 savedsl(draw, "read_only_audit-draw.dslb");
-r = system ${dsl_cli(draw)} --dsl "read_only_audit-draw.dslb";
+r = system ${dsl_cli(draw)} --lmcode "read_only_audit-draw.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/read_only_audit.png");

@@ -1,7 +1,7 @@
 # Release proof for a published lmaws release: python3 scripts/release-proof.py vX.Y.Z (repo root, tag checked out
 # and built with mvn -q package). Downloads the release assets with gh, checks SHA256SUMS and the binaries (Windows may
 # be missing only when the release notes say so), checks Linux linkage, runs the linux-x64 binary offline (--version,
-# --self-test, --dsl-signatures --without-std equal to the local build of the same tag) and writes proof.json.
+# --self-test, --lmcode-signatures --without-std equal to the local build of the same tag) and writes proof.json.
 from pathlib import Path
 import glob,hashlib,json,os,subprocess,sys,tempfile
 tag=sys.argv[1] if len(sys.argv)>1 else ''
@@ -26,10 +26,10 @@ env={**os.environ,'LMAWS_LIVE':'0','LMAWS_SPEND_LIVE':'0','AWS_PROFILE':'default
 assert subprocess.check_output([str(binary),'--version'],env=env,text=True,timeout=30).strip()=='lmaws '+version
 checks=subprocess.check_output([str(binary),'--self-test'],env=env,text=True,timeout=300)
 assert checks.count('PASS')>=5,checks  # check_output already required exit 0
-signatures=subprocess.check_output([str(binary),'--dsl-signatures','--without-std'],env=env,text=True,timeout=30)
+signatures=subprocess.check_output([str(binary),'--lmcode-signatures','--without-std'],env=env,text=True,timeout=30)
 jar=f'target/lmaws-{version}.jar'
 assert os.path.exists(jar),'build the tag locally first (mvn -q package) so signatures can be compared'
-local=subprocess.check_output(['java','-cp',jar,'ai.lmctl.lmaws.Main','--dsl-signatures','--without-std'],env=env,text=True,timeout=60)
+local=subprocess.check_output(['java','-cp',jar,'ai.lmctl.lmaws.Main','--lmcode-signatures','--without-std'],env=env,text=True,timeout=60)
 assert signatures==local,'released signatures differ from the local build of '+tag
 for signature in ['method Cloud.iam_role_get(string) -> Row','method Cloud.iam_role_put(string, string, bool) -> Row','method Cloud.iam_role_delete(string, bool) -> Row','method Lambda.wait_active(int) -> Row']:
  assert signature in signatures,signature

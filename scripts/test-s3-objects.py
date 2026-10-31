@@ -94,7 +94,7 @@ class Handler(BaseHTTPRequestHandler):
 class Harness:
  def __init__(self,mode='ok'):
   self.tmp=tempfile.TemporaryDirectory(prefix='s3-objects-');self.work=pathlib.Path(self.tmp.name);self.model=Model(mode);self.server=ThreadingHTTPServer(('127.0.0.1',0),Handler);self.server.model=self.model;threading.Thread(target=self.server.serve_forever,daemon=True).start();self.n=0
-  self.schema=self.work/'schema.json';self.schema.write_text(subprocess.check_output(['java','-jar',str(JAR),'--dsl-schema','--json'],text=True));self.payload=self.work/'payload.bin';self.payload.write_bytes(b'hello object')
+  self.schema=self.work/'schema.json';self.schema.write_text(subprocess.check_output(['java','-jar',str(JAR),'--lmcode-schema','--json'],text=True));self.payload=self.work/'payload.bin';self.payload.write_bytes(b'hello object')
  def __enter__(self):return self
  def __exit__(self,*args):self.model.release.set();self.server.shutdown();self.server.server_close();self.tmp.cleanup()
  def output(self,name,expr,rows=False):return 'file_write('+json.dumps(str(self.work/(name+'.json')))+','+expr+('.json()' if rows else '')+');\n'
@@ -103,7 +103,7 @@ class Harness:
   self.n+=1;source=self.work/f'code{self.n}.lms';bc=self.work/f'code{self.n}.dslb';source.write_text('let p=_dsl_ schema='+json.dumps(str(self.schema))+';\n'+body+'\nend _dsl_\nsavedsl(p,'+json.dumps(str(bc))+');\n')
   env=dict(os.environ,AWS_PROFILE=profile,AWS_DEFAULT_PROFILE=profile,AWS_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_LIVE='1',LMAWS_ENDPOINT=f'http://127.0.0.1:{self.server.server_port}',LMAWS_LEDGER_DIR=str(self.work/'ledgers'),LMAWS_MAX_COST_USD=cap,CI='true')
   compiled=subprocess.run(['lmscript',str(source)],env=env,cwd=self.work,capture_output=True,text=True,timeout=30);assert compiled.returncode==0,compiled.stderr
-  command=['java','-jar',str(JAR),'--dsl',str(bc)]
+  command=['java','-jar',str(JAR),'--lmcode',str(bc)]
   if background:return subprocess.Popen(command,env=env,cwd=self.work,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
   result=subprocess.run(command,env=env,cwd=self.work,capture_output=True,text=True,timeout=60);assert (result.returncode==0)==ok,result.stdout+result.stderr;return result
  def create(self):return 'let c=aws.region("us-east-1");'+self.output('bucket',f'c.s3_bucket_create_exact("{BUCKET}","{RUN}")')

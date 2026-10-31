@@ -71,14 +71,14 @@ public final class SpendSourceChecks {
             try(var source=new SpendAwsSource(cap,endpoint,credentials)){source.costs(end.minusDays(1),end,"DAILY","SERVICE","",false);int before=operations.size();boolean refused=false;try{source.costs(end.minusDays(2),end,"DAILY","SERVICE","",false);}catch(CostLedger.BudgetExceeded e){refused=true;}if(!refused||before!=operations.size())throw new AssertionError("cap must refuse before HTTP");assertions++;}
             if(nativeBinary!=null){
                 mode[0]="normal";Path nativeDir=Files.createDirectories(dir.resolve("native"));Path schema=nativeDir.resolve("schema.json"),program=nativeDir.resolve("run.lms"),bytecode=nativeDir.resolve("run.dslb");
-                ProcessBuilder schemaCommand=new ProcessBuilder(nativeBinary,"--dsl-schema","--json").redirectOutput(schema.toFile()).redirectError(nativeDir.resolve("schema.log").toFile());
+                ProcessBuilder schemaCommand=new ProcessBuilder(nativeBinary,"--lmcode-schema","--json").redirectOutput(schema.toFile()).redirectError(nativeDir.resolve("schema.log").toFile());
                 waitFor(schemaCommand.start(),60,"native schema");
                 String source="p = _lmcode_ schema="+Jsons.encode(schema.toString().replace('\\','/'))+";\nlet spend = aws.spend(\"all\",30,10,0.25);\nspend.write(\"native-report\");\nend _lmcode_\nsavedsl(p,"+Jsons.encode(bytecode.toString().replace('\\','/'))+");\n";
                 Files.writeString(program,source);
                 List<String> compile=new ArrayList<>();if(System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win"))compile.addAll(List.of("cmd.exe","/c"));compile.add(System.getenv().getOrDefault("LMSCRIPT_BIN","lmscript"));compile.add(program.toString());
                 ProcessBuilder compiler=new ProcessBuilder(compile).directory(nativeDir.toFile()).redirectOutput(nativeDir.resolve("compile.log").toFile()).redirectErrorStream(true);
                 compiler.environment().put("LMAWS_SPEND_LIVE","0");compiler.environment().put("LMAWS_LIVE","0");waitFor(compiler.start(),90,"native fixture compile");
-                ProcessBuilder run=new ProcessBuilder(nativeBinary,"--dsl",bytecode.toString()).directory(nativeDir.toFile()).redirectOutput(nativeDir.resolve("run.log").toFile()).redirectErrorStream(true);
+                ProcessBuilder run=new ProcessBuilder(nativeBinary,"--lmcode",bytecode.toString()).directory(nativeDir.toFile()).redirectOutput(nativeDir.resolve("run.log").toFile()).redirectErrorStream(true);
                 run.environment().putAll(Map.of("AWS_PROFILE","default","AWS_DEFAULT_PROFILE","default","AWS_REGION","us-east-1","LMAWS_SPEND_REGIONS","us-east-1","LMAWS_ENDPOINT",endpoint.toString(),"LMAWS_SPEND_LIVE","1","LMAWS_LIVE","1","CI","true"));
                 waitFor(run.start(),180,"native SDK fixture");
                 var result=software.amazon.awssdk.protocols.jsoncore.JsonNodeParser.create().parse(Files.readString(nativeDir.resolve("native-report/report.json")));

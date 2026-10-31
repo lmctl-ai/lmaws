@@ -5,7 +5,7 @@ Topics: all, ec2_spend, savings_plans, eip_audit, ebs_audit, bandwidth,
 lambda_spend and dynamodb_spend. One report is the sole cost session per host
 program. Default examples use deterministic fixtures, never credentials.
 
-The Spend API contributes nine host signatures. Use `--dsl-signatures --without-std`
+The Spend API contributes nine host signatures. Use `--lmcode-signatures --without-std`
 for the current full host count; release proofs pin the tested snapshot count.
 AWS SDK remains 2.57.3; Cost Explorer, Savings Plans and Pricing add three JARs
 to the 57 pinned runtime artifacts. New SDK reads use URLConnection, no retries,

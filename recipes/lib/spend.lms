@@ -64,7 +64,7 @@ plot.cmd(${"plot '" + chart + "' using 2:xtic(1) lc rgb '#5db7d1'"});
 plot.close();
 end _dsl_
   let path = temp_file(); savedsl(plot, path);
-  let r = system(concat(dsl_cli(plot), ["--dsl", path]), {timeoutMs:120000});
+  let r = system(concat(dsl_cli(plot), ["--lmcode", path]), {timeoutMs:120000});
   remove_file(path); assert(r.code == 0);
   println("images/" + name + ".png");
   return "images/" + name + ".png";

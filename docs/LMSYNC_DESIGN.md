@@ -1391,7 +1391,7 @@ let state_program = _lmcode_ cli="lmfiles";
   # future local scan/query API; user-written if/loop chooses instructions
 end _lmcode_
 savedsl(state_program, ".lmfiles-local/state.dslb");
-let a = system(concat(dsl_cli(state_program), ["--dsl", ".lmfiles-local/state.dslb"]), 120000);
+let a = system(concat(dsl_cli(state_program), ["--lmcode", ".lmfiles-local/state.dslb"]), 120000);
 assert(a.code == 0);
 
 let transfer_program = _lmcode_ cli="lmcurl";

@@ -84,7 +84,7 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertTrue(all(row["kind"] == "queue" for row in rows))
         self.assertFalse(list(output.parent.glob("inventory.roles.raw.json")))
         self.assertIn("estimated cost: $", result.stdout)
-        self.assertNotIn("--dsl", result.stdout)
+        self.assertNotIn("--lmcode", result.stdout)
 
     def test_two_partial_inventory_calls_restore_environment(self) -> None:
         entry = self.work / "compose.lms"
@@ -160,7 +160,7 @@ class RecipeExecutionTests(unittest.TestCase):
         # The guard runs before recipe_run, so this cannot invoke a host or create a ledger.
         live = self.run_script(ROOT / "recipes" / "lifecycle.lms", "--task", "queue", "--live", "--profile", "lmaws", "--output", str(self.work / "live"))
         self.assertNotEqual(live.returncode, 0)
-        self.assertNotIn("--dsl", live.stdout + live.stderr)
+        self.assertNotIn("--lmcode", live.stdout + live.stderr)
         self.assertFalse((self.work / "live.json").exists())
 
     def test_shared_live_budget_refuses_second_program_without_cloud_calls(self) -> None:

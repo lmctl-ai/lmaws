@@ -64,6 +64,6 @@ plot.png(${images+"/"+name+"_table.png"},1300,560);
 plot.cmd(${"set termoption noenhanced; set title '"+prefix+" resource names and recovery status'; unset xtics; unset ytics; unset grid; set xrange [0:1]; set yrange [0:13]; unset border"});
 plot.cmd(${"plot '"+root+"/"+name+"_table.csv' every ::1 using 1:2:3 with labels left font 'Monospace,10'"});plot.close();
 end _dsl_
-  let code=temp_file();savedsl(plot,code);let r=system(concat(dsl_cli(plot),["--dsl",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
+  let code=temp_file();savedsl(plot,code);let r=system(concat(dsl_cli(plot),["--lmcode",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
   println(images+"/"+name+".png");println(images+"/"+name+"_age.png");println(images+"/"+name+"_table.png");
 }

@@ -17,8 +17,8 @@ with tempfile.TemporaryDirectory(prefix='lmaws-serverless-error-') as directory:
     script=work/'failure.lms';bytecode=work/'failure.dslb';schema=work/'schema.json'
     host=pathlib.Path(env.get('LMAWS_TEST_HOST',str(root/'target/jvm-bin/lmaws'))).resolve()
     runner=['cmd.exe','/c',str(host)] if host.suffix.lower()=='.cmd' else [str(host)]
-    schema.write_bytes(subprocess.check_output(runner+['--dsl-schema','--json'],env=env,timeout=30))
-    execute=runner+['--dry-run','--dsl',bytecode.as_posix()]
+    schema.write_bytes(subprocess.check_output(runner+['--lmcode-schema','--json'],env=env,timeout=30))
+    execute=runner+['--dry-run','--lmcode',bytecode.as_posix()]
     script.write_text('let p=_dsl_ schema='+json.dumps(schema.as_posix())+';\nlet run=aws.demo().serverless_stack("cafe05","example.com",'+json.dumps(state.as_posix())+');let made=run.step("table","{}");check(false);\nend _dsl_\nsavedsl(p,'+json.dumps(bytecode.as_posix())+');\nlet result=system('+json.dumps(execute)+',60000);assert(result.code!=0);\n',encoding='utf-8')
     compiler=shutil.which('lmscript.cmd' if os.name=='nt' else 'lmscript')
     compiler_args=['cmd.exe','/c',compiler] if os.name=='nt' else [compiler]

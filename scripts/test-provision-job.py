@@ -93,7 +93,7 @@ def main() -> int:
 
         # Simulate an accepted launch whose created receipt never reached lmfiles.
         orphan=work/"accepted-before-record.lms"
-        orphan.write_text('p=_lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";\nlet cloud=aws.demo();cloud.ec2_provision_run("{\\\"lmprov_id\\\":\\\"resume-c\\\",\\\"owner\\\":\\\"lmctl\\\",\\\"purpose\\\":\\\"on-demand-provisioning\\\"}");\nend _lmcode_\nsavedsl(p,"accepted.dslb");let r=system(concat(dsl_cli(p),["--dsl","accepted.dslb"]),120000);assert(r.code==0);\n')
+        orphan.write_text('p=_lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";\nlet cloud=aws.demo();cloud.ec2_provision_run("{\\\"lmprov_id\\\":\\\"resume-c\\\",\\\"owner\\\":\\\"lmctl\\\",\\\"purpose\\\":\\\"on-demand-provisioning\\\"}");\nend _lmcode_\nsavedsl(p,"accepted.dslb");let r=system(concat(dsl_cli(p),["--lmcode","accepted.dslb"]),120000);assert(r.code==0);\n')
         direct_env=dict(env,LMAWS_LIVE="0",LMPROV_LEDGER_DIR=str(work/".lmaws-local/provision/host"))
         accepted=run_lmctl(work,orphan,env=direct_env);check(accepted.returncode==0,accepted.stdout+accepted.stderr)
         invoke("create","resume-c")
@@ -128,7 +128,7 @@ def main() -> int:
         check(bad.returncode != 0, "missing config was silently accepted")
         # A demo caller cannot overwrite a record belonging to AWS mode.
         switch=work/"switch-mode.lms"
-        switch.write_text('p=_lmcode_ cli="lmfiles" install="github:lmctl-ai/lmfiles@latest";\nlet db=registry.open(".lmaws-local/provision/run-b.mv","provision","{}");db.item_upsert("{\\\"id\\\":\\\"run-b\\\"}","{\\\"mode\\\":\\\"aws\\\"}");db.close();\nend _lmcode_\nsavedsl(p,"switch.dslb");let r=system(concat(dsl_cli(p),["--dsl","switch.dslb"]),120000);assert(r.code==0);\n')
+        switch.write_text('p=_lmcode_ cli="lmfiles" install="github:lmctl-ai/lmfiles@latest";\nlet db=registry.open(".lmaws-local/provision/run-b.mv","provision","{}");db.item_upsert("{\\\"id\\\":\\\"run-b\\\"}","{\\\"mode\\\":\\\"aws\\\"}");db.close();\nend _lmcode_\nsavedsl(p,"switch.dslb");let r=system(concat(dsl_cli(p),["--lmcode","switch.dslb"]),120000);assert(r.code==0);\n')
         changed=run_lmctl(work,switch,env=env);check(changed.returncode==0,changed.stdout+changed.stderr)
         mixed=run_lmctl(work,script,"errors","run-b",env=env)
         check(mixed.returncode!=0 and "mode mismatch" in mixed.stderr,"demo and AWS registry modes were mixed")

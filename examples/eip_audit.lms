@@ -10,7 +10,7 @@ let spend = aws.spend("eip_audit", ${days}, ${top_n}, str_to_float(str(${cap})))
 spend.write(${root} + "/eip_audit");
 end _dsl_
 savedsl(aws, "eip_audit-aws.dslb");
-r = system(concat(dsl_cli(aws), ["--dsl", "eip_audit-aws.dslb"]), {timeoutMs: 900000});
+r = system(concat(dsl_cli(aws), ["--lmcode", "eip_audit-aws.dslb"]), {timeoutMs: 900000});
 let spend_stdout = r.stdout;
 if (r.code != 0) { println(r.stdout); println(r.stderr); }
 if (r.code != 0) { println(r.stdout); println(r.stderr); }
@@ -22,7 +22,7 @@ plot.cmd("set datafile separator ','; set style data histograms; set style fill 
 plot.close();
 end _dsl_
 savedsl(plot, "eip_audit-plot.dslb");
-r = system ${dsl_cli(plot)} --dsl "eip_audit-plot.dslb";
+r = system ${dsl_cli(plot)} --lmcode "eip_audit-plot.dslb";
 if (r.code != 0) { println(r.stdout); println(r.stderr); }
 assert(r.code == 0);
 

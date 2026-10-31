@@ -10,7 +10,7 @@ public final class Main {
     public static final String VERSION="0.1.27";
     private static final String HELP="""
         lmaws 0.1.27 — AWS SDK for Java v2 scripting host
-        usage: lmaws [--dry-run] [--apply] --dsl FILE | --dsl-schema [--json] | --dsl-signatures [--without-std]
+        usage: lmaws [--dry-run] [--apply] --lmcode FILE | --lmcode-schema [--json] | --lmcode-signatures [--without-std]
                lmaws --credential-process <default|lmaws|lmaws-ec2|lmaws-web> [--source-profile NAME] [--policy-file PATH] [--no-cache]
                lmaws --version | --notices | --help | --self-test
                lmaws --sweep LEDGER_DIR --older-than-hours N
@@ -112,6 +112,8 @@ public final class Main {
             if(region!=null) System.setProperty("lmaws.region",region);
             args=remaining.toArray(new String[0]);
         }
+        // Reject unknown options before host construction, credentials, journals or SDK clients.
+        if(args.length==0 || !Set.of("--version","--help","--notices","--lmcode-schema","--lmcode-signatures","--sweep","--self-test","--lmcode").contains(args[0])) { System.err.print(HELP); return 2; }
         long bytes;try{bytes=budget();CloudHost.costCap();}catch(IllegalArgumentException e){System.err.println(e.getMessage());return 2;}
         if(Arrays.equals(args,new String[]{"--version"})){System.out.println("lmaws "+VERSION);return 0;}
         if(Arrays.equals(args,new String[]{"--help"})){System.out.print(HELP);return 0;}
@@ -121,12 +123,12 @@ public final class Main {
         Runtime.getRuntime().addShutdownHook(shutdown);
         try(host) {
             Registry registry=host.registry();byte[] schema=schema(registry);
-            if(args.length>=1&&args[0].equals("--dsl-schema")&&(args.length==1||args.length==2&&args[1].equals("--json"))){System.out.write(schema);return 0;}
-            if(Arrays.equals(args,new String[]{"--dsl-signatures","--without-std"})){registry.hostSignatures().forEach(System.out::println);return 0;}
-            if(Arrays.equals(args,new String[]{"--dsl-signatures"})){registry.signatures().forEach(System.out::println);return 0;}
+            if(args.length>=1&&args[0].equals("--lmcode-schema")&&(args.length==1||args.length==2&&args[1].equals("--json"))){System.out.write(schema);return 0;}
+            if(Arrays.equals(args,new String[]{"--lmcode-signatures","--without-std"})){registry.hostSignatures().forEach(System.out::println);return 0;}
+            if(Arrays.equals(args,new String[]{"--lmcode-signatures"})){registry.signatures().forEach(System.out::println);return 0;}
             if(args.length==4&&args[0].equals("--sweep")&&args[2].equals("--older-than-hours")){System.out.println(Jsons.encode(Sandbox.leftovers(Path.of(args[1]),Long.parseLong(args[3]))));return 0;}
             if(Arrays.equals(args,new String[]{"--self-test"})){SafetyChecks.run();AdversarialChecks.run();WebStackChecks.run();CostChecks.run();AccountSearchChecks.run();LedgerCleanupChecks.run();SpendChecks.run();FleetCostsChecks.main(new String[0]);IamPolicyChecks.run();IamRoleChecks.run();CredentialProcessChecks.run();PolicyBuilderChecks.run();FleetRoleChecks.run();PublishGrantProbeChecks.run();LambdaChecks.run();SelfTest.main(new String[0]);return 0;}
-            if(args.length!=2||!args[0].equals("--dsl")){System.err.print(HELP);return 2;}
+            if(args.length!=2||!args[0].equals("--lmcode")){System.err.print(HELP);return 2;}
             RuntimeBudget.configure(bytes,requested);
             Path input=Path.of(args[1]);if(Files.size(input)>Math.min(bytes/4,64L*1024*1024))throw VmException.run("LMAWS_MAX_MEMORY_MB bytecode input exceeds memory budget");
             io.lmctl.lmcode.Program program=io.lmctl.lmcode.Program.load(Files.readAllBytes(input),schema,registry);

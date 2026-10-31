@@ -35,7 +35,7 @@ def execute(source: str, *, code: int = 0, env: dict[str, str] | None = None,
         command = launcher_argv(HOST)
         if dry:
             command.append("--dry-run")
-        command += ["--dsl", str(bytecode)]
+        command += ["--lmcode", str(bytecode)]
         run_env = dict(BASE_ENV)
         run_env.update(env or {})
         result = subprocess.run(command, cwd=directory, env=run_env,

@@ -72,11 +72,11 @@ def main(host):
     argv=['cmd.exe','/c',str(host)] if host.suffix=='.cmd' else [str(host)]
     try:
         with tempfile.TemporaryDirectory(prefix='lmaws-prefix-fake-') as directory:
-            work=pathlib.Path(directory);schema=work/'schema.json';schema.write_bytes(subprocess.check_output(argv+['--dsl-schema'],env=env,timeout=30))
+            work=pathlib.Path(directory);schema=work/'schema.json';schema.write_bytes(subprocess.check_output(argv+['--lmcode-schema'],env=env,timeout=30))
             program=work/'prefix.lms';binary=work/'prefix.dslb';output=work/'rows.json'
             program.write_text('p=_dsl_ schema='+json.dumps(str(schema))+';\nlet cloud=aws.region("us-east-1"); let rows=cloud.find_prefix("lmaws"); file_write('+json.dumps(str(output))+',rows.json());\nend _dsl_\nsavedsl(p,'+json.dumps(str(binary))+');\n')
             p=subprocess.run([shutil.which('lmscript'),str(program)],cwd=work,env=env,capture_output=True,text=True,timeout=60);assert p.returncode==0,p.stderr
-            p=subprocess.run(argv+['--dsl',str(binary)],cwd=work,env=env,capture_output=True,text=True,timeout=180);assert p.returncode==0,(p.stderr,Fake.requests)
+            p=subprocess.run(argv+['--lmcode',str(binary)],cwd=work,env=env,capture_output=True,text=True,timeout=180);assert p.returncode==0,(p.stderr,Fake.requests)
             rows=json.loads(output.read_text());names={row['name'] for row in rows};expected={'lmaws_runprefix_queue','lmaws-queue-two','lmawsOther','lmaws_instance','lmaws_vpc','lmaws_sg','lmaws_function','lmaws_logs','lmaws_parameter','lmaws_cluster','lmaws_stack'}
             assert names==expected,(names,expected);assert len(rows)==len(expected),'duplicate account resources'
             assert all(row['run_id']=='runprefix' and row['lmaws_test']=='true' for row in rows)
@@ -92,7 +92,7 @@ def main(host):
             def execute_body(body,profile='default'):
                 src=work/'action.lms';bc=work/'action.dslb';src.write_text('p=_dsl_ schema='+json.dumps(str(schema))+';\n'+body+'\nend _dsl_\nsavedsl(p,'+json.dumps(str(bc))+');\n')
                 cp=subprocess.run([shutil.which('lmscript'),str(src)],cwd=work,env=env,capture_output=True,text=True,timeout=60);assert cp.returncode==0,cp.stderr
-                return subprocess.run(argv+['--dsl',str(bc)],cwd=work,env=dict(env,AWS_PROFILE=profile,LMAWS_LEDGER_DIR=str(ledger_dir)),capture_output=True,text=True,timeout=180)
+                return subprocess.run(argv+['--lmcode',str(bc)],cwd=work,env=dict(env,AWS_PROFILE=profile,LMAWS_LEDGER_DIR=str(ledger_dir)),capture_output=True,text=True,timeout=180)
             denied=execute_body('let c=aws.example("cleanup_fixture");let rows=c.cleanup_prefix("lmaws",24,true);')
             assert denied.returncode!=0 and not Fake.deletes,'default profile was allowed to delete'
             dry=execute_body('let c=aws.example("cleanup_fixture");let rows=c.cleanup_prefix("lmaws",24,false);')
@@ -104,7 +104,7 @@ def main(host):
             cleaned=json.loads((work/'cleanup.json').read_text());assert any(row['name']==name and row['status']=='deleted' and row['provider_absent']=='true' for row in cleaned),cleaned
             absence=execute_body('let c=aws.example("independent_fixture");check(c.resource_exists("queue","'+name+'") == false);')
             assert absence.returncode==0,absence.stderr
-            Fake.deny=True;output.unlink();p=subprocess.run(argv+['--dsl',str(binary)],cwd=work,env=env,capture_output=True,text=True,timeout=180);assert p.returncode!=0,'denial became a false zero';assert not output.exists()
+            Fake.deny=True;output.unlink();p=subprocess.run(argv+['--lmcode',str(binary)],cwd=work,env=env,capture_output=True,text=True,timeout=180);assert p.returncode!=0,'denial became a false zero';assert not output.exists()
             print('PASS real SDK prefix pushdown, pagination, tags/ages, eleven resources, masks, denial, qualified deletion and default-profile absence; loopback only')
     finally:server.shutdown();server.server_close()
 if __name__=='__main__':main(pathlib.Path(sys.argv[1]).resolve())

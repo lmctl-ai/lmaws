@@ -201,7 +201,7 @@ However, cross-checking the design against the **actual implementations** of `lm
 - **Direct fixes applied wiki-style to [`LMSYNC_DESIGN.md`](file:///home/mma/repos/dsl/lmaws/docs/LMSYNC_DESIGN.md)**:
   - **Line 146**: Changed `digest: bytes` to `digest: string` (`lmcode` `dsl.schema: 2` has no `bytes` primitive type).
   - **Line 541–543**: Added local reference to sibling repo [`lmdb`](file:///home/mma/repos/dsl/lmdb)'s GraalVM native-image H2 (`--exclude-config` on AWT reflection metadata and `MetaType`/`FilePath` reflection entries).
-  - **Line 861**: Removed the inaccurate claim that `Cloud.s3_presigned_put(...)` is part of `lmaws`'s checked public DSL surface (`lmaws --dsl-signatures` has no such method).
+  - **Line 861**: Removed the inaccurate claim that `Cloud.s3_presigned_put(...)` is part of `lmaws`'s checked public DSL surface (`lmaws --lmcode-signatures` has no such method).
   - **Lines 796, 868, 880, 953, 974, 1078, 1085, 1090**: Added `let ` to outer `lmscript` `_lmcode_` variable bindings for consistency with `let` declarations in `lmscript` functions and strict blocks.
 
 ### (2) Crash/Resume Invariants & Log/Claim Correctness
@@ -231,7 +231,7 @@ However, cross-checking the design against the **actual implementations** of `lm
 
 ### (4) Example Scripts & Multi-Host Mechanism Verification
 - **Multi-host mechanism (Section 7, lines 1054–1094)**:
-  - **Verified working today** in `@lmctl-ai/lmctl 0.2.420`: a single `.lms` script can compile multiple `_lmcode_ cli="..."` (or `_dsl_ cli="..."`) blocks against different host binaries (`lmcurl`, `lmaws`, `lmssh`, `lmplot`, `lmdraw`), write bytecode via `savedsl(prog, path)`, resolve the binary argv via `dsl_cli(prog)`, and execute via `system(concat(dsl_cli(prog), ["--dsl", path]), timeout_ms)` while passing data through local files and `${...}` scalar splices.
+  - **Verified working today** in `@lmctl-ai/lmctl 0.2.420`: a single `.lms` script can compile multiple `_lmcode_ cli="..."` (or `_dsl_ cli="..."`) blocks against different host binaries (`lmcurl`, `lmaws`, `lmssh`, `lmplot`, `lmdraw`), write bytecode via `savedsl(prog, path)`, resolve the binary argv via `dsl_cli(prog)`, and execute via `system(concat(dsl_cli(prog), ["--lmcode", path]), timeout_ms)` while passing data through local files and `${...}` scalar splices.
   - **Verified `parallel` limitation (lines 479–484)**: Confirmed in `lmctl`'s parser (`cli/lmscript.js`) that `parallel([ call1(), call2() ])` is an AST keyword construct (`ParallelExpr`) requiring a literal bracketed list of direct function calls; passing a variable (`parallel(tasks)`) fails at parse time with `Expected '[' starting array of function calls in 'parallel([ ... ])'`.
 - **Example scripts vs real current APIs of `lmcurl`, `lmaws`, `lmssh`**:
   - All five `_lmcode_` blocks in Section 6 (lines 796–814, 868–874, 880–886, 953–960, 974–981) compile cleanly against the current schemas of `lmcurl`, `lmaws`, and `lmssh`.
@@ -259,7 +259,7 @@ However, cross-checking the design against the **actual implementations** of `lm
     - **Milestone 1A (Core Registry + Crash Harness)**: Single-process Java `lmcode` host with `open`/`close`, `item_upsert`, `alias_add`, `observe`, `stage_record`/`stage_forget`, `query_subset`, `stage_difference`, `claim`/`complete`, `doctor`, and the deterministic kill-point harness (Section 4) passing on both JVM and GraalVM native-image under `-R:ReservedAddressSpaceSize=4g`.
     - **Milestone 1B (Two-Host End-to-End Job)**: Plan/result JSONL helpers + `publish_ttl.lms` running end-to-end against both the local fake executor and `lmaws --dry-run` (`Run.bucket/put/cleanup`), before building filesystem tree scanners (`scan`), archive rotation, or multi-process mailbox IPC.
 - **Testable Acceptance List for Milestone 1**:
-  1. `lmfiles --version`, `--help`, `--notices`, `--dsl-schema [--json]`, `--dsl-signatures`, and `--self-test` pass in both JVM and standalone GraalVM native-image (with Linux ELF audit confirming dynamic `glibc <= 2.35` only and zero JNI/external `.so` dependencies).
+  1. `lmfiles --version`, `--help`, `--notices`, `--lmcode-schema [--json]`, `--lmcode-signatures`, and `--self-test` pass in both JVM and standalone GraalVM native-image (with Linux ELF audit confirming dynamic `glibc <= 2.35` only and zero JNI/external `.so` dependencies).
   2. Network-denying sandbox test (`unshare -n` on Linux / socket-blocking security test) proves `0` socket syscalls across all `lmfiles` operations (`open`, `query_subset`, `stage_difference`, `claim`, `complete`, `apply_records`, `doctor`).
   3. All 17 kill-point fault-injection scenarios in Section 4's table (lines 497–515) match the reference model oracle on reopen with zero false `same-as-recorded` or lost confirmed receipts.
   4. `publish_ttl.lms` executes 5 consecutive runs in an empty temp directory: (a) initial publish of $N$ files -> $N$ transfers, (b) immediate re-run -> $0$ transfers and $0$ action-host invocations, (c) 1 modified file -> $1$ transfer, (d) simulated crash after receipt `fsync` before DB commit -> replay records the 1 transfer without re-uploading, (e) simulated crash before receipt `fsync` -> resume re-plans the 1 unconfirmed file.
@@ -280,7 +280,7 @@ However, cross-checking the design against the **actual implementations** of `lm
 ## Top 5 Riskiest Assumptions in the Design
 
 1. **[Assumption 1 — CRITICAL] Single-URL-per-process `_lmcode_` execution (or throwing batch calls) can scale to millions of ingested laws/cases (lines 642–644, 796–814, 1101).**
-   - *Why it is risky*: Splicing per-item variables (`${URL_PATH}`, `${PART_PATH}`) into an `_lmcode_` block and running `savedsl` + `system(lmcurl --dsl ...)` spawns one process per item (destroying HTTP/2 connection pooling and spending hours in `fork/exec`), while putting a loop inside `_lmcode_` currently aborts the entire batch on the first transport error because `lmcurl`'s `Request.send()`, `lmssh`'s `Session.put`/`get`/`rename`, and `lmaws`'s SDK calls throw uncaught host exceptions on error.
+   - *Why it is risky*: Splicing per-item variables (`${URL_PATH}`, `${PART_PATH}`) into an `_lmcode_` block and running `savedsl` + `system(lmcurl --lmcode ...)` spawns one process per item (destroying HTTP/2 connection pooling and spending hours in `fork/exec`), while putting a loop inside `_lmcode_` currently aborts the entire batch on the first transport error because `lmcurl`'s `Request.send()`, `lmssh`'s `Session.put`/`get`/`rename`, and `lmaws`'s SDK calls throw uncaught host exceptions on error.
    - *Mitigation*: Require non-throwing batch/receipt modes in `lmcurl` (`download_to_file` / `allow_error`) and `lmaws` (`s3_put_file` returning status/error in `Row`) so one host process handles a bounded batch of 100–1,000 items over pooled connections.
 
 2. **[Assumption 2 — HIGH] $O(|A| + |B|)$ posting-merge anti-joins for `stage_difference(A, B)` are fast enough for frequent incremental pipeline runs at 100M items (lines 204–211, 579–581, 664–678).**

@@ -20,14 +20,14 @@ plot.cmd("plot 'data/topic_publish.csv' every ::1 using 2:xtic(1) title 'owned S
 plot.close();
 end _dsl_
 savedsl(aws, "topic_publish-aws.dslb");
-r = system ${dsl_cli(aws)} --dsl "topic_publish-aws.dslb";
+r = system ${dsl_cli(aws)} --lmcode "topic_publish-aws.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 let cost_line = "";
 for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
 assert(starts_with(cost_line, "estimated cost: $"));
 savedsl(plot, "topic_publish-plot.dslb");
-r = system ${dsl_cli(plot)} --dsl "topic_publish-plot.dslb";
+r = system ${dsl_cli(plot)} --lmcode "topic_publish-plot.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/topic_publish.png");

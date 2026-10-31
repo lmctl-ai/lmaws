@@ -67,7 +67,7 @@ class Handler(BaseHTTPRequestHandler):
  def do_DELETE(self):self.call()
 with tempfile.TemporaryDirectory(prefix='lmaws-s3check-test-') as temporary:
  work=Path(temporary);schema=work/'schema.json'
- schema.write_text(subprocess.check_output(['java','-jar',str(JAR),'--dsl-schema','--json'],cwd=ROOT,text=True))
+ schema.write_text(subprocess.check_output(['java','-jar',str(JAR),'--lmcode-schema','--json'],cwd=ROOT,text=True))
  def run(mode,index,bucket='',allow=False,repeat=False,reject=False,bad_path=False):
   model=Model(mode);server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.model=model;thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
   try:
@@ -78,13 +78,13 @@ with tempfile.TemporaryDirectory(prefix='lmaws-s3check-test-') as temporary:
    source.write_text('let p=_dsl_ schema='+json.dumps(str(schema))+';\n'+code+'\nend _dsl_\nsavedsl(p,'+json.dumps(str(bc))+');\n')
    subprocess.run(['lmscript',str(source)],cwd=work,check=True,capture_output=True,text=True,timeout=30)
    env=dict(os.environ,AWS_PROFILE='lmaws',AWS_DEFAULT_PROFILE='lmaws',AWS_REGION='us-east-1',LMAWS_LIVE='1',LMAWS_ENDPOINT=f'http://127.0.0.1:{server.server_port}',LMAWS_MAX_COST_USD='0.05',LMAWS_LEDGER_DIR=str(work/'ledgers'))
-   p=subprocess.run(['java','-jar',str(JAR),'--dry-run' if mode=='demo' else '--live','--profile','lmaws','--dsl',str(bc)],cwd=work,env=env,text=True,capture_output=True,timeout=60)
+   p=subprocess.run(['java','-jar',str(JAR),'--dry-run' if mode=='demo' else '--live','--profile','lmaws','--lmcode',str(bc)],cwd=work,env=env,text=True,capture_output=True,timeout=60)
    if reject:
     assert p.returncode!=0 and not model.calls,(mode,p.stdout,p.stderr);return {},model
    assert p.returncode==0,(mode,p.stdout,p.stderr)
    row=json.loads(result.read_text());assert journal.exists()
    if repeat:
-    before=len(model.calls);again=subprocess.run(['java','-jar',str(JAR),'--dry-run' if mode=='demo' else '--live','--profile','lmaws','--dsl',str(bc)],cwd=work,env=env,text=True,capture_output=True,timeout=30);assert again.returncode!=0 and len(model.calls)==before,'existing journal must refuse before SDK calls'
+    before=len(model.calls);again=subprocess.run(['java','-jar',str(JAR),'--dry-run' if mode=='demo' else '--live','--profile','lmaws','--lmcode',str(bc)],cwd=work,env=env,text=True,capture_output=True,timeout=30);assert again.returncode!=0 and len(model.calls)==before,'existing journal must refuse before SDK calls'
    return row,model
   finally:server.shutdown();server.server_close();thread.join()
  row,m=run('happy',0,repeat=True);assert row['state']=='clean' and row['leftovers']=='0' and row['etag_match']=='true' and row['head_before']=='absent' and row['head_after_delete']=='absent';assert (m.puts,m.deletes,m.bucket_deletes)==(1,1,1)

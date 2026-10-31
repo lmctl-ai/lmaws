@@ -23,14 +23,14 @@ plot.cmd("plot 'data/before_after.csv' every ::1 using 2:xtic(1) title 'queue in
 plot.close();
 end _dsl_
 savedsl(aws, "before_after-aws.dslb");
-r = system ${dsl_cli(aws)} --dsl "before_after-aws.dslb";
+r = system ${dsl_cli(aws)} --lmcode "before_after-aws.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 let cost_line = "";
 for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
 assert(starts_with(cost_line, "estimated cost: $"));
 savedsl(plot, "before_after-plot.dslb");
-r = system ${dsl_cli(plot)} --dsl "before_after-plot.dslb";
+r = system ${dsl_cli(plot)} --lmcode "before_after-plot.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/before_after.png");

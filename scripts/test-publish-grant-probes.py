@@ -118,7 +118,7 @@ class FakeHandler(BaseHTTPRequestHandler):
 with tempfile.TemporaryDirectory(prefix="lmaws-publish-probes-") as tmp:
     work = Path(tmp)
     schema = work / "schema.json"
-    schema.write_text(subprocess.check_output(["java", "-jar", str(JAR), "--dsl-schema", "--json"], cwd=ROOT, text=True))
+    schema.write_text(subprocess.check_output(["java", "-jar", str(JAR), "--lmcode-schema", "--json"], cwd=ROOT, text=True))
 
     def run_dsl(mode, dsl_body, profile="default", expect_ok=True):
         model = FakeModel(mode)
@@ -143,7 +143,7 @@ with tempfile.TemporaryDirectory(prefix="lmaws-publish-probes-") as tmp:
                 LMAWS_EVIDENCE_DIR=str(work / "evidence"),
             )
             p = subprocess.run(
-                ["java", "-jar", str(JAR), "--live", "--profile", profile, "--dsl", str(bc)],
+                ["java", "-jar", str(JAR), "--live", "--profile", profile, "--lmcode", str(bc)],
                 cwd=work,
                 env=env,
                 text=True,

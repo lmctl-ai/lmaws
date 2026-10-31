@@ -21,14 +21,14 @@ plot.cmd("plot 'data/parameters.csv' every ::1 using 2:xtic(1) title 'demo resou
 plot.close();
 end _dsl_
 savedsl(aws, "parameters-aws.dslb");
-r = system ${dsl_cli(aws)} --dsl "parameters-aws.dslb";
+r = system ${dsl_cli(aws)} --lmcode "parameters-aws.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 let cost_line = "";
 for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
 assert(starts_with(cost_line, "estimated cost: $"));
 savedsl(plot, "parameters-plot.dslb");
-r = system ${dsl_cli(plot)} --dsl "parameters-plot.dslb";
+r = system ${dsl_cli(plot)} --lmcode "parameters-plot.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/parameters.png");

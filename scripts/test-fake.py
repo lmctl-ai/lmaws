@@ -263,7 +263,7 @@ def run(host):
     try:
         with tempfile.TemporaryDirectory(prefix="lmaws-fake-") as td:
             work=pathlib.Path(td);schema=work/"schema.json"
-            schema.write_bytes(subprocess.check_output(host_prefix+["--dsl-schema"],env=env,timeout=30))
+            schema.write_bytes(subprocess.check_output(host_prefix+["--lmcode-schema"],env=env,timeout=30))
             def execute(name,body,expected=0,extra=None,extra_env=None,extra_flags=None):
                 src=work/(name+".lms");out=work/(name+".dslb")
                 src.write_text('p = _dsl_ schema='+json.dumps(str(schema))+';\n'+body+'\nend _dsl_\nsavedsl(p, '+json.dumps(str(out))+');\n')
@@ -271,7 +271,7 @@ def run(host):
                 assert compiled.returncode==0,compiled.stderr
                 run_env=dict(env,**(extra or {}),**(extra_env or {}))
                 flags=list(extra_flags or [])
-                result=subprocess.run(host_prefix+flags+["--dsl",str(out)],cwd=work,env=run_env,text=True,encoding="utf-8",capture_output=True,timeout=180)
+                result=subprocess.run(host_prefix+flags+["--lmcode",str(out)],cwd=work,env=run_env,text=True,encoding="utf-8",capture_output=True,timeout=180)
                 assert result.returncode==expected,(name,result.returncode,result.stdout,result.stderr,Fake.requests[-8:])
                 assert "TOP_SECRET_SENTINEL" not in result.stdout+result.stderr,"AWS error message leaked"
                 return result

@@ -140,7 +140,7 @@ savedsl(p, "{bytecode.as_posix()}");
             compiled = subprocess.run(compiler_argv + [str(source)], cwd=workdir, env=env, text=True, capture_output=True, timeout=120)
             if compiled.returncode:
                 raise AssertionError(compiled.stdout + compiled.stderr)
-            ran = subprocess.run([str(host), "--dsl", str(bytecode)], cwd=workdir, env=env, text=True, capture_output=True, timeout=180)
+            ran = subprocess.run([str(host), "--lmcode", str(bytecode)], cwd=workdir, env=env, text=True, capture_output=True, timeout=180)
             if ran.returncode:
                 raise AssertionError(ran.stdout + ran.stderr)
             status = (workdir / "status.json").read_text()
@@ -171,7 +171,7 @@ savedsl(p, "{foreign_bytecode.as_posix()}");
             compiled = subprocess.run(compiler_argv + [str(foreign_source)], cwd=workdir, env=env, text=True, capture_output=True, timeout=120)
             if compiled.returncode:
                 raise AssertionError(compiled.stdout + compiled.stderr)
-            denied_proc = subprocess.Popen([str(host), "--dsl", str(foreign_bytecode)], cwd=workdir, env=env, text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            denied_proc = subprocess.Popen([str(host), "--lmcode", str(foreign_bytecode)], cwd=workdir, env=env, text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             try:
                 denied_proc.communicate(timeout=15)
                 rejected = denied_proc.returncode != 0
@@ -209,7 +209,7 @@ savedsl(p, "{cap_bytecode.as_posix()}");
             compiled = subprocess.run(compiler_argv + [str(cap_source)], cwd=workdir, env=cap_env, text=True, capture_output=True, timeout=120)
             if compiled.returncode:
                 raise AssertionError(compiled.stdout + compiled.stderr)
-            capped = subprocess.run([str(host), "--dsl", str(cap_bytecode)], cwd=workdir, env=cap_env, text=True, capture_output=True, timeout=120)
+            capped = subprocess.run([str(host), "--lmcode", str(cap_bytecode)], cwd=workdir, env=cap_env, text=True, capture_output=True, timeout=120)
             if capped.returncode == 0 or "cost" not in (capped.stdout + capped.stderr).lower():
                 raise AssertionError("zero cost cap did not refuse creation")
             if AwsFixture.requests:

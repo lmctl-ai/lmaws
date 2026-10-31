@@ -133,7 +133,7 @@ def main():
     def event(kind,**values):
         ledger['events'].append(dict(event=kind,at=time.time(),**values));write(Path('ledger.json'),ledger);write(archive,ledger)
     def phase(name):
-        started=time.monotonic();p=subprocess.run([args.host,'--dsl','phase-'+name+'.dslb'],env=env,text=True,capture_output=True,timeout=180)
+        started=time.monotonic();p=subprocess.run([args.host,'--lmcode','phase-'+name+'.dslb'],env=env,text=True,capture_output=True,timeout=180)
         Path('private-'+name+'.log').write_text(p.stdout+p.stderr)
         errpath=Path('phase-'+name+'.error');error=errpath.read_text() if errpath.exists() else ''
         okpath=Path('phase-'+name+'.ok');ok=okpath.exists() and okpath.read_text().strip()=='true'

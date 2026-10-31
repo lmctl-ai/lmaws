@@ -10,7 +10,7 @@ let spend = aws.spend("dynamodb_spend", ${days}, ${top_n}, str_to_float(str(${ca
 spend.write(${root} + "/dynamodb_spend");
 end _dsl_
 savedsl(aws, "dynamodb_spend-aws.dslb");
-r = system(concat(dsl_cli(aws), ["--dsl", "dynamodb_spend-aws.dslb"]), {timeoutMs: 900000});
+r = system(concat(dsl_cli(aws), ["--lmcode", "dynamodb_spend-aws.dslb"]), {timeoutMs: 900000});
 let spend_stdout = r.stdout;
 if (r.code != 0) { println(r.stdout); println(r.stderr); }
 if (r.code != 0) { println(r.stdout); println(r.stderr); }
@@ -22,7 +22,7 @@ plot.cmd("set datafile separator ','; set style data histograms; set style fill 
 plot.close();
 end _dsl_
 savedsl(plot, "dynamodb_spend-plot.dslb");
-r = system ${dsl_cli(plot)} --dsl "dynamodb_spend-plot.dslb";
+r = system ${dsl_cli(plot)} --lmcode "dynamodb_spend-plot.dslb";
 if (r.code != 0) { println(r.stdout); println(r.stderr); }
 assert(r.code == 0);
 

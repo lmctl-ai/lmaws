@@ -1094,7 +1094,7 @@ check(rows.len() == 3);
 rows.csv("data/instances.csv");
 end _dsl_
 savedsl(aws, "inventory.dslb");
-r = system ${dsl_cli(aws)} --dsl "inventory.dslb";
+r = system ${dsl_cli(aws)} --lmcode "inventory.dslb";
 assert(r.code == 0);
 ```
 
@@ -1196,7 +1196,7 @@ The original inventory/lifecycle gallery contains 27 lmplot charts and 3 lmdraw 
 
 - **sweeper** — `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/sweeper.lms` — running this example costs about $0.00 ([live evidence](evidence/live-cost-sweeper-rb06fb78dx83ba4d51.json)). · lmcloud: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/compare/sweeper/sweeper.lms`
 
-Compiler minimum: lmscript 0.2.420. Host schema bytes omit built-in std; `--dsl-signatures` includes it and `--without-std` selects host declarations.
+Compiler minimum: lmscript 0.2.420. Host schema bytes omit built-in std; `--lmcode-signatures` includes it and `--without-std` selects host declarations.
 
 ### Persistent web-stack recipes
 

@@ -332,7 +332,7 @@ plot.cmd(${"set termoption noenhanced; set datafile separator ','; set title '" 
 plot.cmd(${"plot 'data/" + name + ".csv' every ::1" + using});
 plot.close();
 end _dsl_
-  let code = temp_file(); savedsl(chart, code); let r = system(concat(dsl_cli(chart), ["--dsl", code]), {timeoutMs:120000}); remove_file(code); assert(r.code == 0);
+  let code = temp_file(); savedsl(chart, code); let r = system(concat(dsl_cli(chart), ["--lmcode", code]), {timeoutMs:120000}); remove_file(code); assert(r.code == 0);
   println("images/" + name + ".png");
 }
 
@@ -348,7 +348,7 @@ plot.cmd(${cmds});
 plot.cmd("plot -10 notitle");
 plot.close();
 end _dsl_
-  let code = temp_file(); savedsl(chart, code); let r = system(concat(dsl_cli(chart), ["--dsl", code]), {timeoutMs:120000}); remove_file(code); assert(r.code == 0);
+  let code = temp_file(); savedsl(chart, code); let r = system(concat(dsl_cli(chart), ["--lmcode", code]), {timeoutMs:120000}); remove_file(code); assert(r.code == 0);
   println("images/" + name + ".png");
 }
 

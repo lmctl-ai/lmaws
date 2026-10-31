@@ -20,11 +20,11 @@ let db=registry.open(${".lmaws-local/provision/"+ID+".mv"},"provision","{}");
 let snapshot=db.snapshot();let cursor=snapshot.query("{\"all\":true}","{}");let rows=cursor.rows(2,1048576);
 file_write("data/provision_job.count",str(rows.len())+"\n");cursor.close();snapshot.close();db.close();
 end _lmcode_
-savedsl(audit,"build/provision-audit.dslb");let audited=system(concat(dsl_cli(audit),["--dsl","build/provision-audit.dslb"]),120000);assert(audited.code==0);
+savedsl(audit,"build/provision-audit.dslb");let audited=system(concat(dsl_cli(audit),["--lmcode","build/provision-audit.dslb"]),120000);assert(audited.code==0);
 assert(trim(read_file("data/provision_job.count"))=="1");
 
 let plot=_lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png("images/provision_job.png",900,560);plot.cmd("set title 'Offline on-demand provisioning: confirmed lmfiles stages'; set ylabel 'recorded transitions'; set yrange [0:*]; set style data histograms; set style fill solid 0.8; set grid ytics; plot 'data/provision-stages.dat' using 2:xtic(1) lc rgb '#5db7d1' notitle");plot.close();
 end _lmcode_
-savedsl(plot,"build/provision-plot.dslb");let r=system(concat(dsl_cli(plot),["--dsl","build/provision-plot.dslb"]),120000);assert(r.code==0);
+savedsl(plot,"build/provision-plot.dslb");let r=system(concat(dsl_cli(plot),["--lmcode","build/provision-plot.dslb"]),120000);assert(r.code==0);
 println(json_stringify({synthetic:true,lmprov_id:ID,stages:counts,same_volume:true,boot_count:2,leftovers:0}));println("estimated cost: $0.00 (offline demonstration)");

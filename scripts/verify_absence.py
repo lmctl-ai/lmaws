@@ -12,7 +12,7 @@ def _invoke(resource):
     for key in ('AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN','AWS_SECURITY_TOKEN','AWS_WEB_IDENTITY_TOKEN_FILE','AWS_ROLE_ARN','AWS_ROLE_SESSION_NAME','AWS_CONTAINER_CREDENTIALS_RELATIVE_URI','AWS_CONTAINER_CREDENTIALS_FULL_URI','LMAWS_ENDPOINT'):
         env.pop(key,None)
     program=root/'verify.lms'
-    program.write_text('# Read-only exact-name provider check; no resource values are read.\np=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";\nlet cloud=aws.example("independent_check");\nfile_write("exists.json",str(cloud.resource_exists('+json.dumps(resource['kind'])+','+json.dumps(resource['name'])+')));\nend _dsl_\nsavedsl(p,"verify.dslb");\nr=system(concat(dsl_cli(p),["--dsl","verify.dslb"]),{timeoutMs:45000});\nif(r.code!=0){println(r.stderr);}\nassert(r.code==0);\n')
+    program.write_text('# Read-only exact-name provider check; no resource values are read.\np=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";\nlet cloud=aws.example("independent_check");\nfile_write("exists.json",str(cloud.resource_exists('+json.dumps(resource['kind'])+','+json.dumps(resource['name'])+')));\nend _dsl_\nsavedsl(p,"verify.dslb");\nr=system(concat(dsl_cli(p),["--lmcode","verify.dslb"]),{timeoutMs:45000});\nif(r.code!=0){println(r.stderr);}\nassert(r.code==0);\n')
     executable=shutil.which('lmctl')
     if not executable:raise RuntimeError('lmctl is required for independent lmaws checks')
     result=subprocess.run([executable,str(program)],cwd=root,env=env,text=True,capture_output=True,timeout=60)

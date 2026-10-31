@@ -7,7 +7,7 @@ if (cloud.is_demo()) { check(stores.len() == 3); } if (cloud.is_demo()) { check(
 file_write("data/resource_graph.count", "stores=" + str(stores.len()) + ", queues=" + str(queues.len()) + ", functions=" + str(workers.len()));
 end _dsl_
 savedsl(aws, "resource_graph-aws.dslb");
-r = system ${dsl_cli(aws)} --dsl "resource_graph-aws.dslb";
+r = system ${dsl_cli(aws)} --lmcode "resource_graph-aws.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 let cost_line = "";
@@ -29,7 +29,7 @@ scene.line(498.0, 250.0, 642.0, 250.0, "#f5c16c", 3.0).set_attr("marker-end", "a
 scene.render_png("images/resource_graph.png", 900, 560, 1);
 end _dsl_
 savedsl(draw, "resource_graph-draw.dslb");
-r = system ${dsl_cli(draw)} --dsl "resource_graph-draw.dslb";
+r = system ${dsl_cli(draw)} --lmcode "resource_graph-draw.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/resource_graph.png");

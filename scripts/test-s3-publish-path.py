@@ -115,7 +115,7 @@ def run(mode: str, profile: str = "default"):
         with tempfile.TemporaryDirectory(prefix="lmaws-publish-path-") as td:
             work = Path(td)
             schema = work / "schema.json"
-            schema.write_text(subprocess.check_output(["java", "-jar", str(JAR), "--dsl-schema", "--json"], text=True))
+            schema.write_text(subprocess.check_output(["java", "-jar", str(JAR), "--lmcode-schema", "--json"], text=True))
             source = work / "check.lms"
             result = work / "result.json"
             inline_policy = {"Version": "2012-10-17", "Statement": [
@@ -134,7 +134,7 @@ savedsl(p,"{work / "check.dslb"}");
             env = dict(os.environ, AWS_PROFILE=profile, AWS_DEFAULT_PROFILE=profile, AWS_REGION="us-east-1", LMAWS_LIVE="1", LMAWS_ENDPOINT=f"http://127.0.0.1:{server.server_port}", CI="false")
             compile_proc = subprocess.run(["lmscript", str(source)], cwd=work, env=env, capture_output=True, text=True, timeout=60)
             assert compile_proc.returncode == 0, compile_proc.stdout + compile_proc.stderr
-            proc = subprocess.run(["java", "-jar", str(JAR), "--dsl", str(work / "check.dslb")], cwd=work, env=env, capture_output=True, text=True, timeout=60)
+            proc = subprocess.run(["java", "-jar", str(JAR), "--lmcode", str(work / "check.dslb")], cwd=work, env=env, capture_output=True, text=True, timeout=60)
             return proc, (json.loads(result.read_text()) if result.exists() else {}), list(ReadOnlyBackend.calls)
     finally:
         server.shutdown(); server.server_close(); thread.join()

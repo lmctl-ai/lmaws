@@ -21,14 +21,14 @@ plot.cmd("plot 'data/log_groups.csv' every ::1 using 2:xtic(1) title 'demo resou
 plot.close();
 end _dsl_
 savedsl(aws, "log_groups-aws.dslb");
-r = system ${dsl_cli(aws)} --dsl "log_groups-aws.dslb";
+r = system ${dsl_cli(aws)} --lmcode "log_groups-aws.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 let cost_line = "";
 for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
 assert(starts_with(cost_line, "estimated cost: $"));
 savedsl(plot, "log_groups-plot.dslb");
-r = system ${dsl_cli(plot)} --dsl "log_groups-plot.dslb";
+r = system ${dsl_cli(plot)} --lmcode "log_groups-plot.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/log_groups.png");

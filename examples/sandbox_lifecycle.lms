@@ -17,14 +17,14 @@ plot.cmd("plot 'data/sandbox_lifecycle.csv' every ::1 using 2:xtic(1) title 'own
 plot.close();
 end _dsl_
 savedsl(aws, "sandbox_lifecycle-aws.dslb");
-r = system ${dsl_cli(aws)} --dsl "sandbox_lifecycle-aws.dslb";
+r = system ${dsl_cli(aws)} --lmcode "sandbox_lifecycle-aws.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 let cost_line = "";
 for (line in lines(r.stdout)) { if (starts_with(line, "estimated cost: $")) { cost_line = line; } }
 assert(starts_with(cost_line, "estimated cost: $"));
 savedsl(plot, "sandbox_lifecycle-plot.dslb");
-r = system ${dsl_cli(plot)} --dsl "sandbox_lifecycle-plot.dslb";
+r = system ${dsl_cli(plot)} --lmcode "sandbox_lifecycle-plot.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/sandbox_lifecycle.png");

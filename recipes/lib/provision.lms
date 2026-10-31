@@ -63,13 +63,13 @@ fn provision_execute(program, options) {
   let path=temp_file();savedsl(program,path);
   let settings={AWS_PROFILE:options.profile,AWS_DEFAULT_PROFILE:options.profile,AWS_REGION:options.region,AWS_DEFAULT_REGION:options.region,LMAWS_LIVE:options.live ? "1":"0",LMAWS_APPLY:options.apply ? "1":"0",LMAWS_MAX_COST_USD:str(options.cap),LMAWS_LEDGER_DIR:".lmaws-local/provision/requests",LMPROV_LEDGER_DIR:recipe_env("LMPROV_LEDGER_DIR",".lmaws-local/provision/host")};
   if(!options.live) {settings.LMAWS_ENDPOINT="";}
-  let argv=concat(dsl_cli(program),options.apply ? ["--apply","--dsl",path] : ["--dsl",path]);
+  let argv=concat(dsl_cli(program),options.apply ? ["--apply","--lmcode",path] : ["--lmcode",path]);
   if(getenv("OS","")!="Windows_NT") {let prefix=["env"];for(key in keys(settings)) {push(prefix,key+"="+str(settings[key]));}argv=concat(prefix,argv);}
   else if(options.live) {for(key in keys(settings)) {assert(getenv(key,"")==str(settings[key]),"Windows: set "+key+" in the parent environment first");}}
   let r=system(argv,{timeoutMs:options.timeout_ms});remove_file(path);assert(r.code==0,"provisioning host failed; inspect private receipts and journal before retrying");return r;
 }
 fn provision_local(program) {
-  let path=temp_file(); savedsl(program,path); let r=system(concat(dsl_cli(program),["--dsl",path]),120000); remove_file(path); assert(r.code==0,"lmfiles registry operation failed"); return r;
+  let path=temp_file(); savedsl(program,path); let r=system(concat(dsl_cli(program),["--lmcode",path]),120000); remove_file(path); assert(r.code==0,"lmfiles registry operation failed"); return r;
 }
 fn provision_record(id) {
   let dbpath=".lmaws-local/provision/"+id+".mv";

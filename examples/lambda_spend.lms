@@ -10,7 +10,7 @@ let spend = aws.spend("lambda_spend", ${days}, ${top_n}, str_to_float(str(${cap}
 spend.write(${root} + "/lambda_spend");
 end _dsl_
 savedsl(aws, "lambda_spend-aws.dslb");
-r = system(concat(dsl_cli(aws), ["--dsl", "lambda_spend-aws.dslb"]), {timeoutMs: 900000});
+r = system(concat(dsl_cli(aws), ["--lmcode", "lambda_spend-aws.dslb"]), {timeoutMs: 900000});
 let spend_stdout = r.stdout;
 if (r.code != 0) { println(r.stdout); println(r.stderr); }
 if (r.code != 0) { println(r.stdout); println(r.stderr); }
@@ -22,7 +22,7 @@ plot.cmd("set datafile separator ','; set style data histograms; set style fill 
 plot.close();
 end _dsl_
 savedsl(plot, "lambda_spend-plot.dslb");
-r = system ${dsl_cli(plot)} --dsl "lambda_spend-plot.dslb";
+r = system ${dsl_cli(plot)} --lmcode "lambda_spend-plot.dslb";
 if (r.code != 0) { println(r.stdout); println(r.stderr); }
 assert(r.code == 0);
 

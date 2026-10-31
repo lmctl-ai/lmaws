@@ -30,6 +30,7 @@ WRAPPER
 fi
 export PATH="$PWD/target/jvm-bin:$PATH"
 export LMAWS_TEST_HOST="$jvm"
+python3 scripts/check-host-flags.py schema/lmaws.dsl.json "$jvm"
 timeout 300 python3 scripts/test-cli.py "$jvm"
 timeout 300 python3 scripts/test-fake.py "$jvm"
 timeout 180 python3 scripts/test-credential-process.py

@@ -104,7 +104,7 @@ def main():
                     f'file_write({json.dumps(str(output))},result.json());\nend _dsl_\n'
                     'let code=temp_file();savedsl(p,code);\n'
                     'let r=system(concat(dsl_cli(p),concat('
-                    + json.dumps((["--dry-run"] if offline else []) + (["--apply"] if apply else []) + ["--dsl"])
+                    + json.dumps((["--dry-run"] if offline else []) + (["--apply"] if apply else []) + ["--lmcode"])
                     + ',[code])),{timeoutMs:30000});\nprintln(r.stdout);println(r.stderr);remove_file(code);assert(r.code==0);\n'
                 )
                 script.write_text(body)

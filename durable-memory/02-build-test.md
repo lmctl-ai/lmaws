@@ -31,4 +31,4 @@ are allowed in CI; `LMAWS_LIVE=0` is set there and real-backend CI guards are te
 GitHub download tokens are not AWS credentials. Live tests are separate opt-in
 work, described in [03-live.md](03-live.md).
 
-Generate `schema/lmaws.dsl.json` with the built host (`java -cp target/lmaws-VERSION.jar ai.lmctl.lmaws.Main --dsl-schema --json > schema/lmaws.dsl.json`). Do not parse/re-serialize or sort its JSON: the CLI gate requires byte-identical output.
+Generate `schema/lmaws.dsl.json` with the built host (`java -cp target/lmaws-VERSION.jar ai.lmctl.lmaws.Main --lmcode-schema --json > schema/lmaws.dsl.json`). Do not parse/re-serialize or sort its JSON: the CLI gate requires byte-identical output.
