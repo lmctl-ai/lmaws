@@ -1140,6 +1140,13 @@ The total retains both passes and conservative reused-native accounting. See the
 
 Per-run ledgers include preflight/tag/verification requests, retries and storage. Prices vary by region and time. [Local test steps and profile model](docs/USER_TEST.md).
 
+## Live reads in CI (opt-in)
+
+Live AWS is refused when `CI=true`. A CI job that must check real resources read-only can set `LMAWS_CI_LIVE_READ=1`:
+then only `identity()` and `resource_exists("bucket"|"table", name)` run live (`sts:GetCallerIdentity`, `s3:HeadBucket`,
+`dynamodb:DescribeTable`), checked per request before it is sent; every other call, the `admin` profile, live spend and
+IAM stay refused. Details in [docs/PROFILES.md](docs/PROFILES.md).
+
 ## Resource limits and build
 
 `LMAWS_MAX_MEMORY_MB` accepts a positive whole number, defaults to 4096 MiB, and bounds both heap and VM inputs. Budgets below 16 MiB end with a runtime error. The minimum supported runtime is Java 21 for JVM development; releases are GraalVM native executables. Build and validate locally with:

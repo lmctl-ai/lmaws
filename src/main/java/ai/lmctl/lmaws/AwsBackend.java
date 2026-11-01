@@ -169,11 +169,19 @@ public final class AwsBackend implements AutoCloseable {
                 .apiCallTimeout(Duration.ofSeconds(25)).apiCallAttemptTimeout(Duration.ofSeconds(10))
                 .retryPolicy(RetryPolicy.builder().numRetries(2).build());
         if (cost != null) configBuilder.addExecutionInterceptor(new CostInterceptor(cost));
-        this.config = configBuilder.build();
         String endpointText = System.getenv("LMAWS_ENDPOINT");
         this.endpoint = endpointText == null || endpointText.isBlank() ? null : checkedEndpoint(endpointText);
-        if (!demo && endpoint == null && ciEnvironment())
-            throw new IllegalStateException("live AWS credentials are disabled in CI; use a loopback fake endpoint");
+        // CI read opt-in (LMAWS_CI_LIVE_READ=1): in CI, live AWS is refused unless this is set; with it, every request any
+        // client of this backend sends must be one of CI_READ_OPERATIONS (checked per request by the SDK interceptor, so no
+        // code path can write). The admin profile is refused. Applied whenever it is set in CI, a fake endpoint included.
+        this.ciLiveRead = !demo && ciEnvironment() && ciLiveReadRequested(System.getenv());
+        if (ciLiveRead) {
+            if ("admin".equals(profileName)) throw new IllegalStateException(CI_LIVE_READ_ENV + " allows read-only checks only; the admin profile is refused in CI");
+            configBuilder.addExecutionInterceptor(new CiReadOnlyInterceptor());
+        }
+        this.config = configBuilder.build();
+        if (!demo && endpoint == null && ciEnvironment() && !ciLiveRead)
+            throw new IllegalStateException("live AWS credentials are disabled in CI; use a loopback fake endpoint (or " + CI_LIVE_READ_ENV + "=1 for the read-only checks)");
         if (demo) seedDemo();
     }
 
@@ -1677,6 +1685,25 @@ public final class AwsBackend implements AutoCloseable {
                 if (!v.isDefault) return v;
             }
             return null;
+        }
+    }
+    /** The CI read opt-in: the variable and the only operations (service:operation) allowed under it. */
+    public static final String CI_LIVE_READ_ENV = "LMAWS_CI_LIVE_READ";
+    public static final java.util.Set<String> CI_READ_OPERATIONS = java.util.Set.of("sts:GetCallerIdentity", "s3:HeadBucket", "dynamodb:DescribeTable");
+    private final boolean ciLiveRead;
+    public boolean ciLiveRead() { return ciLiveRead; }
+    static boolean ciLiveReadRequested(Map<String, String> env) { return "1".equals(env.get(CI_LIVE_READ_ENV)); }
+    /** Whether a request is allowed under the CI read opt-in (service names as the SDK reports them, any case). */
+    static boolean ciReadAllowed(String service, String operation) {
+        return service != null && operation != null && CI_READ_OPERATIONS.contains(service.toLowerCase(Locale.ROOT) + ":" + operation);
+    }
+    /** Refuses, before anything is sent, every request outside CI_READ_OPERATIONS (writes, IAM, listings, ...). */
+    static final class CiReadOnlyInterceptor implements ExecutionInterceptor {
+        @Override public void beforeExecution(Context.BeforeExecution context, ExecutionAttributes attributes) {
+            String service = attributes.getOptionalAttribute(SdkExecutionAttribute.SERVICE_NAME).orElse(null);
+            String operation = attributes.getOptionalAttribute(SdkExecutionAttribute.OPERATION_NAME).orElse(null);
+            if (!ciReadAllowed(service, operation))
+                throw new SecurityException(service + ":" + operation + " is refused in CI: " + CI_LIVE_READ_ENV + " allows only " + new java.util.TreeSet<>(CI_READ_OPERATIONS));
         }
     }
     private static boolean ciEnvironment() {

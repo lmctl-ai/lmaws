@@ -40,6 +40,13 @@ Rules enforced by the host (not only by IAM):
   Tokens are cached in owner-only files until five minutes before expiry; the cache scope includes
   the source profile and policy inputs.
 - CI never gets live credentials: live AWS is refused when `CI=true`; tests use loopback fakes.
+  One narrow exception, opt-in: `LMAWS_CI_LIVE_READ=1` (exactly `1`) lets a CI job run read-only checks with the
+  credentials it was given. With it, every request any lmaws client sends must be one of `sts:GetCallerIdentity`,
+  `s3:HeadBucket` or `dynamodb:DescribeTable` (that is `identity()` and `resource_exists("bucket"|"table", ...)`); the
+  check runs per request in the SDK, before anything is sent, so any other call fails with
+  `<service>:<operation> is refused in CI: LMAWS_CI_LIVE_READ allows only [...]`. Writes, inventory listings, object
+  reads, IAM role access, the `admin` profile, live spend, fleet roles and EBS resizing all stay refused in CI with it
+  set. Without it nothing changes. Tested by `scripts/test-ci-live-read.py` (loopback fake, no AWS).
 
 Check your setup without changing anything: `lmctl recipes/session_doctor.lms --live` (synthetic
 without `--live`). See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for the common error messages.

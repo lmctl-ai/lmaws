@@ -46,6 +46,7 @@ timeout 300 python3 scripts/test-spend-transport.py
 timeout 180 python3 scripts/test-lambda-event-transport.py
 timeout 180 python3 scripts/test-upload-transport.py
 timeout 30 java -cp target/lmaws-0.1.27.jar ai.lmctl.lmaws.PolicySimulationChecks
+timeout 180 python3 scripts/test-ci-live-read.py
 timeout 180 python3 scripts/test-s3-upload-check.py
 timeout 300 python3 scripts/test-fleet-spec.py
 timeout 30 java -cp target/lmaws-0.1.27.jar ai.lmctl.lmaws.S3PathPoliciesChecks
