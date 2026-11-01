@@ -1140,14 +1140,15 @@ The total retains both passes and conservative reused-native accounting. See the
 
 Per-run ledgers include preflight/tag/verification requests, retries and storage. Prices vary by region and time. [Local test steps and profile model](docs/USER_TEST.md).
 
-## Live reads in CI (allowlist)
+## Live reads in CI (OIDC mode)
 
-Live AWS is refused when `CI=true`. A CI job that must check real resources read-only sets
-`LMAWS_OIDC_ALLOWED_ROLE` to the role ARN(s) it runs as. Credentials then come from the AWS SDK's own default chain
-(environment keys from `aws-actions/configure-aws-credentials`, or GitHub OIDC via `AWS_WEB_IDENTITY_TOKEN_FILE` +
-`AWS_ROLE_ARN`), the caller must be an allowed role, and only `identity()` and `resource_exists("bucket"|"table", name)`
-run (`sts:GetCallerIdentity`, `s3:HeadBucket`, `dynamodb:DescribeTable`), checked per request before it is sent; every
-other call, the `admin` profile, live spend and IAM stay refused. Details in [docs/PROFILES.md](docs/PROFILES.md).
+Live AWS is refused when `CI=true`. A CI job that must check real resources read-only uses the OIDC mode: it sets
+`LMAWS_OIDC_ALLOWED_ROLE` to the role ARN(s) it runs as, and lmaws takes its credentials from OIDC only (GitHub's
+`AWS_WEB_IDENTITY_TOKEN_FILE` + `AWS_ROLE_ARN`, or the keys `aws-actions/configure-aws-credentials` exports; never a
+profile file or instance credentials). The caller must be an allowed role, and only `identity()` and
+`resource_exists("bucket"|"table", name)` run (`sts:GetCallerIdentity`, `s3:HeadBucket`, `dynamodb:DescribeTable`),
+checked per request before it is sent; every other call, the `admin` profile, live spend and IAM stay refused.
+Details in [docs/PROFILES.md](docs/PROFILES.md).
 
 ## Resource limits and build
 

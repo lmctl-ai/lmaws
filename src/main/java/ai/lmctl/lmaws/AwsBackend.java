@@ -26,7 +26,6 @@ import java.util.stream.StreamSupport;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.ProfileCredentialsProvider;
-import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.providers.DefaultAwsRegionProviderChain;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.core.interceptor.Context;
@@ -172,10 +171,9 @@ public final class AwsBackend implements AutoCloseable {
         if (cost != null) configBuilder.addExecutionInterceptor(new CostInterceptor(cost));
         String endpointText = System.getenv("LMAWS_ENDPOINT");
         this.endpoint = endpointText == null || endpointText.isBlank() ? null : checkedEndpoint(endpointText);
-        // CI live reads (LMAWS_OIDC_ALLOWED_ROLE): in CI, live AWS is refused unless an allowlist of role ARNs is set. With
-        // it the credentials come from the SDK's own DefaultCredentialsProvider (the environment credentials that
-        // aws-actions/configure-aws-credentials exports, or AWS_WEB_IDENTITY_TOKEN_FILE + AWS_ROLE_ARN: GitHub OIDC; no
-        // lmaws credential code), the caller (STS GetCallerIdentity) must be one of the allowed roles, and every request any
+        // CI live reads, the OIDC mode (LMAWS_OIDC_ALLOWED_ROLE): in CI, live AWS is refused unless an allowlist of role
+        // ARNs is set. With it the credentials come from the OIDC source only (ciCredentials: AWS_WEB_IDENTITY_TOKEN_FILE +
+        // AWS_ROLE_ARN, or the environment keys aws-actions/configure-aws-credentials exports; no profile), the caller (STS GetCallerIdentity) must be one of the allowed roles, and every request any
         // client of this backend sends must be one of CI_READ_OPERATIONS (checked per request by the SDK interceptor, so no
         // code path can write). The admin profile is refused. Applied whenever it is set in CI, a fake endpoint included.
         Map<String, String> env = System.getenv();
@@ -1102,9 +1100,23 @@ public final class AwsBackend implements AutoCloseable {
     private CloudFormationClient cloudformation() { return cloudformation == null ? cloudformation = register(base(CloudFormationClient.builder()).build()) : cloudformation; }
     private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { return base(b,config); }
     private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b,ClientOverrideConfiguration operationConfig) { b.region(region).overrideConfiguration(operationConfig); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))).overrideConfiguration(operationConfig.toBuilder().putHeader("X-Lmaws-Test-Profile",profileName).build()); else b.credentialsProvider(ciLiveRead ? ciCredentials() : ProfileCredentialsProvider.builder().profileName(profileName).build()); return b; }
-    private DefaultCredentialsProvider ciCredentialsProvider;
-    /** One SDK default chain per backend (one web identity exchange, shared by every client). */
-    private synchronized DefaultCredentialsProvider ciCredentials() { if (ciCredentialsProvider == null) ciCredentialsProvider = DefaultCredentialsProvider.builder().build(); return ciCredentialsProvider; }
+    private software.amazon.awssdk.auth.credentials.AwsCredentialsProvider ciCredentialsProvider;
+    /**
+     * The OIDC credential source of CI live reads, one per backend (one token exchange, shared by every client), and
+     * only these two, never a profile file, container or instance credentials: GitHub OIDC directly
+     * (AWS_WEB_IDENTITY_TOKEN_FILE + AWS_ROLE_ARN, the SDK's WebIdentityTokenFileCredentialsProvider), or the keys
+     * aws-actions/configure-aws-credentials exported from that OIDC exchange (the SDK's environment provider).
+     */
+    private synchronized software.amazon.awssdk.auth.credentials.AwsCredentialsProvider ciCredentials() {
+        if (ciCredentialsProvider == null) ciCredentialsProvider = ciCredentialSource(System.getenv()).equals("web-identity")
+                ? software.amazon.awssdk.auth.credentials.WebIdentityTokenFileCredentialsProvider.create()
+                : software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider.create();
+        return ciCredentialsProvider;
+    }
+    /** "web-identity" when a token file and a role ARN are set, else "environment". */
+    static String ciCredentialSource(Map<String, String> env) {
+        return !env.getOrDefault("AWS_WEB_IDENTITY_TOKEN_FILE", "").isBlank() && !env.getOrDefault("AWS_ROLE_ARN", "").isBlank() ? "web-identity" : "environment";
+    }
 
     <B extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> B webBuilder(B builder) { return base(builder); }
     private static final class CostInterceptor implements ExecutionInterceptor {

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """CI live reads: LMAWS_OIDC_ALLOWED_ROLE. Against a loopback fake endpoint (no AWS, no real credentials).
-Without the allowlist CI refuses as before. With it the credentials come from the SDK's DefaultCredentialsProvider
+Without the allowlist CI refuses as before. With it (the OIDC mode) the credentials come from the OIDC source only:
 (environment keys as exported by aws-actions/configure-aws-credentials, or a web identity token file + AWS_ROLE_ARN,
 GitHub OIDC), the caller must be an allowed role, and only the read checks run: writes, a listing, IAM role access,
 the admin profile and a caller or AWS_ROLE_ARN outside the allowlist stay refused; a refused request is never sent."""
@@ -41,6 +41,8 @@ def case(mode, **env):
         tok = pathlib.Path(td) / "token"; tok.write_text("eyJ.fake-oidc-token.sig")
         e = {k: v for k, v in os.environ.items() if not k.startswith(("AWS_", "LMAWS_")) and k != "CI"}
         e.update(AWS_CONFIG_FILE=str(cfg), AWS_SHARED_CREDENTIALS_FILE=str(cfg), AWS_EC2_METADATA_DISABLED="true", AWS_REGION="us-east-1", LMAWS_FAST_WAITS="1")
+        if env.pop("PROFILE_FILE_CREDS", None):   # keys only in a shared credentials file (profile default)
+            cred = pathlib.Path(td) / "credentials"; cred.write_text("[default]\naws_access_key_id = AKIAPROFILEFILE\naws_secret_access_key = s\n"); env["AWS_SHARED_CREDENTIALS_FILE"] = str(cred)
         e.update({k: (str(tok) if v == "TOKEN" else v) for k, v in env.items() if v is not None})
         before = len(Fake.seen)
         r = subprocess.run(["java", "-cp", str(JAR), "ai.lmctl.lmaws.CiLiveReadChecks", mode], env=e, capture_output=True, text=True, timeout=120)
@@ -82,10 +84,12 @@ expect("C9 CI: AWS_ROLE_ARN outside the allowlist is refused before any request"
 # the SDK's DefaultCredentialsProvider (no LMAWS_ENDPOINT: the live path; AWS_ENDPOINT_URL points the SDK at the fake)
 sdk = dict(CI="true", LMAWS_OIDC_ALLOWED_ROLE=ALLOWED, AWS_ENDPOINT_URL=fake, **live)
 line, seen = case("reads", **sdk, AWS_ACCESS_KEY_ID="AKIAENVCREDS", AWS_SECRET_ACCESS_KEY="s", AWS_SESSION_TOKEN="t")
-expect("C10 CI: environment credentials (configure-aws-credentials) through the SDK default chain sign every read", (line, seen), line == "OK reads identity=1 bucket=true table=true" and [s[0] for s in seen] == ["GetCallerIdentity"] + READS and all(s[1] == "AKIAENVCREDS" for s in seen))
+expect("C10 CI: environment credentials (configure-aws-credentials) as the OIDC source (no profile) sign every read", (line, seen), line == "OK reads identity=1 bucket=true table=true" and [s[0] for s in seen] == ["GetCallerIdentity"] + READS and all(s[1] == "AKIAENVCREDS" for s in seen))
 line, seen = case("reads", **sdk, AWS_WEB_IDENTITY_TOKEN_FILE="TOKEN", AWS_ROLE_ARN=ALLOWED, AWS_ROLE_SESSION_NAME="gh")
-expect("C11 CI: GitHub OIDC (web identity token file + AWS_ROLE_ARN) through the SDK default chain", (line, seen), line == "OK reads identity=1 bucket=true table=true" and seen[0][0] == "AssumeRoleWithWebIdentity" and [s[0] for s in seen[1:]] == ["GetCallerIdentity"] + READS and all(s[1] == "ASIAWEBIDENTITY" for s in seen[1:]))
+expect("C11 CI: GitHub OIDC (web identity token file + AWS_ROLE_ARN) as the OIDC source", (line, seen), line == "OK reads identity=1 bucket=true table=true" and seen[0][0] == "AssumeRoleWithWebIdentity" and [s[0] for s in seen[1:]] == ["GetCallerIdentity"] + READS and all(s[1] == "ASIAWEBIDENTITY" for s in seen[1:]))
 line, seen = case("write", **{**sdk, "AWS_PROFILE": "lmaws"}, AWS_ACCESS_KEY_ID="AKIAENVCREDS", AWS_SECRET_ACCESS_KEY="s")
-expect("C12 CI, SDK default chain, mutation profile: the write reaches the CI filter, is refused and never sent", (line, seen), line.startswith("REFUSED") and "S3:CreateBucket is refused in CI" in line and not any(s[0].startswith("PUT") for s in seen))
+expect("C12 CI, OIDC source, mutation profile: the write reaches the CI filter, is refused and never sent", (line, seen), line.startswith("REFUSED") and "S3:CreateBucket is refused in CI" in line and not any(s[0].startswith("PUT") for s in seen))
+line, seen = case("reads", **sdk, PROFILE_FILE_CREDS="1")
+expect("C13 CI, OIDC mode: credentials only in a profile file are NOT used (OIDC source only), nothing signed is sent", (line, seen), line.startswith("REFUSED") and not any(s[1] == "AKIAPROFILEFILE" for s in seen))
 server.shutdown()
 print(f"ci-live-read checks: {'PASS' if not fails else 'FAIL'} ({fails} failed)"); sys.exit(1 if fails else 0)

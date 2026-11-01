@@ -40,17 +40,22 @@ Rules enforced by the host (not only by IAM):
   Tokens are cached in owner-only files until five minutes before expiry; the cache scope includes
   the source profile and policy inputs.
 - CI never gets live credentials: live AWS is refused when `CI=true`; tests use loopback fakes.
-  One narrow exception, by allowlist: `LMAWS_OIDC_ALLOWED_ROLE` (IAM role ARNs, comma-separated) lets a CI job run
-  read-only checks as one of those roles. Credentials then come from the AWS SDK's own `DefaultCredentialsProvider`:
-  the environment keys that `aws-actions/configure-aws-credentials` exports, or GitHub OIDC directly
-  (`AWS_WEB_IDENTITY_TOKEN_FILE` + `AWS_ROLE_ARN`, the SDK's web identity provider); lmaws has no OIDC code of its own.
-  The caller (STS GetCallerIdentity) must be an allowed role (account and role name; `AWS_ROLE_ARN`, when set, must be
-  one too), and every request any lmaws client sends must be one of `sts:GetCallerIdentity`, `s3:HeadBucket` or
-  `dynamodb:DescribeTable` (that is `identity()` and `resource_exists("bucket"|"table", ...)`). The check runs per request
-  in the SDK, before anything is sent: any other call fails with
-  `<service>:<operation> is refused in CI: LMAWS_OIDC_ALLOWED_ROLE allows only [...]`. Writes, inventory listings,
-  object reads, IAM role access, the `admin` profile, live spend, fleet roles and EBS resizing all stay refused in CI.
-  Without the allowlist nothing changes. Tested by `scripts/test-ci-live-read.py` (loopback fake, no AWS).
+  One narrow exception, the OIDC mode: `LMAWS_OIDC_ALLOWED_ROLE` (IAM role ARNs, comma-separated) lets a CI job run
+  read-only checks as one of those roles with an OIDC credential source, and only that source: GitHub OIDC directly
+  (`AWS_WEB_IDENTITY_TOKEN_FILE` + `AWS_ROLE_ARN`; the AWS SDK's web identity provider exchanges the token with STS),
+  or the environment keys `aws-actions/configure-aws-credentials` exports after its own OIDC exchange. A profile file,
+  container or instance credentials are never used in this mode, and `--credential-process` is unchanged (it still
+  ignores web identity). The caller (STS GetCallerIdentity) must be an allowed role (account and role name;
+  `AWS_ROLE_ARN`, when set, must be one too), and every request any lmaws client sends must be one of
+  `sts:GetCallerIdentity`, `s3:HeadBucket` or `dynamodb:DescribeTable` (that is `identity()` and
+  `resource_exists("bucket"|"table", ...)`). The check runs per request in the SDK, before anything is sent: any other
+  call fails with `<service>:<operation> is refused in CI: LMAWS_OIDC_ALLOWED_ROLE allows only [...]`. Writes,
+  inventory listings, object reads, IAM role access, the `admin` profile, live spend, fleet roles and EBS resizing all
+  stay refused in CI. Without the allowlist nothing changes: the blanket CI refusal applies.
+  Tested by `scripts/test-ci-live-read.py` (loopback fake, no AWS).
+
+  A GitHub job: `permissions: id-token: write`; `aws-actions/configure-aws-credentials` with `role-to-assume` (or the
+  token file and `AWS_ROLE_ARN` yourself); then `LMAWS_OIDC_ALLOWED_ROLE=<that role ARN>` on the lmaws step only.
 
 Check your setup without changing anything: `lmctl recipes/session_doctor.lms --live` (synthetic
 without `--live`). See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for the common error messages.

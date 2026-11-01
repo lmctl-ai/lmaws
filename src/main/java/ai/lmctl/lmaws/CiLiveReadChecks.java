@@ -65,6 +65,9 @@ public final class CiLiveReadChecks {
         for (String bad : new String[] {"arn:aws:sts::444455556666:assumed-role/ci-cert/run-1", "arn:aws:sts::111122223333:assumed-role/ci-cert-2/x",
                 "arn:aws:iam::111122223333:user/ci-cert", "arn:aws:sts::111122223333:federated-user/ci-cert", "", null, "arn:aws:sts::111122223333:assumed-role/ci-cert"})
             check(!AwsBackend.ciRoleAllowed(bad, allowed), "caller refused: " + bad);
+        check(AwsBackend.ciCredentialSource(java.util.Map.of("AWS_WEB_IDENTITY_TOKEN_FILE", "/t", "AWS_ROLE_ARN", "arn:aws:iam::111122223333:role/ci-cert")).equals("web-identity"), "token file + role: web identity");
+        check(AwsBackend.ciCredentialSource(java.util.Map.of("AWS_WEB_IDENTITY_TOKEN_FILE", "/t")).equals("environment"), "token file without a role: environment");
+        check(AwsBackend.ciCredentialSource(java.util.Map.of()).equals("environment"), "nothing: environment");
         System.out.println("PASS CiLiveReadChecks allowlist");
     }
     private static void check(boolean ok, String what) { if (!ok) throw new AssertionError(what); }
