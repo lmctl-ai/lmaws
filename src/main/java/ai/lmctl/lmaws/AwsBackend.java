@@ -26,6 +26,7 @@ import java.util.stream.StreamSupport;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.ProfileCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.providers.DefaultAwsRegionProviderChain;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.core.interceptor.Context;
@@ -171,17 +172,29 @@ public final class AwsBackend implements AutoCloseable {
         if (cost != null) configBuilder.addExecutionInterceptor(new CostInterceptor(cost));
         String endpointText = System.getenv("LMAWS_ENDPOINT");
         this.endpoint = endpointText == null || endpointText.isBlank() ? null : checkedEndpoint(endpointText);
-        // CI read opt-in (LMAWS_CI_LIVE_READ=1): in CI, live AWS is refused unless this is set; with it, every request any
+        // CI live reads (LMAWS_OIDC_ALLOWED_ROLE): in CI, live AWS is refused unless an allowlist of role ARNs is set. With
+        // it the credentials come from the SDK's own DefaultCredentialsProvider (the environment credentials that
+        // aws-actions/configure-aws-credentials exports, or AWS_WEB_IDENTITY_TOKEN_FILE + AWS_ROLE_ARN: GitHub OIDC; no
+        // lmaws credential code), the caller (STS GetCallerIdentity) must be one of the allowed roles, and every request any
         // client of this backend sends must be one of CI_READ_OPERATIONS (checked per request by the SDK interceptor, so no
         // code path can write). The admin profile is refused. Applied whenever it is set in CI, a fake endpoint included.
-        this.ciLiveRead = !demo && ciEnvironment() && ciLiveReadRequested(System.getenv());
+        Map<String, String> env = System.getenv();
+        this.ciAllowedRoles = !demo && ciEnvironment() ? ciAllowedRoles(env) : List.of();
+        this.ciLiveRead = !ciAllowedRoles.isEmpty();
         if (ciLiveRead) {
-            if ("admin".equals(profileName)) throw new IllegalStateException(CI_LIVE_READ_ENV + " allows read-only checks only; the admin profile is refused in CI");
+            if ("admin".equals(profileName)) throw new IllegalStateException(CI_ROLES_ENV + " allows read-only checks only; the admin profile is refused in CI");
+            String declared = env.get("AWS_ROLE_ARN");
+            if (declared != null && !declared.isBlank() && !ciRoleAllowed(declared, ciAllowedRoles))
+                throw new IllegalStateException("AWS_ROLE_ARN is not in " + CI_ROLES_ENV + "; refused in CI");
             configBuilder.addExecutionInterceptor(new CiReadOnlyInterceptor());
         }
         this.config = configBuilder.build();
         if (!demo && endpoint == null && ciEnvironment() && !ciLiveRead)
-            throw new IllegalStateException("live AWS credentials are disabled in CI; use a loopback fake endpoint (or " + CI_LIVE_READ_ENV + "=1 for the read-only checks)");
+            throw new IllegalStateException("live AWS credentials are disabled in CI; use a loopback fake endpoint (or " + CI_ROLES_ENV + " for read-only checks by an allowed role)");
+        if (ciLiveRead) {
+            String caller = sts().getCallerIdentity(GetCallerIdentityRequest.builder().build()).arn();
+            if (!ciRoleAllowed(caller, ciAllowedRoles)) throw new IllegalStateException("the caller's role is not in " + CI_ROLES_ENV + "; refused in CI");
+        }
         if (demo) seedDemo();
     }
 
@@ -1088,7 +1101,10 @@ public final class AwsBackend implements AutoCloseable {
     }
     private CloudFormationClient cloudformation() { return cloudformation == null ? cloudformation = register(base(CloudFormationClient.builder()).build()) : cloudformation; }
     private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b) { return base(b,config); }
-    private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b,ClientOverrideConfiguration operationConfig) { b.region(region).overrideConfiguration(operationConfig); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))).overrideConfiguration(operationConfig.toBuilder().putHeader("X-Lmaws-Test-Profile",profileName).build()); else b.credentialsProvider(ProfileCredentialsProvider.builder().profileName(profileName).build()); return b; }
+    private <T extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> T base(T b,ClientOverrideConfiguration operationConfig) { b.region(region).overrideConfiguration(operationConfig); ((software.amazon.awssdk.awscore.client.builder.AwsSyncClientBuilder<?, ?>) b).httpClientBuilder(UrlConnectionHttpClient.builder()); if (endpoint != null) b.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))).overrideConfiguration(operationConfig.toBuilder().putHeader("X-Lmaws-Test-Profile",profileName).build()); else b.credentialsProvider(ciLiveRead ? ciCredentials() : ProfileCredentialsProvider.builder().profileName(profileName).build()); return b; }
+    private DefaultCredentialsProvider ciCredentialsProvider;
+    /** One SDK default chain per backend (one web identity exchange, shared by every client). */
+    private synchronized DefaultCredentialsProvider ciCredentials() { if (ciCredentialsProvider == null) ciCredentialsProvider = DefaultCredentialsProvider.builder().build(); return ciCredentialsProvider; }
 
     <B extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<?, ?>> B webBuilder(B builder) { return base(builder); }
     private static final class CostInterceptor implements ExecutionInterceptor {
@@ -1687,12 +1703,34 @@ public final class AwsBackend implements AutoCloseable {
             return null;
         }
     }
-    /** The CI read opt-in: the variable and the only operations (service:operation) allowed under it. */
-    public static final String CI_LIVE_READ_ENV = "LMAWS_CI_LIVE_READ";
+    /** CI live reads: the allowlist variable (comma-separated IAM role ARNs) and the only operations allowed under it. */
+    public static final String CI_ROLES_ENV = "LMAWS_OIDC_ALLOWED_ROLE";
     public static final java.util.Set<String> CI_READ_OPERATIONS = java.util.Set.of("sts:GetCallerIdentity", "s3:HeadBucket", "dynamodb:DescribeTable");
+    private static final Pattern ROLE_ARN = Pattern.compile("arn:aws:iam::([0-9]{12}):role/(?:[\\w+=,.@-]+/)*([\\w+=,.@-]{1,64})");
+    private static final Pattern CALLER_ARN = Pattern.compile("arn:aws:(?:sts::([0-9]{12}):assumed-role/([\\w+=,.@-]{1,64})/[\\w+=,.@-]+|iam::([0-9]{12}):role/(?:[\\w+=,.@-]+/)*([\\w+=,.@-]{1,64}))");
+    private final List<String> ciAllowedRoles;
     private final boolean ciLiveRead;
     public boolean ciLiveRead() { return ciLiveRead; }
-    static boolean ciLiveReadRequested(Map<String, String> env) { return "1".equals(env.get(CI_LIVE_READ_ENV)); }
+    /** The allowlist as "account:role-name" keys; an entry that is not an IAM role ARN makes the whole list invalid. */
+    static List<String> ciAllowedRoles(Map<String, String> env) {
+        String raw = env.getOrDefault(CI_ROLES_ENV, "").trim();
+        if (raw.isEmpty()) return List.of();
+        List<String> keys = new ArrayList<>();
+        for (String part : raw.split(",", -1)) {
+            var m = ROLE_ARN.matcher(part.trim());
+            if (!m.matches()) throw new IllegalStateException(CI_ROLES_ENV + " must list IAM role ARNs (arn:aws:iam::ACCOUNT:role/NAME), comma-separated");
+            keys.add(m.group(1) + ":" + m.group(2));
+        }
+        return List.copyOf(keys);
+    }
+    /** Whether a caller ARN (an assumed-role session or a role ARN) is one of the allowed roles (account and name). */
+    static boolean ciRoleAllowed(String arn, List<String> allowed) {
+        if (arn == null) return false;
+        var m = CALLER_ARN.matcher(arn.trim());
+        if (!m.matches()) return false;
+        String key = m.group(1) != null ? m.group(1) + ":" + m.group(2) : m.group(3) + ":" + m.group(4);
+        return allowed.contains(key);
+    }
     /** Whether a request is allowed under the CI read opt-in (service names as the SDK reports them, any case). */
     static boolean ciReadAllowed(String service, String operation) {
         return service != null && operation != null && CI_READ_OPERATIONS.contains(service.toLowerCase(Locale.ROOT) + ":" + operation);
@@ -1703,7 +1741,7 @@ public final class AwsBackend implements AutoCloseable {
             String service = attributes.getOptionalAttribute(SdkExecutionAttribute.SERVICE_NAME).orElse(null);
             String operation = attributes.getOptionalAttribute(SdkExecutionAttribute.OPERATION_NAME).orElse(null);
             if (!ciReadAllowed(service, operation))
-                throw new SecurityException(service + ":" + operation + " is refused in CI: " + CI_LIVE_READ_ENV + " allows only " + new java.util.TreeSet<>(CI_READ_OPERATIONS));
+                throw new SecurityException(service + ":" + operation + " is refused in CI: " + CI_ROLES_ENV + " allows only " + new java.util.TreeSet<>(CI_READ_OPERATIONS));
         }
     }
     private static boolean ciEnvironment() {

@@ -7,8 +7,9 @@
 | `live mutations require AWS_PROFILE=lmaws or lmaws-ec2 (active profile: ...)` | A host program tried to write with another profile | Export `AWS_PROFILE=lmaws` for owned sandboxes |
 | `The 'admin' profile is reserved exclusively for lmaws_ IAM policy grants` | `admin` used for a non-IAM write | Use `lmaws`; `admin` is only for the grant recipes |
 | `live writes require LMAWS_LIVE=1` | Host program run directly without live mode | Recipes set it from `--live`; direct runs export `LMAWS_LIVE=1` |
-| `live AWS credentials are disabled in CI` | `CI=true` in the environment | Expected in CI; run live tests locally, or set `LMAWS_CI_LIVE_READ=1` for read-only checks only ([PROFILES.md](PROFILES.md)) |
-| `<service>:<operation> is refused in CI: LMAWS_CI_LIVE_READ allows only [...]` | the program made a call outside the CI read set | Only `identity()` and `resource_exists("bucket"/"table", ...)` run live in CI |
+| `live AWS credentials are disabled in CI` | `CI=true` in the environment | Expected in CI; run live tests locally, or set `LMAWS_OIDC_ALLOWED_ROLE` for read-only checks by an allowed role ([PROFILES.md](PROFILES.md)) |
+| `<service>:<operation> is refused in CI: LMAWS_OIDC_ALLOWED_ROLE allows only [...]` | the program made a call outside the CI read set | Only `identity()` and `resource_exists("bucket"/"table", ...)` run live in CI |
+| `the caller's role is not in LMAWS_OIDC_ALLOWED_ROLE` / `AWS_ROLE_ARN is not in ...` | the CI credentials are not an allowed role | Add the role ARN to the allowlist, or fix the job's role |
 | `AWS scoped profile unavailable; check the isolated source profile and session policy; agents never use admin.` | `--credential-process` could not read the selected static issuer, load the session policy, or STS refused issuance | `lmctl recipes/session_doctor.lms --live`; check the explicitly selected issuer (default `agent-issuer`) and session policy file; agents never use admin |
 | `AWS AccessDenied (HTTP 403)` / `UnauthorizedOperation` | The session policy does not allow the call | `lmctl examples/recipe_policy_explain_denial.lms` explains denials; ask an administrator |
 | `unknown recipe argument --x` | Typo in a flag | The `# Arguments:` line at the top of every recipe lists its flags |
