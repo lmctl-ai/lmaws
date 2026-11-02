@@ -262,6 +262,87 @@ func TestStalledContinuationTokenFails(t *testing.T) {
 	}
 }
 
+func TestBucketListAndQueueListPaginationStallAndLimit(t *testing.T) {
+	// 1. Multi-page BucketList follows ContinuationToken across pages and sorts results.
+	h1, _, m1 := newTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && r.URL.Path == "/" {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			if r.URL.Query().Get("continuation-token") == "tok-page-2" {
+				_, _ = io.WriteString(w, `<ListAllMyBucketsResult><Buckets><Bucket><Name>alpha</Name></Bucket></Buckets></ListAllMyBucketsResult>`)
+			} else {
+				_, _ = io.WriteString(w, `<ListAllMyBucketsResult><Buckets><Bucket><Name>zeta</Name></Bucket></Buckets><ContinuationToken>tok-page-2</ContinuationToken></ListAllMyBucketsResult>`)
+			}
+			return true
+		}
+		return false
+	})
+	buckets, err := h1.BucketList(false)
+	if err != nil || len(buckets) != 2 || buckets[0] != "alpha" || buckets[1] != "zeta" {
+		t.Fatalf("multi-page BucketList: buckets=%v err=%v last=%+v", buckets, err, h1.LastError())
+	}
+	if m1.count("GET /") != 2 {
+		t.Fatalf("expected 2 GET / requests for 2-page BucketList, got %d", m1.count("GET /"))
+	}
+
+	// 2. Stalled BucketList ContinuationToken fails after 2 requests with INTERNAL and returns no partial names.
+	h2, _, m2 := newTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && r.URL.Path == "/" {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `<ListAllMyBucketsResult><Buckets><Bucket><Name>one</Name></Bucket></Buckets><ContinuationToken>same</ContinuationToken></ListAllMyBucketsResult>`)
+			return true
+		}
+		return false
+	})
+	if names, _ := h2.BucketList(false); names != nil || h2.LastError().Code != hostkit.Internal {
+		t.Fatalf("stalled BucketList: names=%v last=%+v", names, h2.LastError())
+	}
+	if m2.count("GET /") != 2 {
+		t.Fatalf("expected 2 GET / requests before stalled token abort, got %d", m2.count("GET /"))
+	}
+
+	// 3. BucketList exceeding MaxPages fails with INTERNAL and refuses partial results.
+	var pageSeq atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := pageSeq.Add(1)
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintf(w, `<ListAllMyBucketsResult><Buckets><Bucket><Name>b-%d</Name></Bucket></Buckets><ContinuationToken>tok-%d</ContinuationToken></ListAllMyBucketsResult>`, n, n)
+	}))
+	defer srv.Close()
+	t.Setenv("LMAWS_ENDPOINT", srv.URL)
+	a3 := New(nil)
+	h3 := cloudhost.New(cloudhost.Config{
+		Provider:  "aws",
+		Store:     a3,
+		Queue:     a3,
+		Endpoints: Endpoints(),
+		MaxPages:  3,
+	})
+	h3.SetAbortOnError(false)
+	if names, _ := h3.BucketList(false); names != nil || h3.LastError().Code != hostkit.Internal {
+		t.Fatalf("page-limit BucketList: names=%v last=%+v", names, h3.LastError())
+	}
+	if pageSeq.Load() != 3 {
+		t.Fatalf("expected 3 page fetches for MaxPages=3, got %d", pageSeq.Load())
+	}
+
+	// 4. Stalled QueueList NextToken fails with INTERNAL and returns no partial queue names.
+	h4, _, _ := newTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.Header.Get("X-Amz-Target") == "AmazonSQS.ListQueues" {
+			w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"QueueUrls":["http://127.0.0.1:4566/000000000000/q1"],"NextToken":"same-qtok"}`)
+			return true
+		}
+		return false
+	})
+	if qnames, _ := h4.QueueList(false); qnames != nil || h4.LastError().Code != hostkit.Internal {
+		t.Fatalf("stalled QueueList: qnames=%v last=%+v", qnames, h4.LastError())
+	}
+}
+
 // H2: S3 HEAD 403 has no body; verify header classification and body-bearing probe fallback.
 func TestHead403Classification(t *testing.T) {
 	cases := []struct {

@@ -109,14 +109,15 @@ func (r *remote) HeadBucket(ctx context.Context, name string) error {
 
 func (r *remote) ListBuckets(ctx context.Context, token string) ([]string, string, error) {
 	r.recordCall("ListBuckets", false)
-	if token != "" {
-		return nil, "", nil
-	}
 	cli := r.s3Client(ctx)
+	in := &s3.ListBucketsInput{}
+	if token != "" {
+		in.ContinuationToken = aws.String(token)
+	}
 	var out *s3.ListBucketsOutput
 	err := r.doAWS(ctx, true, func(ctx context.Context) error {
 		var lErr error
-		out, lErr = cli.ListBuckets(ctx, &s3.ListBucketsInput{})
+		out, lErr = cli.ListBuckets(ctx, in)
 		return lErr
 	})
 	if err != nil {
@@ -128,7 +129,7 @@ func (r *remote) ListBuckets(ctx context.Context, token string) ([]string, strin
 			names = append(names, *b.Name)
 		}
 	}
-	return names, "", nil
+	return names, strings.TrimSpace(aws.ToString(out.ContinuationToken)), nil
 }
 
 func (r *remote) PutObject(ctx context.Context, bucket, key string, body []byte, contentType string, metadata map[string]string) (hostkit.ObjectMeta, error) {
@@ -338,12 +339,12 @@ func (r *remote) ListObjects(ctx context.Context, bucket, prefix string, max int
 			ETag: cleanETag(aws.ToString(obj.ETag)),
 		})
 	}
-	var next string
-	if aws.ToBool(out.IsTruncated) {
-		next = aws.ToString(out.NextContinuationToken)
-		if next == "" && len(items) > 0 {
-			next = items[len(items)-1].Key
-		}
+	next := strings.TrimSpace(aws.ToString(out.NextContinuationToken))
+	if aws.ToBool(out.IsTruncated) && next == "" && len(items) > 0 {
+		next = items[len(items)-1].Key
+	}
+	if token != "" && next == token {
+		return hostkit.ObjectPage{}, hostkit.ProviderError(hostkit.Internal, 0, "StalledPagination", "pagination stalled: continuation token repeated")
 	}
 	return hostkit.ObjectPage{
 		Items:     items,

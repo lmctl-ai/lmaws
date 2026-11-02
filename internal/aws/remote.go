@@ -183,7 +183,7 @@ func (r *remote) doAWS(ctx context.Context, idempotent bool, op func(ctx context
 		status, hdr := extractHTTPResponse(lastCallErr)
 		if status == 0 {
 			// Transport error (no HTTP response received).
-			return hostkit.Attempt{Err: lastCallErr}
+			return hostkit.Attempt{Err: lastCallErr, NotSent: hostkit.RequestNotSent(lastCallErr)}
 		}
 		var retryAfter string
 		if hdr != nil {
