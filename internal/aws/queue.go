@@ -4,7 +4,9 @@ package aws
 
 import (
 	"context"
-	"net/http"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
@@ -71,29 +73,25 @@ func queueNameFromURL(queueURL string) string {
 	return path
 }
 
+func fallbackCreateToken() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
 func (r *remote) CreateQueue(ctx context.Context, name string) (bool, error) {
 	r.recordCall("CreateQueue", true)
 	cli := r.sqsClient(ctx)
 	tok := hostkit.CreateToken(ctx)
-
-	// Probe GetQueueUrl first because SQS CreateQueue on an already-existing
-	// queue with default attributes returns 200 OK instead of 400 QueueAlreadyExists.
-	// When the queue already exists, report CONFLICT (or false when no token is
-	// attached) so cloudhost resolves ownership via LookupQueue + QueueCreateToken.
-	if _, err := r.resolveQueueURL(ctx, cli, name); err == nil {
-		if tok == "" {
-			return false, nil
-		}
-		return false, hostkit.ProviderError(hostkit.Conflict, http.StatusConflict, "QueueAlreadyExists", "queue already exists")
-	} else if ce := classify(err, scopeQueue); ce.Code != hostkit.NotFound {
-		return false, ce
+	if tok == "" {
+		tok = fallbackCreateToken()
 	}
 
 	in := &sqs.CreateQueueInput{
 		QueueName: aws.String(name),
-	}
-	if tok != "" {
-		in.Tags = map[string]string{createTokenTagKey: tok}
+		Tags:      map[string]string{createTokenTagKey: tok},
 	}
 
 	var out *sqs.CreateQueueOutput
@@ -105,13 +103,25 @@ func (r *remote) CreateQueue(ctx context.Context, name string) (bool, error) {
 	if err != nil {
 		return false, classify(err, scopeQueue)
 	}
-	if strings.TrimSpace(aws.ToString(out.QueueUrl)) == "" {
+	rawURL := strings.TrimSpace(aws.ToString(out.QueueUrl))
+	if rawURL == "" {
 		return false, &hostkit.CloudError{
 			Code:    hostkit.Internal,
 			Message: "sqs CreateQueue returned an empty QueueUrl",
 		}
 	}
-	return true, nil
+
+	// SQS CreateQueue on an already-existing queue with matching/default
+	// attributes returns HTTP 200 OK with the existing QueueUrl while keeping
+	// the existing queue's original tags. Always read back the queue's create
+	// token and report created=true only when it matches the token generated
+	// for THIS call.
+	qURL := normalizeQueueURLToEndpoint(rawURL, hostkit.EndpointFrom(ctx))
+	gotTok, err := r.queueCreateTokenByURL(ctx, cli, qURL)
+	if err != nil {
+		return false, err
+	}
+	return gotTok != "" && gotTok == tok, nil
 }
 
 func (r *remote) QueueCreateToken(ctx context.Context, name string) (string, error) {
@@ -121,6 +131,10 @@ func (r *remote) QueueCreateToken(ctx context.Context, name string) (string, err
 	if err != nil {
 		return "", err
 	}
+	return r.queueCreateTokenByURL(ctx, cli, qURL)
+}
+
+func (r *remote) queueCreateTokenByURL(ctx context.Context, cli *sqs.Client, qURL string) (string, error) {
 	var out *sqs.ListQueueTagsOutput
 	tErr := r.doAWS(ctx, true, func(ctx context.Context) error {
 		var callErr error

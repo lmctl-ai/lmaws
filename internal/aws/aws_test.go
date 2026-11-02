@@ -160,7 +160,7 @@ func (m *mockAWS) mutatingRequestCount() int {
 		if strings.HasPrefix(r, "PUT ") || strings.HasPrefix(r, "DELETE ") {
 			n++
 		} else if strings.HasPrefix(r, "POST ") {
-			if !strings.Contains(r, "GetQueueUrl") && !strings.Contains(r, "ListQueues") {
+			if !strings.Contains(r, "GetQueueUrl") && !strings.Contains(r, "ListQueues") && !strings.Contains(r, "ListQueueTags") {
 				n++
 			}
 		}
@@ -625,7 +625,9 @@ func TestCreateOwnershipTokensSQSAndS3Conflict(t *testing.T) {
 	var mu sync.Mutex
 	queueTags := map[string]map[string]string{}
 	buckets := map[string]bool{}
+	var fail503FirstCreateQueue atomic.Bool
 	var dropFirstCreateQueue atomic.Bool
+	var conflict400OnExistingQueue atomic.Bool
 	var conflictOnCreateBucket atomic.Bool
 
 	srv := httpguard.New(t)
@@ -667,9 +669,19 @@ func TestCreateOwnershipTokensSQSAndS3Conflict(t *testing.T) {
 			case "AmazonSQS.CreateQueue":
 				if _, exists := queueTags[payload.QueueName]; exists {
 					mu.Unlock()
+					if conflict400OnExistingQueue.Load() {
+						httpguard.Status(
+							http.StatusBadRequest,
+							`{"__type":"com.amazonaws.sqs#QueueAlreadyExists","message":"A queue already exists with the same name."}`,
+							"Content-Type: application/x-amz-json-1.0",
+						)(w, r)
+						return
+					}
+					// Real SQS and awssim return HTTP 200 OK with the existing
+					// QueueUrl while retaining the existing queue's original tags.
 					httpguard.Status(
-						http.StatusBadRequest,
-						`{"__type":"com.amazonaws.sqs#QueueAlreadyExists","message":"A queue already exists with the same name."}`,
+						http.StatusOK,
+						fmt.Sprintf(`{"QueueUrl":"%s/000000000000/%s"}`, srv.URL, payload.QueueName),
 						"Content-Type: application/x-amz-json-1.0",
 					)(w, r)
 					return
@@ -680,6 +692,14 @@ func TestCreateOwnershipTokensSQSAndS3Conflict(t *testing.T) {
 				}
 				queueTags[payload.QueueName] = copied
 				mu.Unlock()
+				if fail503FirstCreateQueue.CompareAndSwap(true, false) {
+					httpguard.Status(
+						http.StatusServiceUnavailable,
+						`{"__type":"com.amazonaws.sqs#ServiceUnavailable","message":"Service temporarily unavailable."}`,
+						"Content-Type: application/x-amz-json-1.0",
+					)(w, r)
+					return
+				}
 				if dropFirstCreateQueue.CompareAndSwap(true, false) {
 					httpguard.HangUp()(w, r)
 					return
@@ -747,8 +767,9 @@ func TestCreateOwnershipTokensSQSAndS3Conflict(t *testing.T) {
 		httpguard.Status(http.StatusNotFound, "")(w, r)
 	})
 
-	// Seed a pre-existing queue with no create token.
-	queueTags["preexisting-queue"] = map[string]string{}
+	// Seed pre-existing queues: one with a foreign token, one with no token.
+	queueTags["preexisting-foreign-token"] = map[string]string{createTokenTagKey: "foreign-token-123"}
+	queueTags["preexisting-no-token"] = map[string]string{}
 
 	t.Setenv("LMAWS_ENDPOINT", srv.URL)
 	t.Setenv("LMAWS_LIVE", "")
@@ -756,10 +777,10 @@ func TestCreateOwnershipTokensSQSAndS3Conflict(t *testing.T) {
 	a := New(&Options{Retry: &rp})
 	h := cloudhost.New(cloudhost.Config{Provider: "aws", Store: a, Queue: a, Endpoints: Endpoints()})
 
-	// 1. SQS create succeeds -> true (token stored atomically in CreateQueue tags).
+	// 1. Fresh SQS create -> true (token stored in CreateQueue tags and verified via ListQueueTags).
 	created, err := h.QueueCreate(false, "fresh-queue")
-	if err != nil || !created {
-		t.Fatalf("fresh queue_create: created=%v err=%v", created, err)
+	if err != nil || !created || h.LastError().Code != hostkit.OK {
+		t.Fatalf("fresh queue_create: created=%v err=%v last=%+v", created, err, h.LastError())
 	}
 	mu.Lock()
 	if queueTags["fresh-queue"][createTokenTagKey] == "" {
@@ -767,24 +788,39 @@ func TestCreateOwnershipTokensSQSAndS3Conflict(t *testing.T) {
 	}
 	mu.Unlock()
 
-	// 2. SQS conflict on pre-existing queue (no token or another call's token) -> false, OK.
-	for _, q := range []string{"preexisting-queue", "fresh-queue"} {
+	// 2. Pre-existing queues where CreateQueue returns HTTP 200 OK while keeping the old tag
+	// (foreign token, no token, or a previous call's token) -> created=false, OK.
+	for _, q := range []string{"preexisting-foreign-token", "preexisting-no-token", "fresh-queue"} {
 		created, err = h.QueueCreate(false, q)
 		if err != nil || created || h.LastError().Code != hostkit.OK {
-			t.Fatalf("conflict queue_create(%q): created=%v err=%v last=%+v", q, created, err, h.LastError())
+			t.Fatalf("pre-existing 200-OK queue_create(%q): created=%v err=%v last=%+v", q, created, err, h.LastError())
 		}
 	}
 
-	// 3. SQS lost-reply create: server creates queue with OUR token on attempt 1,
-	// hangs up (EOF), then returns QueueAlreadyExists on retry -> QueueCreateToken
-	// reads back our tag via ListQueueTags and returns created=true.
-	dropFirstCreateQueue.Store(true)
-	created, err = h.QueueCreate(false, "lost-reply-queue")
+	// 3. Lost-reply SQS create (5xx on attempt 1 after committing our token, then retry
+	// returns 200 OK with our token retained) -> ListQueueTags matches our token -> created=true.
+	fail503FirstCreateQueue.Store(true)
+	created, err = h.QueueCreate(false, "lost-reply-200-queue")
 	if err != nil || !created || h.LastError().Code != hostkit.OK {
-		t.Fatalf("lost-reply queue_create: created=%v err=%v last=%+v", created, err, h.LastError())
+		t.Fatalf("lost-reply (503 then 200 OK) queue_create: created=%v err=%v last=%+v", created, err, h.LastError())
 	}
 
-	// 4. S3 create succeeds -> true; S3 conflict (409 BucketAlreadyOwnedByYou) -> false, OK
+	// 4. Lost-reply SQS create where retry returns 400 QueueAlreadyExists -> cloudhost
+	// resolves conflict via LookupQueue + QueueCreateToken (ListQueueTags) -> created=true,
+	// whereas a pre-existing foreign queue returning 400 QueueAlreadyExists -> created=false.
+	conflict400OnExistingQueue.Store(true)
+	dropFirstCreateQueue.Store(true)
+	created, err = h.QueueCreate(false, "lost-reply-400-queue")
+	if err != nil || !created || h.LastError().Code != hostkit.OK {
+		t.Fatalf("lost-reply (HangUp then 400 QueueAlreadyExists) queue_create: created=%v err=%v last=%+v", created, err, h.LastError())
+	}
+	created, err = h.QueueCreate(false, "preexisting-foreign-token")
+	if err != nil || created || h.LastError().Code != hostkit.OK {
+		t.Fatalf("pre-existing 400 QueueAlreadyExists queue_create: created=%v err=%v last=%+v", created, err, h.LastError())
+	}
+	conflict400OnExistingQueue.Store(false)
+
+	// 5. S3 create succeeds -> true; S3 conflict (409 BucketAlreadyOwnedByYou) -> false, OK
 	// because S3 CreateBucket has no atomic tag parameter.
 	created, err = h.BucketCreate(false, "fresh-s3-bucket")
 	if err != nil || !created {
