@@ -860,6 +860,6 @@ func TestOfflineReceiveFollowsRouteCaps(t *testing.T) {
 
 func TestEnumsDeclaredForDryRun(t *testing.T) {
 	if !cloudhost.EnumsDeclared() {
-		t.Fatalf("expected cloudhost.EnumsDeclared() == true with lmcode-go-patched replace in go.mod")
+		t.Fatalf("expected cloudhost.EnumsDeclared() == true with lmcode-go >= 06cd9ae (Registry.Enum merged upstream)")
 	}
 }

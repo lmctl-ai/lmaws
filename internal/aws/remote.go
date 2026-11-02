@@ -70,7 +70,7 @@ func (r *remote) mutatorCallCount() int {
 // Removal condition: delete stripS3XIDEnabled and stripS3XIDMiddleware once an
 // awssim release containing commit dc7b063 (branch fix-sdk-compat, which adds
 // "x-id" and "fetch-owner" to AuthFilter.S3_QUERY) is published and pinned by
-// lmcloud-sims.
+// lmcloud/scripts/sims.lock.
 func (r *remote) stripS3XIDEnabled() bool {
 	if r.stripS3XID != nil {
 		return *r.stripS3XID
@@ -89,7 +89,7 @@ func (r *remote) stripS3XIDEnabled() bool {
 // mode do not reject S3 operations with 403 AccessDenied.
 //
 // Removal condition: delete once an awssim release containing commit dc7b063
-// is published and pinned by lmcloud-sims.
+// is published and pinned by lmcloud/scripts/sims.lock.
 var stripS3XIDMiddleware = middleware.BuildMiddlewareFunc(
 	"lmaws.CompatStripS3XIDQueryParam",
 	func(ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler) (

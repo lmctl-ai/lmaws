@@ -38,7 +38,7 @@ type Options struct {
 	// Removal condition: delete StripS3XID and stripS3XIDMiddleware once an
 	// awssim release containing commit dc7b063 (branch fix-sdk-compat, which
 	// adds "x-id" and "fetch-owner" to AuthFilter.S3_QUERY) is published and
-	// pinned by lmcloud-sims.
+	// pinned by lmcloud/scripts/sims.lock.
 	StripS3XID *bool
 
 	// Retry overrides the default hostkit.RetryPolicy (3 attempts on 429/5xx).

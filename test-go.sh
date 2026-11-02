@@ -12,8 +12,8 @@ unset LMAWS_LIVE LMCLOUD_ENDPOINT LMCLOUD_STORAGE_ENDPOINT LMCLOUD_QUEUE_ENDPOIN
 
 LMSCRIPT_BIN="${LMSCRIPT_BIN:-/home/ubuntu/lmctl-mono/lmscript/bin/lmscript}"
 LMCLOUD_DIR="${LMCLOUD_DIR:-/home/ubuntu/cloud/lmcloud}"
-LMCLOUD_SIMS_DIR="${LMCLOUD_SIMS_DIR:-/home/ubuntu/cloud/lmcloud-sims}"
-LMCLOUD_SIM_CACHE="${LMCLOUD_SIM_DIR:-$LMCLOUD_SIMS_DIR/.cache/sims}"
+SIM_SH="${SIM_SH:-${LMCLOUD_DIR}/scripts/sim.sh}"
+LMCLOUD_SIM_CACHE="${LMCLOUD_SIM_DIR:-${LMCLOUD_DIR}/.cache/sims}"
 BIN="$ROOT/bin/lmaws"
 SIM_NAME="lmaws-test-go-$$"
 ENFORCE_PID=""
@@ -27,8 +27,8 @@ cleanup() {
   if [[ -n "$ENFORCE_TMP" && -d "$ENFORCE_TMP" ]]; then
     rm -rf "$ENFORCE_TMP"
   fi
-  if [[ -x "$LMCLOUD_SIMS_DIR/scripts/sim.sh" ]]; then
-    LMCLOUD_SIM_DIR="$LMCLOUD_SIM_CACHE" "$LMCLOUD_SIMS_DIR/scripts/sim.sh" stop aws --name "$SIM_NAME" >/dev/null 2>&1 || true
+  if [[ -x "$SIM_SH" ]]; then
+    LMCLOUD_SIM_DIR="$LMCLOUD_SIM_CACHE" "$SIM_SH" stop aws --name "$SIM_NAME" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -36,8 +36,8 @@ trap cleanup EXIT
 echo "=== 1. Pin & schema lock verification ==="
 test -f "$ROOT/sdk.lock"
 test -f "$ROOT/lmcloud.lock"
-grep -q "77932bf7134af4c330fa1eee16c7e10c1fb1a1d7" "$ROOT/sdk.lock"
-grep -q "77932bf7134a" "$ROOT/go.mod"
+grep -q "06cd9ae991d90fea9ad38f3b071da646c76832f4" "$ROOT/sdk.lock"
+grep -q "06cd9ae991d9" "$ROOT/go.mod"
 "$ROOT/scripts/sync-lmcloud-schema.sh" --verify
 
 echo "=== 2. Go vet & unit tests (-race -count=3) ==="
@@ -171,13 +171,13 @@ if [[ "$rc_mem_prog" -ne 0 ]]; then
 fi
 
 echo "=== 9. Conformance suite against cached released awssim (object-storage + queue) ==="
-ENDPOINT="$(LMCLOUD_SIM_DIR="$LMCLOUD_SIM_CACHE" "$LMCLOUD_SIMS_DIR/scripts/sim.sh" start aws --name "$SIM_NAME" --free-port)"
+ENDPOINT="$(LMCLOUD_SIM_DIR="$LMCLOUD_SIM_CACHE" "$SIM_SH" start aws --name "$SIM_NAME" --free-port)"
 echo "awssim running at $ENDPOINT (name: $SIM_NAME)"
 
 LMSCRIPT_BIN="$LMSCRIPT_BIN" "$LMCLOUD_DIR/tests/run-conformance.sh" "$BIN" "$ENDPOINT" object-storage
 LMSCRIPT_BIN="$LMSCRIPT_BIN" "$LMCLOUD_DIR/tests/run-conformance.sh" "$BIN" "$ENDPOINT" queue
 
-LMCLOUD_SIM_DIR="$LMCLOUD_SIM_CACHE" "$LMCLOUD_SIMS_DIR/scripts/sim.sh" stop aws --name "$SIM_NAME"
+LMCLOUD_SIM_DIR="$LMCLOUD_SIM_CACHE" "$SIM_SH" stop aws --name "$SIM_NAME"
 
 echo "=== 10. Enforced-auth (--auth enforce) verification on cached released awssim (middleware enabled) ==="
 ENFORCE_TMP="$(mktemp -d)"

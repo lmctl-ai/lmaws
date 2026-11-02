@@ -8,8 +8,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.25
 	github.com/aws/smithy-go v1.24.2
-	github.com/lmctl-ai/lmcloud v0.0.0-00010101000000-000000000000
-	github.com/lmctl-ai/lmcode-go v0.6.39-0.20261031234045-77932bf7134a
+	github.com/lmctl-ai/lmcloud v0.1.0
+	github.com/lmctl-ai/lmcode-go v0.6.39-0.20261102140952-06cd9ae991d9
 )
 
 require (
@@ -22,11 +22,3 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.21 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21 // indirect
 )
-
-// github.com/lmctl-ai/lmcloud is not published as a module release yet;
-// resolve to the sibling checkout during the shared-go / hostkit migration.
-replace github.com/lmctl-ai/lmcloud => ../lmcloud
-
-// TEMPORARY: lmcode-go Registry.Enum (dry enum results) is not published yet.
-// Remove when it is merged upstream and the lmcode-go pin is bumped.
-replace github.com/lmctl-ai/lmcode-go => ../lmcode-go-patched

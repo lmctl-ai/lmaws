@@ -24,3 +24,7 @@ github.com/aws/aws-sdk-go-v2/service/sqs v1.42.25 h1:8Bv3TQ1Cob6HLlpUbAnWxeHhAkY
 github.com/aws/aws-sdk-go-v2/service/sqs v1.42.25/go.mod h1:eDstEbM0OEnBUnNQxIA7j74Jy61cCU1S4EMlCtdMwzs=
 github.com/aws/smithy-go v1.24.2 h1:FzA3bu/nt/vDvmnkg+R8Xl46gmzEDam6mZ1hzmwXFng=
 github.com/aws/smithy-go v1.24.2/go.mod h1:YE2RhdIuDbA5E5bTdciG9KrW3+TiEONeUWCqxX9i1Fc=
+github.com/lmctl-ai/lmcloud v0.1.0 h1:WCYsVhdLwYJMFKZUEhTv7YM/HEjqMhQOrj2GMJOilro=
+github.com/lmctl-ai/lmcloud v0.1.0/go.mod h1:99qHT0EFulWuhlIG2mBtQs5bqL2era3MuuYtiCNk6TI=
+github.com/lmctl-ai/lmcode-go v0.6.39-0.20261102140952-06cd9ae991d9 h1:FM1pg6GQqiKtMPIJLyX7TZsDqFw9lDzOzwTkpzs+nMs=
+github.com/lmctl-ai/lmcode-go v0.6.39-0.20261102140952-06cd9ae991d9/go.mod h1:Wfm1dj/9Uek4C4Y6LOkL5kFNRojgFUej7DDRGStSfVc=
