@@ -1,222 +1,128 @@
+// SPDX-License-Identifier: MIT
+
+// Command lmaws serves the shared lmcloud schema for AWS. Everything
+// provider-neutral comes from github.com/lmctl-ai/lmcloud/hostkit; this binary
+// adds the AWS S3/SQS adapter (internal/aws), lmaws's CLI surface, and its
+// memory watchdog.
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 	"os"
-	"strings"
 
 	lmcode "github.com/lmctl-ai/lmcode-go"
 
-	"github.com/lmctl-ai/lmaws/internal/host"
-	"github.com/lmctl-ai/lmaws/internal/invoke"
+	"github.com/lmctl-ai/lmaws/internal/aws"
 	"github.com/lmctl-ai/lmaws/internal/membudget"
-	"github.com/lmctl-ai/lmaws/internal/safety"
-	"github.com/lmctl-ai/lmaws/schema"
+	"github.com/lmctl-ai/lmcloud/hostkit/cloudhost"
+	"github.com/lmctl-ai/lmcloud/hostkit/invoke"
+	"github.com/lmctl-ai/lmcloud/schema"
 )
 
-const Version = "0.1.27"
+const Version = "0.1.0"
 
-func main() {
-	os.Exit(run(os.Args[1:]))
-}
+func main() { os.Exit(run(os.Args[1:], os.Stdout)) }
 
-func run(args []string) int {
-	// Support the documented subcommand-per-schema pattern:
-	//   lmaws cloud --lmcode FILE | --lmcode-schema [--json] | --lmcode-signatures [--without-std]
-	// During the Go port (Phases A-C), top-level lmaws also serves the shared lmcloud schema
-	// so conformance runners invoking `<host> --lmcode FILE` work directly.
+func run(args []string, out io.Writer) int {
+	// `lmaws cloud ...` selects the shared schema (the only schema served in Phase A-C).
 	if len(args) > 0 && args[0] == "cloud" {
 		args = args[1:]
 	}
 
-	if len(args) == 0 {
-		printHelp(os.Stdout)
-		return 0
-	}
-
-	// 1. Metadata flags (no memory budget watchdog required).
-	var (
-		wantVersion    bool
-		wantHelp       bool
-		wantNotices    bool
-		wantSchema     bool
-		wantSchemaJSON bool
-		wantSignatures bool
-		withoutStd     bool
-		wantSweep      bool
-		sweepArg       string
-		lmcodeFiles    []string
-		manifestPath   string
-		endpointFlag   string
-		regionFlag     string
-		forceDry       bool
-	)
-
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--version" || arg == "-V":
-			wantVersion = true
-		case arg == "--help" || arg == "-h":
-			wantHelp = true
-		case arg == "--notices":
-			wantNotices = true
-		case arg == "--lmcode-schema":
-			wantSchema = true
-		case arg == "--json":
-			wantSchemaJSON = true
-		case arg == "--lmcode-signatures":
-			wantSignatures = true
-		case arg == "--without-std":
-			withoutStd = true
-		case arg == "--sweep":
-			wantSweep = true
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				i++
-				sweepArg = args[i]
-			}
-		case arg == "--dry":
+	// Support explicit `--dry` flag in addition to LMCODE_INVOCATION_FILE.
+	forceDry := false
+	filtered := make([]string, 0, len(args))
+	for _, a := range args {
+		if a == "--dry" {
 			forceDry = true
-		case arg == "--lmcode":
-			if i+1 >= len(args) {
-				return lmcode.FailureFrame(os.Stderr, "cli", lmcode.NewError(lmcode.CLI_USAGE, "--lmcode requires a bytecode path"))
-			}
-			for i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
-				i++
-				lmcodeFiles = append(lmcodeFiles, args[i])
-			}
-			if len(lmcodeFiles) == 0 {
-				return lmcode.FailureFrame(os.Stderr, "cli", lmcode.NewError(lmcode.CLI_USAGE, "--lmcode requires a bytecode path"))
-			}
-		case strings.HasPrefix(arg, "--lmcode="):
-			val := strings.TrimPrefix(arg, "--lmcode=")
-			if val == "" {
-				return lmcode.FailureFrame(os.Stderr, "cli", lmcode.NewError(lmcode.CLI_USAGE, "--lmcode requires a bytecode path"))
-			}
-			lmcodeFiles = append(lmcodeFiles, val)
-		case arg == "--manifest":
-			if i+1 >= len(args) {
-				return lmcode.FailureFrame(os.Stderr, "cli", lmcode.NewError(lmcode.CLI_USAGE, "--manifest requires a file path"))
-			}
-			i++
-			manifestPath = args[i]
-		case strings.HasPrefix(arg, "--manifest="):
-			manifestPath = strings.TrimPrefix(arg, "--manifest=")
-			if manifestPath == "" {
-				return lmcode.FailureFrame(os.Stderr, "cli", lmcode.NewError(lmcode.CLI_USAGE, "--manifest requires a file path"))
-			}
-		case arg == "--endpoint":
-			if i+1 >= len(args) {
-				return lmcode.FailureFrame(os.Stderr, "cli", lmcode.NewError(lmcode.CLI_USAGE, "--endpoint requires a URL"))
-			}
-			i++
-			endpointFlag = args[i]
-		case strings.HasPrefix(arg, "--endpoint="):
-			endpointFlag = strings.TrimPrefix(arg, "--endpoint=")
-		case arg == "--region":
-			if i+1 >= len(args) {
-				return lmcode.FailureFrame(os.Stderr, "cli", lmcode.NewError(lmcode.CLI_USAGE, "--region requires a value"))
-			}
-			i++
-			regionFlag = args[i]
-		case strings.HasPrefix(arg, "--region="):
-			regionFlag = strings.TrimPrefix(arg, "--region=")
-		default:
-			return lmcode.FailureFrame(os.Stderr, "cli", lmcode.NewError(lmcode.CLI_USAGE, fmt.Sprintf("unknown option: %s", arg)))
+			continue
 		}
+		filtered = append(filtered, a)
 	}
+	args = filtered
 
-	if wantVersion {
-		fmt.Printf("lmaws %s\n", Version)
+	switch {
+	case len(args) == 0 || (len(args) == 1 && (args[0] == "--help" || args[0] == "-h")):
+		printHelp(out)
 		return 0
-	}
-	if wantHelp {
-		printHelp(os.Stdout)
+	case len(args) == 1 && (args[0] == "--version" || args[0] == "-V"):
+		fmt.Fprintf(out, "lmaws %s\n", Version)
 		return 0
-	}
-	if wantNotices {
-		printNotices(os.Stdout)
+	case len(args) == 1 && args[0] == "--notices":
+		printNotices(out)
 		return 0
-	}
-	if wantSchema {
-		_ = wantSchemaJSON
-		_, _ = os.Stdout.Write(schema.EmbeddedCloudSchema)
+	case len(args) >= 1 && args[0] == "--sweep":
+		fmt.Fprintln(out, `{"ok":true,"swept":0,"mode":"sim-or-fake-only"}`)
 		return 0
-	}
-	if wantSignatures {
-		var reg *lmcode.Registry
-		if withoutStd {
-			reg = lmcode.NewRegistryWithoutStd()
-		} else {
-			reg = lmcode.NewRegistry()
-		}
-		if err := host.Register(reg, host.New(host.Options{})); err != nil {
-			return lmcode.FailureFrame(os.Stderr, "register", err)
-		}
-		var sigs []string
-		if withoutStd {
-			sigs = reg.HostSignatures()
-		} else {
-			sigs = reg.Signatures()
-		}
-		for _, s := range sigs {
-			fmt.Println(s)
-		}
+	case args[0] == "--lmcode-schema" && (len(args) == 1 || (len(args) == 2 && args[1] == "--json")):
+		_, _ = out.Write(schema.Bytes)
 		return 0
+	case args[0] == "--lmcode-signatures" && (len(args) == 1 || (len(args) == 2 && args[1] == "--without-std")):
+		return signatures(out, len(args) == 2)
+	case invoke.IsInvocation(args):
+		return invocation(args, forceDry, out)
 	}
-	if wantSweep {
-		return runSweep(sweepArg)
-	}
+	return invoke.Failure("cli", lmcode.NewError(lmcode.CLI_USAGE, fmt.Sprintf("unknown or malformed arguments: %q (see lmaws --help)", args)))
+}
 
-	if len(lmcodeFiles) == 0 {
-		return lmcode.FailureFrame(os.Stderr, "cli", lmcode.NewError(lmcode.CLI_USAGE, "missing --lmcode FILE"))
+func signatures(out io.Writer, withoutStd bool) int {
+	reg := lmcode.NewRegistry()
+	if withoutStd {
+		reg = lmcode.NewRegistryWithoutStd()
 	}
+	if err := cloudhost.Register(reg, io.Discard); err != nil {
+		return invoke.Failure("app", lmcode.NewError(lmcode.APP_FAIL, err.Error()))
+	}
+	sigs := reg.Signatures()
+	if withoutStd {
+		sigs = reg.HostSignatures()
+	}
+	for _, s := range sigs {
+		fmt.Fprintln(out, s)
+	}
+	return 0
+}
 
-	// 2. Apply memory budget and start watchdog before loading/executing bytecode.
+// invocation mirrors cloudhost.Program.Main and adds lmaws's memory budget
+// hooks (invoke.Hooks{BeforeRun, StartWatchdog}).
+func invocation(args []string, forceDry bool, out io.Writer) int {
 	if _, err := membudget.InitFromEnv(); err != nil {
 		return invoke.Failure("cli", lmcode.NewError(lmcode.CLI_USAGE, err.Error()))
 	}
-
-	if forceDry {
-		_ = os.Setenv("LMCODE_DRY", "1")
-	}
-
-	var manifestPtr *string
-	if manifestPath != "" {
-		manifestPtr = &manifestPath
-	}
-
-	results, err := lmcode.InvocationResultsFromManifest(lmcodeFiles, manifestPtr)
+	inv, err := invoke.ParseArgs(args)
 	if err != nil {
 		return invoke.Failure("cli", err)
 	}
-	contract, err := lmcode.ResultContractFromSchema(schema.EmbeddedCloudSchema)
+	if forceDry {
+		inv.Dry = true
+	}
+	reg, err := cloudhost.NewRegistry(out)
+	if err != nil {
+		return invoke.Failure("app", lmcode.NewError(lmcode.APP_FAIL, err.Error()))
+	}
+	contract, err := lmcode.ResultContractFromSchema(schema.Bytes)
 	if err != nil {
 		return invoke.Failure("load", err)
 	}
-
-	reg := lmcode.NewRegistry()
+	adapter := aws.New(nil)
 	ctx := lmcode.NewContext()
-	ctx.SetDry(results.Dry() || forceDry)
-	ledger := defaultLedger()
-	h := host.New(host.Options{
-		DefaultEndpoint: endpointFlag,
-		Region:          regionFlag,
-		Ledger:          ledger,
-	})
-	if err := host.Register(reg, h); err != nil {
-		return invoke.Failure("load", err)
-	}
-	ctx.Set("cloud", h)
-
+	ctx.Set("cloud", cloudhost.New(cloudhost.Config{
+		Provider:  "aws",
+		Store:     adapter,
+		Queue:     adapter,
+		Endpoints: aws.Endpoints(),
+	}))
 	runner := &invoke.Runner{
-		Results:  results,
+		Results:  inv.Results,
 		Registry: reg,
-		Schema:   schema.EmbeddedCloudSchema,
+		Schema:   schema.Bytes,
 		Contract: contract,
 		Context:  ctx,
-		Dry:      results.Dry(),
+		Order:    inv.Order,
+		Dry:      inv.Dry,
+		Builder:  inv.Builder,
+		Out:      out,
 		Hooks: invoke.Hooks{
 			BeforeRun:     membudget.ResetRun,
 			StartWatchdog: membudget.StartWatchdog,
@@ -225,49 +131,36 @@ func run(args []string) int {
 	return runner.Execute()
 }
 
-func defaultLedger() *safety.RunLedger {
-	return safety.NewRunLedger()
-}
-
-func runSweep(runID string) int {
-	_ = runID
-	l := defaultLedger()
-	entries := l.Snapshot()
-	out := map[string]any{
-		"ok":      true,
-		"swept":   len(entries),
-		"entries": entries,
-	}
-	enc := json.NewEncoder(os.Stdout)
-	_ = enc.Encode(out)
-	return 0
-}
-
-func printHelp(w *os.File) {
-	fmt.Fprintf(w, `lmaws %s — Go lmcode host for AWS (shared lmcloud schema, SIM/FAKE ONLY)
+func printHelp(w io.Writer) {
+	fmt.Fprintf(w, `lmaws %s — Go lmcode host for AWS (shared lmcloud schema, built on lmcloud hostkit)
 
 Usage:
-  lmaws [cloud] --lmcode FILE [--manifest FILE] [--endpoint URL] [--region REGION] [--dry]
+  lmaws [cloud] [--lmcode|--first|--last] FILE ...
   lmaws [cloud] --lmcode-schema [--json]
   lmaws [cloud] --lmcode-signatures [--without-std]
   lmaws --sweep [RUN_ID]
-  lmaws --notices
-  lmaws --version | -V
-  lmaws --help | -h
+  lmaws --notices | --version | -V | --help | -h
 
-Subcommands:
-  cloud                 Select the shared lmcloud provider-neutral schema (default in pilot).
+Dry runs come from the caller's invocation manifest (lmscript --dry-run).
 
-Environment Variables:
-  LMAWS_ENDPOINT              Loopback simulator endpoint URL (127.0.0.1, ::1, localhost only)
-  LMAWS_REGION                AWS region for simulator signing (default: us-east-1)
-  LMAWS_SIM_ACCESS_KEY_ID     Simulator access key ID (default: test)
-  LMAWS_SIM_SECRET_ACCESS_KEY Simulator secret access key (default: test)
-  LMAWS_MAX_MEMORY_MB         Memory ceiling in MiB (default: 4096)
+Endpoints (validated; plain http only for loopback; see lmcloud design 02 §3.3):
+  set_endpoint(service|"all", url) > LMCLOUD_<SVC>_ENDPOINT > LMAWS_<SVC>_ENDPOINT >
+  LMCLOUD_ENDPOINT > LMAWS_ENDPOINT > AWS_ENDPOINT_URL_S3 / AWS_ENDPOINT_URL_SQS > AWS_ENDPOINT_URL
+  No endpoint: offline in-process fake. LMAWS_LIVE=1 or a non-loopback endpoint:
+  not supported yet (live AWS credential chain is a future phase).
+
+Simulator credentials and scope (loopback endpoints only):
+  LMAWS_SIM_ACCESS_KEY_ID      SigV4 access key ID (default: test)
+  LMAWS_SIM_SECRET_ACCESS_KEY  SigV4 secret access key (default: test)
+  LMAWS_SIM_REGION             SigV4 region (default: us-east-1)
+  LMAWS_COMPAT_STRIP_S3_XID    Strip S3 ?x-id= query param for pre-dc7b063 awssim (default: 1)
+
+Other:
+  LMAWS_MAX_MEMORY_MB          Memory ceiling in MiB (default 4096)
 `, Version)
 }
 
-func printNotices(w *os.File) {
+func printNotices(w io.Writer) {
 	fmt.Fprintln(w, `lmaws Third-Party Software Notices
 ==================================
 
@@ -275,7 +168,11 @@ func printNotices(w *os.File) {
    License: MIT
    Copyright (c) lmctl-ai
 
-2. github.com/aws/aws-sdk-go-v2
+2. github.com/lmctl-ai/lmcloud (hostkit)
+   License: MIT
+   Copyright (c) lmctl-ai
+
+3. github.com/aws/aws-sdk-go-v2 & github.com/aws/smithy-go
    License: Apache License 2.0
-   Copyright (c) Amazon.com, Inc. or its affiliates.`)
+   Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.`)
 }
