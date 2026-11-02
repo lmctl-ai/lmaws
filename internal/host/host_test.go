@@ -225,3 +225,55 @@ func TestS3AndSQSWireViaAWSSDKV2(t *testing.T) {
 		t.Fatalf("expected INVALID_ARGUMENT for bad receipt on QueueNack, got %+v", h.LastError())
 	}
 }
+
+func TestS3HeadDisambiguationAndAuthClassification(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodHead && r.URL.Path == "/present-bucket/missing-key.txt":
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodHead && r.URL.Path == "/present-bucket":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodHead && r.URL.Path == "/absent-bucket/missing-key.txt":
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodHead && r.URL.Path == "/absent-bucket":
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodHead && r.URL.Path == "/denied-bucket":
+			w.Header().Set("X-Amzn-Errortype", "AccessDenied")
+			w.WriteHeader(http.StatusForbidden)
+		case r.Method == http.MethodPut && r.URL.Path == "/unauth-bucket":
+			w.Header().Set("X-Amzn-Errortype", "SignatureDoesNotMatch")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`<Error><Code>SignatureDoesNotMatch</Code><Message>Signature validation failed</Message></Error>`))
+		case r.Method == http.MethodHead && r.URL.Path == "/unauth-bucket":
+			w.Header().Set("X-Amzn-Errortype", "SignatureDoesNotMatch")
+			w.WriteHeader(http.StatusForbidden)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	h := New(Options{DefaultEndpoint: srv.URL})
+	h.SetAbortOnError(false)
+
+	meta, err := h.ObjectHead("present-bucket", "missing-key.txt")
+	if err != nil || meta == nil || meta.Exists || h.LastError().Code != CodeOK {
+		t.Fatalf("expected missing key in existing bucket to return Exists=false and OK; got meta=%+v, lastErr=%+v", meta, h.LastError())
+	}
+
+	meta2, err := h.ObjectHead("absent-bucket", "missing-key.txt")
+	if err != nil || meta2 == nil || meta2.Exists || h.LastError().Code != CodeNotFound {
+		t.Fatalf("expected missing bucket on ObjectHead to set NOT_FOUND; got meta=%+v, lastErr=%+v", meta2, h.LastError())
+	}
+
+	exists, err := h.BucketExists("denied-bucket")
+	if err != nil || exists || h.LastError().Code != CodePermissionDenied {
+		t.Fatalf("expected denied-bucket BucketExists to set PERMISSION_DENIED; got exists=%v, lastErr=%+v", exists, h.LastError())
+	}
+
+	created, err := h.BucketCreate("unauth-bucket")
+	if err != nil || created || h.LastError().Code != CodeUnauthenticated {
+		t.Fatalf("expected unauth-bucket BucketCreate to set UNAUTHENTICATED; got created=%v, lastErr=%+v", created, h.LastError())
+	}
+}
+
