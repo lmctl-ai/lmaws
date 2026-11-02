@@ -4,6 +4,7 @@ package aws
 
 import (
 	"bytes"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/lmctl-ai/lmcloud/hostkit"
 	"github.com/lmctl-ai/lmcloud/hostkit/cloudhost"
+	"github.com/lmctl-ai/lmcloud/hostkit/httpguard"
 	"github.com/lmctl-ai/lmcloud/schema"
 )
 
@@ -204,40 +206,39 @@ func newTestHost(t *testing.T, opts *Options, handle func(w http.ResponseWriter,
 
 // 503 SlowDown is retried 3 times by hostkit.RetryPolicy (with AWS SDK retries off), then INTERNAL.
 func TestSlowDownRetriedThreeTimesThenInternal(t *testing.T) {
-	h, _, m := newTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
-		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.")
-		return true
-	})
+	srv := httpguard.New(t)
+	srv.Script(httpguard.Status(
+		http.StatusServiceUnavailable,
+		`<?xml version="1.0" encoding="UTF-8"?><Error><Code>SlowDown</Code><Message>Please reduce your request rate.</Message></Error>`,
+		"Content-Type: application/xml",
+	))
+	t.Setenv("LMAWS_ENDPOINT", srv.URL)
+	t.Setenv("LMAWS_LIVE", "")
+	rp := fastRetry()
+	a := New(&Options{Retry: &rp})
+	h := cloudhost.New(cloudhost.Config{Provider: "aws", Store: a, Queue: a, Endpoints: Endpoints()})
+	h.SetAbortOnError(false)
+
 	if buckets, _ := h.BucketList(false); buckets != nil || h.LastError().Code != hostkit.Internal || h.LastError().HTTPStatus != 503 || h.LastError().ProviderCode != "SlowDown" {
 		t.Fatalf("unexpected result: buckets=%v last=%+v", buckets, h.LastError())
 	}
-	if n := m.count("GET /"); n != 3 {
-		t.Fatalf("GET / attempts = %d, want 3 (SDK retries must be off; hostkit retries 3x)", n)
-	}
+	httpguard.AssertCount(t, srv, "GET", 3)
 }
 
 // Oversize object response (> 32 MiB) is rejected with INTERNAL and never truncated.
 func TestOversizeObjectRejected(t *testing.T) {
-	h, _, _ := newTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodGet && r.URL.Path == "/bkt/big.bin" {
-			w.WriteHeader(http.StatusOK)
-			_, _ = io.CopyN(w, zeroReader{}, 33_562_624)
-			return true
-		}
-		return false
-	})
+	srv := httpguard.New(t)
+	srv.Script(httpguard.Oversize(33_562_624))
+	t.Setenv("LMAWS_ENDPOINT", srv.URL)
+	t.Setenv("LMAWS_LIVE", "")
+	rp := fastRetry()
+	a := New(&Options{Retry: &rp})
+	h := cloudhost.New(cloudhost.Config{Provider: "aws", Store: a, Queue: a, Endpoints: Endpoints()})
+	h.SetAbortOnError(false)
+
 	if body, _ := h.ObjectGet(false, "bkt", "big.bin"); body != "" || h.LastError().Code != hostkit.Internal {
 		t.Fatalf("len=%d last=%+v", len(body), h.LastError())
 	}
-}
-
-type zeroReader struct{}
-
-func (zeroReader) Read(p []byte) (int, error) {
-	for i := range p {
-		p[i] = 'a'
-	}
-	return len(p), nil
 }
 
 // Pagination stalled continuation token fails with INTERNAL instead of looping forever.
@@ -618,4 +619,211 @@ func TestSchemaParity(t *testing.T) {
 		XMLName xml.Name
 	}
 	_ = root
+}
+
+func TestCreateOwnershipTokensSQSAndS3Conflict(t *testing.T) {
+	var mu sync.Mutex
+	queueTags := map[string]map[string]string{}
+	buckets := map[string]bool{}
+	var dropFirstCreateQueue atomic.Bool
+	var conflictOnCreateBucket atomic.Bool
+
+	srv := httpguard.New(t)
+	srv.Script(func(w http.ResponseWriter, r *http.Request) {
+		target := r.Header.Get("X-Amz-Target")
+		if r.Method == http.MethodPost && strings.HasPrefix(target, "AmazonSQS.") {
+			reqs := srv.Requests()
+			var bodyBytes []byte
+			if len(reqs) > 0 {
+				bodyBytes = reqs[len(reqs)-1].Body
+			}
+			var payload struct {
+				QueueName string            `json:"QueueName"`
+				QueueUrl  string            `json:"QueueUrl"`
+				Tags      map[string]string `json:"tags"`
+			}
+			_ = json.Unmarshal(bodyBytes, &payload)
+
+			mu.Lock()
+			switch target {
+			case "AmazonSQS.GetQueueUrl":
+				_, ok := queueTags[payload.QueueName]
+				mu.Unlock()
+				if !ok {
+					httpguard.Status(
+						http.StatusBadRequest,
+						`{"__type":"com.amazonaws.sqs#QueueDoesNotExist","message":"The specified queue does not exist."}`,
+						"Content-Type: application/x-amz-json-1.0",
+					)(w, r)
+					return
+				}
+				httpguard.Status(
+					http.StatusOK,
+					fmt.Sprintf(`{"QueueUrl":"%s/000000000000/%s"}`, srv.URL, payload.QueueName),
+					"Content-Type: application/x-amz-json-1.0",
+				)(w, r)
+				return
+
+			case "AmazonSQS.CreateQueue":
+				if _, exists := queueTags[payload.QueueName]; exists {
+					mu.Unlock()
+					httpguard.Status(
+						http.StatusBadRequest,
+						`{"__type":"com.amazonaws.sqs#QueueAlreadyExists","message":"A queue already exists with the same name."}`,
+						"Content-Type: application/x-amz-json-1.0",
+					)(w, r)
+					return
+				}
+				copied := map[string]string{}
+				for k, v := range payload.Tags {
+					copied[k] = v
+				}
+				queueTags[payload.QueueName] = copied
+				mu.Unlock()
+				if dropFirstCreateQueue.CompareAndSwap(true, false) {
+					httpguard.HangUp()(w, r)
+					return
+				}
+				httpguard.Status(
+					http.StatusOK,
+					fmt.Sprintf(`{"QueueUrl":"%s/000000000000/%s"}`, srv.URL, payload.QueueName),
+					"Content-Type: application/x-amz-json-1.0",
+				)(w, r)
+				return
+
+			case "AmazonSQS.ListQueueTags":
+				qName := queueNameFromURL(payload.QueueUrl)
+				tags, ok := queueTags[qName]
+				mu.Unlock()
+				if !ok {
+					httpguard.Status(
+						http.StatusBadRequest,
+						`{"__type":"com.amazonaws.sqs#QueueDoesNotExist","message":"The specified queue does not exist."}`,
+						"Content-Type: application/x-amz-json-1.0",
+					)(w, r)
+					return
+				}
+				rawTags, _ := json.Marshal(tags)
+				httpguard.Status(
+					http.StatusOK,
+					fmt.Sprintf(`{"Tags":%s}`, string(rawTags)),
+					"Content-Type: application/x-amz-json-1.0",
+				)(w, r)
+				return
+			}
+			mu.Unlock()
+		}
+
+		// S3 bucket routes
+		bName := strings.Trim(r.URL.Path, "/")
+		mu.Lock()
+		if r.Method == http.MethodHead {
+			exists := buckets[bName]
+			mu.Unlock()
+			if exists {
+				httpguard.Status(http.StatusOK, "")(w, r)
+			} else {
+				httpguard.Status(http.StatusNotFound, "")(w, r)
+			}
+			return
+		}
+		if r.Method == http.MethodPut {
+			if buckets[bName] || conflictOnCreateBucket.CompareAndSwap(true, false) {
+				buckets[bName] = true
+				mu.Unlock()
+				httpguard.Status(
+					http.StatusConflict,
+					`<?xml version="1.0" encoding="UTF-8"?><Error><Code>BucketAlreadyOwnedByYou</Code><Message>Your previous request to create the named bucket succeeded and you already own it.</Message></Error>`,
+					"Content-Type: application/xml",
+				)(w, r)
+				return
+			}
+			buckets[bName] = true
+			mu.Unlock()
+			httpguard.Status(http.StatusOK, "")(w, r)
+			return
+		}
+		mu.Unlock()
+		httpguard.Status(http.StatusNotFound, "")(w, r)
+	})
+
+	// Seed a pre-existing queue with no create token.
+	queueTags["preexisting-queue"] = map[string]string{}
+
+	t.Setenv("LMAWS_ENDPOINT", srv.URL)
+	t.Setenv("LMAWS_LIVE", "")
+	rp := fastRetry()
+	a := New(&Options{Retry: &rp})
+	h := cloudhost.New(cloudhost.Config{Provider: "aws", Store: a, Queue: a, Endpoints: Endpoints()})
+
+	// 1. SQS create succeeds -> true (token stored atomically in CreateQueue tags).
+	created, err := h.QueueCreate(false, "fresh-queue")
+	if err != nil || !created {
+		t.Fatalf("fresh queue_create: created=%v err=%v", created, err)
+	}
+	mu.Lock()
+	if queueTags["fresh-queue"][createTokenTagKey] == "" {
+		t.Fatalf("expected non-empty %s tag in SQS CreateQueue request, got %v", createTokenTagKey, queueTags["fresh-queue"])
+	}
+	mu.Unlock()
+
+	// 2. SQS conflict on pre-existing queue (no token or another call's token) -> false, OK.
+	for _, q := range []string{"preexisting-queue", "fresh-queue"} {
+		created, err = h.QueueCreate(false, q)
+		if err != nil || created || h.LastError().Code != hostkit.OK {
+			t.Fatalf("conflict queue_create(%q): created=%v err=%v last=%+v", q, created, err, h.LastError())
+		}
+	}
+
+	// 3. SQS lost-reply create: server creates queue with OUR token on attempt 1,
+	// hangs up (EOF), then returns QueueAlreadyExists on retry -> QueueCreateToken
+	// reads back our tag via ListQueueTags and returns created=true.
+	dropFirstCreateQueue.Store(true)
+	created, err = h.QueueCreate(false, "lost-reply-queue")
+	if err != nil || !created || h.LastError().Code != hostkit.OK {
+		t.Fatalf("lost-reply queue_create: created=%v err=%v last=%+v", created, err, h.LastError())
+	}
+
+	// 4. S3 create succeeds -> true; S3 conflict (409 BucketAlreadyOwnedByYou) -> false, OK
+	// because S3 CreateBucket has no atomic tag parameter.
+	created, err = h.BucketCreate(false, "fresh-s3-bucket")
+	if err != nil || !created {
+		t.Fatalf("fresh bucket_create: created=%v err=%v", created, err)
+	}
+	conflictOnCreateBucket.Store(true)
+	created, err = h.BucketCreate(false, "conflict-s3-bucket")
+	if err != nil || created || h.LastError().Code != hostkit.OK {
+		t.Fatalf("S3 conflict bucket_create must return false/OK (no atomic token in S3 CreateBucket): created=%v err=%v last=%+v", created, err, h.LastError())
+	}
+}
+
+func TestOfflineReceiveFollowsRouteCaps(t *testing.T) {
+	t.Setenv("LMAWS_ENDPOINT", "")
+	t.Setenv("LMAWS_LIVE", "")
+	a := New(nil)
+	h := cloudhost.New(cloudhost.Config{
+		Provider:     "aws",
+		Store:        a,
+		Queue:        a,
+		PollInterval: 50 * time.Millisecond,
+		Endpoints:    Endpoints(),
+	})
+	if _, err := h.QueueCreate(false, "offline-wait-q"); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	msgs, err := h.QueueReceive(false, "offline-wait-q", 1, 1, 30)
+	elapsed := time.Since(start)
+	if err != nil || len(msgs) != 0 {
+		t.Fatalf("offline QueueReceive: msgs=%v err=%v", msgs, err)
+	}
+	if elapsed < 900*time.Millisecond || elapsed > 3*time.Second {
+		t.Fatalf("offline QueueReceive(wait=1) took %v, want ~1s", elapsed)
+	}
+}
+
+func TestEnumsDeclaredForDryRun(t *testing.T) {
+	if !cloudhost.EnumsDeclared() {
+		t.Fatalf("expected cloudhost.EnumsDeclared() == true with lmcode-go-patched replace in go.mod")
+	}
 }

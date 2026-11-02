@@ -41,11 +41,14 @@
    - `resolveQueueURL` resolves the queue URL via `GetQueueUrl` and normalizes its scheme/host to the active loopback endpoint.
    - `Receive` combines SQS `WaitTimeSeconds` with a client-side deadline poll so early empty responses continue polling until messages arrive or `waitSeconds` elapses.
 
-## 5. `hostkit` Observations & Remaining Provider-Specific Risks
+## 5. `hostkit` v3 Adoption (`09a18e4`) & Provider Notes
 
-- **`hostkit` observations (no bugs blocking migration):**
-  - `hostkit.ReadBounded` and `hostkit.ReadBoundedResponse` return `([]byte, *hostkit.CloudError)` (concrete pointer) rather than `([]byte, error)`. If an adapter assigns the second return value into an untyped `var err error`, Go boxes a `nil` `*CloudError` into a non-nil `error` interface (the typed-nil trap). Changing `ReadBounded` to return `([]byte, error)` (or documenting that callers must use `:=` / `*hostkit.CloudError`) avoids this footgun.
-  - `cloudhost.Program` does not expose `invoke.Hooks` (used by `lmaws`/`lmoci` for `membudget` watchdog) or `--notices`/`--help`/`-V`/`--without-std`, so `cmd/lmaws/main.go` (like `cmd/lmoci/main.go`) wires `cloudhost.NewRegistry`, `cloudhost.New`, and `invoke.Runner` directly. Adding optional `Hooks`, `Notices`, and `Help` fields to `cloudhost.Program` in a future `lmcloud` commit would let `cmd/lm*/main.go` shrink to ~35 lines.
-- **Remaining provider-specific risks:**
+- **Dry `ErrorCode` Enum Evaluation (`lmcode-go-patched`):** `go.mod` carries the temporary `replace github.com/lmctl-ai/lmcode-go => ../lmcode-go-patched` so `cloudhost.Register` declares `ErrorCode` via `Registry.Enum` (`cloudhost.EnumsDeclared() == true`) and `lmscript --dry-run` programs can evaluate `cloud.last_error().code() == ErrorCode.OK`.
+- **Create Ownership Tokens (`QueueCreateTokenReader` for SQS; S3 documented limitation):**
+  - **SQS (`CreateQueue` / `QueueCreateToken`):** `CreateQueue` stores `hostkit.CreateToken(ctx)` atomically in the `CreateQueue` request's `Tags` map (`"lmcloud-create-token": tok`), and `QueueCreateToken` reads it back via `ListQueueTags`. If a `CreateQueue` attempt commits on the server with our token and a retry receives `QueueAlreadyExists`, `cloudhost.QueueCreate` proves ownership via `QueueCreateToken` and returns `created=true`.
+  - **S3 (`CreateBucket`):** S3 `CreateBucket` (`PUT /{bucket}`) has no tag or metadata parameter in the create request itself (bucket tagging requires a separate `PutBucketTagging` request and is therefore not atomic with creation). Consequently, `Adapter` does not implement `hostkit.BucketCreateTokenReader`; after a conflict (`409 BucketAlreadyOwnedByYou`) on an accessible bucket, `bucket_create` returns `false` with `ErrorCode.OK` (`lmcloud` `durable-memory/09-hostkit.md` §4).
+- **Per-Route Queue Capabilities (`hostkit.Router` + `QueueCapsFor`):** `Adapter` routes via `hostkit.Router{Pick: hostkit.EndpointRoutes{Offline: fake, Sim: remote, ...}.Pick}` and implements `QueueCapsFor`, so the offline fake route reports `LongPoll: false` (waiting `~1s` in `hostkit.WaitLoop` when `wait=1`) while the loopback `awssim` route reports `LongPoll: true`.
+- **`Program.Main`, `ReadBoundedErr`, and `httpguard`:** `cmd/lmaws/main.go` uses `cloudhost.Program.Main` with `Hooks`, `Init`, `Help`, `Notices`, and `Commands["--sweep"]`; `GetObject` uses `hostkit.ReadBoundedErr`; fault-injecting tests in `aws_test.go` use `hostkit/httpguard`.
+- **Remaining provider-specific notes:**
   - Live AWS credential chain (`aws-sdk-go-v2/config` default chain, SSO, WebIdentity, IMDS) is intentionally disabled in Phase A–C (`LiveCredentialsNotImplemented`).
   - Cached released `awssim` binary in `lmcloud-sims/.cache/sims/awssim` predates `awssim` commit `dc7b063`, so `LMAWS_COMPAT_STRIP_S3_XID` must remain enabled by default until `awssim` cuts a new release and `lmcloud-sims` updates its pin.

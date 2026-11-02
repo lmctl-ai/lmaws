@@ -50,6 +50,12 @@ func (r *remote) CreateBucket(ctx context.Context, name string) (bool, error) {
 	if err == nil {
 		return true, nil
 	}
+	// S3 CreateBucket has no tag/metadata parameter in the create request itself
+	// (PutBucketTagging is a separate second request and is not atomic with
+	// CreateBucket). Therefore S3 cannot prove create ownership via an atomic
+	// CreateToken after a 409 conflict: returning CONFLICT (or false on
+	// BucketAlreadyOwnedByYou) lets cloudhost probe HeadBucket and return
+	// created=false with ErrorCode.OK when accessible (durable-memory/09-hostkit.md).
 	ce := classify(err, scopeBucket)
 	if ce.ProviderCode == "BucketAlreadyOwnedByYou" {
 		return false, nil
@@ -187,8 +193,8 @@ func (r *remote) GetObject(ctx context.Context, bucket, key string, limit int64)
 			}
 			return nil
 		}
-		var rErr *hostkit.CloudError
-		data, rErr = hostkit.ReadBounded(out.Body, limit)
+		var rErr error
+		data, rErr = hostkit.ReadBoundedErr(out.Body, limit)
 		if rErr != nil {
 			sizeErr = rErr
 			return nil

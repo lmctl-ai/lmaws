@@ -62,6 +62,7 @@ s = load_schema(schema={json.dumps(SCHEMA)});
 p = _lmcode_ s;
   cloud.set_endpoint("all", {json.dumps(ep)});
   let created = cloud.bucket_create("lmaws-dry-spy");
+  let err_ok = cloud.last_error().code() == ErrorCode.OK;
   let m = cloud.object_put("lmaws-dry-spy", "k.txt", "payload", "text/plain", str_map().set("env", "dev"));
   let body = cloud.object_get("lmaws-dry-spy", "k.txt");
   cloud.object_delete("lmaws-dry-spy", "k.txt");
@@ -70,12 +71,18 @@ p = _lmcode_ s;
   let id = cloud.queue_send("lmaws-dry-spy-q", "hello");
   let batch = cloud.queue_receive("lmaws-dry-spy-q", 1, 0, 30);
   let qd = cloud.queue_delete("lmaws-dry-spy-q");
+  cloud.set_abort_on_error(false);
+  cloud.object_get("lmaws-dry-spy-missing", "missing.txt");
+  let err_nf = cloud.last_error().code() == ErrorCode.NOT_FOUND;
   lmcode_return_put("created", created);
+  lmcode_return_put("err_ok", err_ok);
+  lmcode_return_put("err_nf", err_nf);
   lmcode_return_put("body", body);
   lmcode_return_put("qc", qc);
   lmcode_return_put("n", batch.len());
 end _lmcode_
-r = run_lmcode(p, {{command:[{json.dumps(HOST)}, "--lmcode", "$DSLFILE"]}});
+r = run_lmcode(p, {{command:[{json.dumps(HOST)}, "cloud", "--lmcode", "$DSLFILE"]}});
+assert(r.ok && r.result.err_ok && r.result.err_nf, "dry enum ErrorCode check failed");
 println(json_stringify(r));
 """
 
@@ -100,7 +107,14 @@ srv.shutdown()
 
 mut = [s for s in dry_seen if is_mutating(s)]
 print(f"dry run: rc={dry.returncode} requests={len(dry_seen)} mutating={len(mut)}")
-if dry.returncode != 0 or mut or not dry_seen or '"dry":true' not in dry.stdout:
+if (
+    dry.returncode != 0
+    or mut
+    or not dry_seen
+    or '"dry":true' not in dry.stdout
+    or '"err_ok":true' not in dry.stdout
+    or '"err_nf":true' not in dry.stdout
+):
     print(dry.stdout, dry.stderr, dry_seen, file=sys.stderr)
     sys.exit("FAIL: dry run made mutating requests or did not reach the host in dry mode")
 if not any(is_mutating(s) for s in real_seen):

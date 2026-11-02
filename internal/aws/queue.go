@@ -4,6 +4,7 @@ package aws
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -12,6 +13,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/lmctl-ai/lmcloud/hostkit"
 )
+
+// createTokenTagKey is the SQS queue tag key where lmaws atomically stores
+// hostkit.CreateToken(ctx) on CreateQueue requests so QueueCreateToken can
+// prove ownership after a conflict (hostkit v3 risk 10).
+const createTokenTagKey = "lmcloud-create-token"
 
 func (r *remote) QueueCaps() hostkit.QueueCaps {
 	return hostkit.QueueCaps{LongPoll: true, TextOnlyWire: true}
@@ -68,20 +74,32 @@ func queueNameFromURL(queueURL string) string {
 func (r *remote) CreateQueue(ctx context.Context, name string) (bool, error) {
 	r.recordCall("CreateQueue", true)
 	cli := r.sqsClient(ctx)
+	tok := hostkit.CreateToken(ctx)
 
-	// Probe GetQueueUrl first so creating an existing queue returns (false, nil).
+	// Probe GetQueueUrl first because SQS CreateQueue on an already-existing
+	// queue with default attributes returns 200 OK instead of 400 QueueAlreadyExists.
+	// When the queue already exists, report CONFLICT (or false when no token is
+	// attached) so cloudhost resolves ownership via LookupQueue + QueueCreateToken.
 	if _, err := r.resolveQueueURL(ctx, cli, name); err == nil {
-		return false, nil
+		if tok == "" {
+			return false, nil
+		}
+		return false, hostkit.ProviderError(hostkit.Conflict, http.StatusConflict, "QueueAlreadyExists", "queue already exists")
 	} else if ce := classify(err, scopeQueue); ce.Code != hostkit.NotFound {
 		return false, ce
+	}
+
+	in := &sqs.CreateQueueInput{
+		QueueName: aws.String(name),
+	}
+	if tok != "" {
+		in.Tags = map[string]string{createTokenTagKey: tok}
 	}
 
 	var out *sqs.CreateQueueOutput
 	err := r.doAWS(ctx, true, func(ctx context.Context) error {
 		var cErr error
-		out, cErr = cli.CreateQueue(ctx, &sqs.CreateQueueInput{
-			QueueName: aws.String(name),
-		})
+		out, cErr = cli.CreateQueue(ctx, in)
 		return cErr
 	})
 	if err != nil {
@@ -94,6 +112,30 @@ func (r *remote) CreateQueue(ctx context.Context, name string) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+func (r *remote) QueueCreateToken(ctx context.Context, name string) (string, error) {
+	r.recordCall("QueueCreateToken", false)
+	cli := r.sqsClient(ctx)
+	qURL, err := r.resolveQueueURL(ctx, cli, name)
+	if err != nil {
+		return "", err
+	}
+	var out *sqs.ListQueueTagsOutput
+	tErr := r.doAWS(ctx, true, func(ctx context.Context) error {
+		var callErr error
+		out, callErr = cli.ListQueueTags(ctx, &sqs.ListQueueTagsInput{
+			QueueUrl: aws.String(qURL),
+		})
+		return callErr
+	})
+	if tErr != nil {
+		return "", classify(tErr, scopeQueue)
+	}
+	if out == nil || len(out.Tags) == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(out.Tags[createTokenTagKey]), nil
 }
 
 func (r *remote) DeleteQueue(ctx context.Context, name string) error {

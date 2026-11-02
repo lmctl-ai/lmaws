@@ -16,7 +16,6 @@ package aws
 import (
 	"context"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -50,11 +49,16 @@ type Options struct {
 	HTTPClient *http.Client
 }
 
-// Adapter implements hostkit.ObjectStore and hostkit.Queue for AWS.
+// Adapter implements hostkit.ObjectStore, hostkit.Queue,
+// hostkit.QueueCapsProvider, and hostkit.QueueCreateTokenReader for AWS by
+// delegating through hostkit.Router and hostkit.EndpointRoutes.
+// Note: Adapter intentionally does NOT implement hostkit.BucketCreateTokenReader
+// because S3 CreateBucket has no atomic tag/metadata parameter (tagging requires
+// a separate PutBucketTagging request); a conflict on an accessible S3 bucket
+// therefore returns created=false with ErrorCode.OK (durable-memory/09-hostkit.md).
 type Adapter struct {
+	router hostkit.Router
 	remote *remote
-	fake   *fakeadapter.Fake
-	getenv func(string) string
 }
 
 // New constructs an AWS Adapter.
@@ -76,16 +80,25 @@ func New(opts *Options) *Adapter {
 	if client == nil {
 		client = hostkit.NewHTTPClient(60 * time.Second)
 	}
-	return &Adapter{
-		remote: &remote{
-			client:     client,
-			retry:      retry,
-			getenv:     getenv,
-			stripS3XID: stripXID,
-			calls:      make(map[string]int),
+	rem := &remote{
+		client:     client,
+		retry:      retry,
+		getenv:     getenv,
+		stripS3XID: stripXID,
+		calls:      make(map[string]int),
+	}
+	fk := fakeadapter.New(fakeadapter.Options{})
+	routes := hostkit.EndpointRoutes{
+		Offline: fk,
+		Sim:     rem,
+		UseLive: func() bool { return strings.TrimSpace(getenv("LMAWS_LIVE")) == "1" },
+		Unavailable: func(_ string) error {
+			return errLiveNotImplemented
 		},
-		fake:   fakeadapter.New(fakeadapter.Options{}),
-		getenv: getenv,
+	}
+	return &Adapter{
+		router: hostkit.Router{Pick: routes.Pick},
+		remote: rem,
 	}
 }
 
@@ -108,22 +121,6 @@ var errLiveNotImplemented = &hostkit.CloudError{
 	ProviderCode: "LiveCredentialsNotImplemented",
 }
 
-func (a *Adapter) route(ctx context.Context) (hostkit.ObjectStore, hostkit.Queue, bool, error) {
-	base := hostkit.EndpointFrom(ctx)
-	if base == "" {
-		if strings.TrimSpace(a.getenv("LMAWS_LIVE")) == "1" {
-			return nil, nil, false, errLiveNotImplemented
-		}
-		return a.fake, a.fake, true, nil
-	}
-	u, err := url.Parse(base)
-	if err != nil || !hostkit.IsLoopbackHost(u.Hostname()) {
-		// Never send simulator credentials (test/test) to a non-loopback host.
-		return nil, nil, false, errLiveNotImplemented
-	}
-	return a.remote, a.remote, false, nil
-}
-
 // Calls returns a snapshot of remote adapter operation counts (for testing).
 func (a *Adapter) Calls() map[string]int {
 	return a.remote.callsSnapshot()
@@ -137,146 +134,86 @@ func (a *Adapter) MutatorCalls() int {
 // --- hostkit.ObjectStore ---
 
 func (a *Adapter) CreateBucket(ctx context.Context, name string) (bool, error) {
-	s, _, _, err := a.route(ctx)
-	if err != nil {
-		return false, err
-	}
-	return s.CreateBucket(ctx, name)
+	return a.router.CreateBucket(ctx, name)
 }
 
 func (a *Adapter) DeleteBucket(ctx context.Context, name string) error {
-	s, _, _, err := a.route(ctx)
-	if err != nil {
-		return err
-	}
-	return s.DeleteBucket(ctx, name)
+	return a.router.DeleteBucket(ctx, name)
 }
 
 func (a *Adapter) HeadBucket(ctx context.Context, name string) error {
-	s, _, _, err := a.route(ctx)
-	if err != nil {
-		return err
-	}
-	return s.HeadBucket(ctx, name)
+	return a.router.HeadBucket(ctx, name)
 }
 
 func (a *Adapter) ListBuckets(ctx context.Context, token string) ([]string, string, error) {
-	s, _, _, err := a.route(ctx)
-	if err != nil {
-		return nil, "", err
-	}
-	return s.ListBuckets(ctx, token)
+	return a.router.ListBuckets(ctx, token)
 }
 
 func (a *Adapter) PutObject(ctx context.Context, bucket, key string, body []byte, contentType string, metadata map[string]string) (hostkit.ObjectMeta, error) {
-	s, _, _, err := a.route(ctx)
-	if err != nil {
-		return hostkit.ObjectMeta{}, err
-	}
-	return s.PutObject(ctx, bucket, key, body, contentType, metadata)
+	return a.router.PutObject(ctx, bucket, key, body, contentType, metadata)
 }
 
 func (a *Adapter) GetObject(ctx context.Context, bucket, key string, limit int64) ([]byte, error) {
-	s, _, _, err := a.route(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return s.GetObject(ctx, bucket, key, limit)
+	return a.router.GetObject(ctx, bucket, key, limit)
 }
 
 func (a *Adapter) HeadObject(ctx context.Context, bucket, key string) (hostkit.ObjectMeta, error) {
-	s, _, _, err := a.route(ctx)
-	if err != nil {
-		return hostkit.ObjectMeta{}, err
-	}
-	return s.HeadObject(ctx, bucket, key)
+	return a.router.HeadObject(ctx, bucket, key)
 }
 
 func (a *Adapter) DeleteObject(ctx context.Context, bucket, key string) error {
-	s, _, _, err := a.route(ctx)
-	if err != nil {
-		return err
-	}
-	return s.DeleteObject(ctx, bucket, key)
+	return a.router.DeleteObject(ctx, bucket, key)
 }
 
 func (a *Adapter) ListObjects(ctx context.Context, bucket, prefix string, max int, token string) (hostkit.ObjectPage, error) {
-	s, _, _, err := a.route(ctx)
-	if err != nil {
-		return hostkit.ObjectPage{}, err
-	}
-	return s.ListObjects(ctx, bucket, prefix, max, token)
+	return a.router.ListObjects(ctx, bucket, prefix, max, token)
 }
 
-// --- hostkit.Queue ---
+// --- hostkit.Queue, hostkit.QueueCapsProvider & hostkit.QueueCreateTokenReader ---
 
 func (a *Adapter) QueueCaps() hostkit.QueueCaps {
-	return hostkit.QueueCaps{LongPoll: true, TextOnlyWire: true}
+	return a.remote.QueueCaps()
+}
+
+// QueueCapsFor reports the queue capabilities of the backend selected by ctx
+// (offline fake uses LongPoll: false so WaitLoop honours wait_seconds; loopback
+// awssim uses LongPoll: true).
+func (a *Adapter) QueueCapsFor(ctx context.Context, queue string) hostkit.QueueCaps {
+	return a.router.QueueCapsFor(ctx, queue)
+}
+
+func (a *Adapter) QueueCreateToken(ctx context.Context, queue string) (string, error) {
+	return a.router.QueueCreateToken(ctx, queue)
 }
 
 func (a *Adapter) CreateQueue(ctx context.Context, name string) (bool, error) {
-	_, q, _, err := a.route(ctx)
-	if err != nil {
-		return false, err
-	}
-	return q.CreateQueue(ctx, name)
+	return a.router.CreateQueue(ctx, name)
 }
 
 func (a *Adapter) DeleteQueue(ctx context.Context, name string) error {
-	_, q, _, err := a.route(ctx)
-	if err != nil {
-		return err
-	}
-	return q.DeleteQueue(ctx, name)
+	return a.router.DeleteQueue(ctx, name)
 }
 
 func (a *Adapter) LookupQueue(ctx context.Context, name string) error {
-	_, q, _, err := a.route(ctx)
-	if err != nil {
-		return err
-	}
-	return q.LookupQueue(ctx, name)
+	return a.router.LookupQueue(ctx, name)
 }
 
 func (a *Adapter) ListQueues(ctx context.Context, token string) ([]string, string, error) {
-	_, q, _, err := a.route(ctx)
-	if err != nil {
-		return nil, "", err
-	}
-	return q.ListQueues(ctx, token)
+	return a.router.ListQueues(ctx, token)
 }
 
 func (a *Adapter) Send(ctx context.Context, queue, wire string) (string, error) {
-	_, q, _, err := a.route(ctx)
-	if err != nil {
-		return "", err
-	}
-	return q.Send(ctx, queue, wire)
+	return a.router.Send(ctx, queue, wire)
 }
 
 func (a *Adapter) Receive(ctx context.Context, queue string, max, waitSeconds, visibility int) ([]hostkit.RawMessage, error) {
-	_, q, isFake, err := a.route(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if isFake {
-		return q.Receive(ctx, queue, max, 0, visibility)
-	}
-	return q.Receive(ctx, queue, max, waitSeconds, visibility)
+	return a.router.Receive(ctx, queue, max, waitSeconds, visibility)
 }
 
 func (a *Adapter) Ack(ctx context.Context, queue, receipt string) error {
-	_, q, _, err := a.route(ctx)
-	if err != nil {
-		return err
-	}
-	return q.Ack(ctx, queue, receipt)
+	return a.router.Ack(ctx, queue, receipt)
 }
 
 func (a *Adapter) Nack(ctx context.Context, queue, receipt string, visibility int) (string, error) {
-	_, q, _, err := a.route(ctx)
-	if err != nil {
-		return "", err
-	}
-	return q.Nack(ctx, queue, receipt, visibility)
+	return a.router.Nack(ctx, queue, receipt, visibility)
 }

@@ -26,3 +26,7 @@ require (
 // github.com/lmctl-ai/lmcloud is not published as a module release yet;
 // resolve to the sibling checkout during the shared-go / hostkit migration.
 replace github.com/lmctl-ai/lmcloud => ../lmcloud
+
+// TEMPORARY: lmcode-go Registry.Enum (dry enum results) is not published yet.
+// Remove when it is merged upstream and the lmcode-go pin is bumped.
+replace github.com/lmctl-ai/lmcode-go => ../lmcode-go-patched

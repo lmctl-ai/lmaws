@@ -122,10 +122,28 @@ p = _lmcode_ schema="schema/lmcloud.dsl.json";
   lmcode_return_put("exists", exists);
   lmcode_return_put("d1", d1);
 end _lmcode_
-r_dry = run_lmcode(p, {command:["'"$BIN"'", "--dry", "--lmcode", "$DSLFILE"]});
-assert(r_dry.ok && r_dry.result.prov == "aws", "dry run smoke failed");
 r_real = run_lmcode(p, {command:["'"$BIN"'", "--lmcode", "$DSLFILE"]});
 assert(r_real.ok && r_real.result.prov == "aws" && r_real.result.c1 && !r_real.result.c2 && r_real.result.exists && r_real.result.d1, "real run smoke failed");
+'
+"$LMSCRIPT_BIN" --dry-run -e '
+p = _lmcode_ schema="schema/lmcloud.dsl.json";
+  let prov = cloud.provider();
+  let c1 = cloud.bucket_create("smoke-bucket-aws");
+  let ok_code = cloud.last_error().code() == ErrorCode.OK;
+  let exists = cloud.bucket_exists("smoke-bucket-aws");
+  let d1 = cloud.bucket_delete("smoke-bucket-aws");
+  cloud.set_abort_on_error(false);
+  cloud.object_get("smoke-bucket-aws-missing", "k");
+  let nf_code = cloud.last_error().code() == ErrorCode.NOT_FOUND;
+  lmcode_return_put("prov", prov);
+  lmcode_return_put("c1", c1);
+  lmcode_return_put("ok_code", ok_code);
+  lmcode_return_put("nf_code", nf_code);
+  lmcode_return_put("exists", exists);
+  lmcode_return_put("d1", d1);
+end _lmcode_
+r_dry = run_lmcode(p, {command:["'"$BIN"'", "cloud", "--lmcode", "$DSLFILE"]});
+assert(r_dry.ok && r_dry.dry && r_dry.result.prov == "aws" && r_dry.result.c1 && r_dry.result.ok_code && r_dry.result.nf_code && r_dry.result.exists && r_dry.result.d1, "dry run smoke failed");
 '
 python3 "$ROOT/scripts/test-dry-spy.py" "$LMSCRIPT_BIN" "$BIN" "$ROOT/schema/lmcloud.dsl.json"
 
