@@ -16,7 +16,8 @@ with tempfile.TemporaryDirectory(prefix='host flag control ') as directory:
     missing = scratch / 'must-not-open.dslb'
     env = dict(os.environ, HOME=str(scratch), LMCTL_HOME=str(scratch / '.lmctl'))
     def run(args):
-        argv = (["cmd.exe", "/c", *command] if os.name == "nt" and command[0].lower().endswith(".cmd") else command)
+        argv = (["cmd.exe", "/c", str(Path(command[0]).resolve()), *command[1:]]
+                if os.name == "nt" and command[0].lower().endswith(".cmd") else command)
         return subprocess.run([*argv, *map(str, args)], capture_output=True, env=env)
     # Collect refusal controls so a baseline proves every retired spelling fails.
     failures = []
