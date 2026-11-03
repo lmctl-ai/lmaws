@@ -7,6 +7,11 @@ import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.nio.file.attribute.AclEntryFlag;
+import java.nio.file.attribute.AclEntryPermission;
+import java.nio.file.attribute.AclEntryType;
+import java.nio.file.attribute.AclFileAttributeView;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.nio.file.attribute.PosixFileAttributes;
 import java.nio.file.attribute.UserPrincipal;
@@ -45,6 +50,7 @@ final class ProvisionJournal implements AutoCloseable {
         PosixFilePermissions.fromString("rwx------");
     private static final Set<java.nio.file.attribute.PosixFilePermission> FILE_MODE=
         PosixFilePermissions.fromString("rw-------");
+    private static boolean windows() {return System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("win");}
     private static final class PathFailure extends IOException {
         final String check,pathClass,detail;
         PathFailure(String check,String pathClass,String detail){
@@ -109,7 +115,10 @@ final class ProvisionJournal implements AutoCloseable {
         Path canonical=existing.toRealPath();
         for(Path component:missing) {
             Path child=canonical.resolve(component);
-            try {Files.createDirectory(child,PosixFilePermissions.asFileAttribute(DIRECTORY_MODE));}
+            try {
+                if(windows())Files.createDirectory(child);
+                else Files.createDirectory(child,PosixFilePermissions.asFileAttribute(DIRECTORY_MODE));
+            }
             catch(FileAlreadyExistsException raced) { /* Revalidate; never repair another directory. */ }
             if(Files.isSymbolicLink(child))throw new PathFailure("final_component_symlink",pathClass,"creation_race_refused");
             canonical=child.toRealPath();
@@ -127,6 +136,13 @@ final class ProvisionJournal implements AutoCloseable {
         return path.getFileSystem().getUserPrincipalLookupService().lookupPrincipalByName(name);
     }
     private static void requireDirectory(Path canonical,String pathClass) throws IOException {
+        if(windows()) {
+            BasicFileAttributes attributes=Files.readAttributes(canonical,BasicFileAttributes.class,LinkOption.NOFOLLOW_LINKS);
+            if(!attributes.isDirectory())throw new PathFailure("directory_type",pathClass,"not_directory");
+            UserPrincipal owner=Files.getOwner(canonical,LinkOption.NOFOLLOW_LINKS);
+            if(!owner.equals(currentUser(canonical,pathClass)))throw new PathFailure("directory_owner",pathClass,"not_current_user");
+            requirePrivateAcl(canonical,pathClass,owner);return;
+        }
         var attributes=Files.readAttributes(canonical,PosixFileAttributes.class,LinkOption.NOFOLLOW_LINKS);
         if(!attributes.isDirectory())throw new PathFailure("directory_type",pathClass,"not_directory");
         if(!attributes.owner().equals(currentUser(canonical,pathClass)))
@@ -140,15 +156,37 @@ final class ProvisionJournal implements AutoCloseable {
         if(Files.exists(file,LinkOption.NOFOLLOW_LINKS))requireFile(file,pathClass);
         Set<OpenOption> options=new HashSet<>(Set.of(StandardOpenOption.CREATE,StandardOpenOption.WRITE,LinkOption.NOFOLLOW_LINKS));
         if(read)options.add(StandardOpenOption.READ);
-        FileChannel channel=FileChannel.open(file,options,PosixFilePermissions.asFileAttribute(FILE_MODE));
+        FileChannel channel=windows()?FileChannel.open(file,options):FileChannel.open(file,options,PosixFilePermissions.asFileAttribute(FILE_MODE));
         try {requireFile(file,pathClass);return channel;}
         catch(Exception failure){channel.close();throw failure;}
     }
     private static void requireFile(Path file,String pathClass) throws IOException {
+        if(windows()) {
+            BasicFileAttributes attributes=Files.readAttributes(file,BasicFileAttributes.class,LinkOption.NOFOLLOW_LINKS);
+            if(!attributes.isRegularFile())throw new PathFailure("file_permissions",pathClass,"expected_current_user_regular_file");
+            UserPrincipal owner=Files.getOwner(file,LinkOption.NOFOLLOW_LINKS);
+            if(!owner.equals(currentUser(file,pathClass)))throw new PathFailure("file_permissions",pathClass,"not_current_user");
+            requirePrivateAcl(file,pathClass,owner);return;
+        }
         var attributes=Files.readAttributes(file,PosixFileAttributes.class,LinkOption.NOFOLLOW_LINKS);
         if(!attributes.isRegularFile()||!attributes.owner().equals(currentUser(file,pathClass))
             ||!attributes.permissions().equals(FILE_MODE))
             throw new PathFailure("file_permissions",pathClass,"expected_current_user_regular_0600");
+    }
+    private static void requirePrivateAcl(Path path,String pathClass,UserPrincipal owner) throws IOException {
+        AclFileAttributeView view=Files.getFileAttributeView(path,AclFileAttributeView.class,LinkOption.NOFOLLOW_LINKS);
+        if(view==null)throw new PathFailure("directory_permissions",pathClass,"acl_unavailable");
+        Set<AclEntryPermission> writes=EnumSet.of(AclEntryPermission.WRITE_DATA,AclEntryPermission.APPEND_DATA,
+            AclEntryPermission.WRITE_ATTRIBUTES,AclEntryPermission.WRITE_ACL,AclEntryPermission.WRITE_OWNER,
+            AclEntryPermission.DELETE,AclEntryPermission.DELETE_CHILD);
+        for(var entry:view.getAcl()) {
+            if(entry.type()!=AclEntryType.ALLOW || entry.flags().contains(AclEntryFlag.INHERIT_ONLY) || entry.principal().equals(owner))continue;
+            String principal=entry.principal().getName().toUpperCase(Locale.ROOT);
+            if(principal.equals("NT AUTHORITY\\SYSTEM")||principal.equals("S-1-5-18")
+                ||principal.equals("BUILTIN\\ADMINISTRATORS")||principal.equals("S-1-5-32-544"))continue;
+            if(!Collections.disjoint(entry.permissions(),writes))
+                throw new PathFailure("directory_permissions",pathClass,"write_access_not_private");
+        }
     }
     @SuppressWarnings("unchecked")
     private void replay() throws IOException {

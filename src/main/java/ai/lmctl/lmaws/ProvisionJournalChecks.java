@@ -91,19 +91,21 @@ public final class ProvisionJournalChecks {
         try {
             Path real = temp.resolve("real"); Files.createDirectories(real);
             if (posixSupported()) Files.setPosixFilePermissions(real, PosixFilePermissions.fromString("rwx------"));
-            try {
-                UserPrincipal rootOwner = Files.getOwner(Path.of("/"));
-                UserPrincipal currentOwner = Path.of("/").getFileSystem().getUserPrincipalLookupService()
-                    .lookupPrincipalByName(System.getProperty("user.name", ""));
-                if (!rootOwner.equals(currentOwner)) {
-                    refused("directory_owner", "configured-directory", "owner-check",
-                        () -> ProvisionJournal.open("owner-check", true, Path.of("/")));
-                } else {
-                    System.out.println("SKIP owner-negative regression: current user owns filesystem root");
+            if (posixSupported()) {
+                try {
+                    UserPrincipal rootOwner = Files.getOwner(Path.of("/"));
+                    UserPrincipal currentOwner = Path.of("/").getFileSystem().getUserPrincipalLookupService()
+                        .lookupPrincipalByName(System.getProperty("user.name", ""));
+                    if (!rootOwner.equals(currentOwner)) {
+                        refused("directory_owner", "configured-directory", "owner-check",
+                            () -> ProvisionJournal.open("owner-check", true, Path.of("/")));
+                    } else {
+                        System.out.println("SKIP owner-negative regression: current user owns filesystem root");
+                    }
+                } catch (IOException | UnsupportedOperationException | SecurityException unavailable) {
+                    System.out.println("SKIP owner-negative regression: filesystem owner lookup unavailable");
                 }
-            } catch (IOException | UnsupportedOperationException | SecurityException unavailable) {
-                System.out.println("SKIP owner-negative regression: filesystem owner lookup unavailable");
-            }
+            } else System.out.println("SKIP POSIX root-owner regression: POSIX owner attributes unavailable");
             if (symlinksSupported()) {
                 Path parentLink = temp.resolve("parent-link"); Files.createSymbolicLink(parentLink, real);
                 Path configuredThroughLink = parentLink.resolve("journals");
