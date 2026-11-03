@@ -1493,6 +1493,27 @@ type prePutObjState struct {
 	existsInJournal bool
 }
 
+type expectedObjectProofKey struct{}
+
+type expectedObjectProof struct {
+	etag      string
+	versionID string
+	entry     safety.LedgerEntry
+}
+
+type expectedDeleteObjectETagKey struct{}
+
+type ownSweepPhysicalAttemptKey struct{}
+
+func withOwnSweepPhysicalAttempt(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ownSweepPhysicalAttemptKey{}, true)
+}
+
+func isOwnSweepPhysicalAttempt(ctx context.Context) bool {
+	v, _ := ctx.Value(ownSweepPhysicalAttemptKey{}).(bool)
+	return v
+}
+
 type preReservedBucketListKey struct{}
 
 type sweepPreReservesBucketListKey struct{}
@@ -1520,9 +1541,9 @@ func (l *liveAdapter) verifyLiveOwnedBucketAndObject(
 	raw *liveRawBackend,
 	bucket, key string,
 	checkObject bool,
-) *hostkit.CloudError {
+) (expectedObjectProof, *hostkit.CloudError) {
 	if nerr := safety.ValidateLiveResourceName(sess.RunID(), bucket); nerr != nil {
-		return hostkit.ProviderError(
+		return expectedObjectProof{}, hostkit.ProviderError(
 			hostkit.PermissionDenied,
 			http.StatusForbidden,
 			"UnownedParentResource",
@@ -1531,7 +1552,7 @@ func (l *liveAdapter) verifyLiveOwnedBucketAndObject(
 	}
 	bEntry, hasBkt := sess.Journal().Lookup(safety.KindBucket, "", bucket)
 	if hasBkt && (bEntry.Retain || bEntry.State == safety.StateRetained) {
-		return hostkit.ProviderError(
+		return expectedObjectProof{}, hostkit.ProviderError(
 			hostkit.PermissionDenied,
 			http.StatusForbidden,
 			"ForeignResourceCollision",
@@ -1545,19 +1566,19 @@ func (l *liveAdapter) verifyLiveOwnedBucketAndObject(
 		Name:     bucket,
 	}, false, "verify_read_bucket_ownership")
 	if bCerr != nil {
-		return bCerr
+		return expectedObjectProof{}, bCerr
 	}
 	if (bErr == nil && !bRO.Exists) || (bErr != nil && raw.ClassifyAbsent(bErr) == safety.AbsenceDefinitive) {
 		if hasBkt && bEntry.State == safety.StateConfirmed {
 			_ = sess.Journal().Retain(safety.KindBucket, "", bucket, "confirmed bucket disappeared remotely")
-			return hostkit.ProviderError(
+			return expectedObjectProof{}, hostkit.ProviderError(
 				hostkit.PermissionDenied,
 				http.StatusForbidden,
 				"ParentOwnershipMismatch",
 				fmt.Sprintf("confirmed bucket %q disappeared remotely", bucket),
 			)
 		}
-		return (&hostkit.CloudError{
+		return expectedObjectProof{}, (&hostkit.CloudError{
 			Code:         hostkit.NotFound,
 			Message:      fmt.Sprintf("The specified bucket %q does not exist", bucket),
 			ProviderCode: "NoSuchBucket",
@@ -1568,11 +1589,11 @@ func (l *liveAdapter) verifyLiveOwnedBucketAndObject(
 		if raw.ClassifyAbsent(bErr) == safety.AbsenceAmbiguous && hasBkt {
 			_ = sess.Journal().Retain(safety.KindBucket, "", bucket, "ambiguous bucket ownership read: "+bErr.Error())
 		}
-		return hostkit.AsCloudError(bErr)
+		return expectedObjectProof{}, hostkit.AsCloudError(bErr)
 	}
 	if !hasBkt || bEntry.State != safety.StateConfirmed || bEntry.Retain {
 		_ = sess.Journal().Retain(safety.KindBucket, "", bucket, "unowned bucket encountered on read")
-		return hostkit.ProviderError(
+		return expectedObjectProof{}, hostkit.ProviderError(
 			hostkit.PermissionDenied,
 			http.StatusForbidden,
 			"UnownedParentResource",
@@ -1581,7 +1602,7 @@ func (l *liveAdapter) verifyLiveOwnedBucketAndObject(
 	}
 	if verr := bRO.VerifyMatchesEntry(bEntry, sess.Journal().Meta()); verr != nil {
 		_ = sess.Journal().Retain(safety.KindBucket, "", bucket, "bucket ownership mismatch on read: "+verr.Error())
-		return hostkit.ProviderError(
+		return expectedObjectProof{}, hostkit.ProviderError(
 			hostkit.PermissionDenied,
 			http.StatusForbidden,
 			"ParentOwnershipMismatch",
@@ -1590,12 +1611,12 @@ func (l *liveAdapter) verifyLiveOwnedBucketAndObject(
 	}
 
 	if !checkObject {
-		return nil
+		return expectedObjectProof{}, nil
 	}
 
 	oEntry, hasObj := sess.Journal().Lookup(safety.KindObject, bucket, key)
 	if hasObj && (oEntry.Retain || oEntry.State == safety.StateRetained) {
-		return hostkit.ProviderError(
+		return expectedObjectProof{}, hostkit.ProviderError(
 			hostkit.PermissionDenied,
 			http.StatusForbidden,
 			"ForeignResourceCollision",
@@ -1610,10 +1631,10 @@ func (l *liveAdapter) verifyLiveOwnedBucketAndObject(
 		Name:     key,
 	}, false, "verify_read_object_ownership")
 	if oCerr != nil {
-		return oCerr
+		return expectedObjectProof{}, oCerr
 	}
 	if (oErr == nil && !oRO.Exists) || (oErr != nil && raw.ClassifyAbsent(oErr) == safety.AbsenceDefinitive) {
-		return (&hostkit.CloudError{
+		return expectedObjectProof{}, (&hostkit.CloudError{
 			Code:         hostkit.NotFound,
 			Message:      fmt.Sprintf("The specified key %q does not exist", key),
 			ProviderCode: "NoSuchKey",
@@ -1621,11 +1642,11 @@ func (l *liveAdapter) verifyLiveOwnedBucketAndObject(
 		}).WithAbsent(hostkit.AbsentObject)
 	}
 	if oErr != nil {
-		return hostkit.AsCloudError(oErr)
+		return expectedObjectProof{}, hostkit.AsCloudError(oErr)
 	}
 	if !hasObj || oEntry.State != safety.StateConfirmed || oEntry.Retain {
 		_ = sess.Journal().Retain(safety.KindObject, bucket, key, "unowned object encountered on read")
-		return hostkit.ProviderError(
+		return expectedObjectProof{}, hostkit.ProviderError(
 			hostkit.PermissionDenied,
 			http.StatusForbidden,
 			"UnownedResourceReadRefused",
@@ -1634,14 +1655,28 @@ func (l *liveAdapter) verifyLiveOwnedBucketAndObject(
 	}
 	if verr := oRO.VerifyMatchesEntry(oEntry, sess.Journal().Meta()); verr != nil {
 		_ = sess.Journal().Retain(safety.KindObject, bucket, key, "object ownership mismatch on read: "+verr.Error())
-		return hostkit.ProviderError(
+		return expectedObjectProof{}, hostkit.ProviderError(
 			hostkit.PermissionDenied,
 			http.StatusForbidden,
 			"UnownedResourceReadRefused",
 			verr.Error(),
 		)
 	}
-	return nil
+	provenETag := cleanETag(oRO.ETag)
+	if provenETag == "" {
+		_ = sess.Journal().Retain(safety.KindObject, bucket, key, "object ownership proof missing ETag")
+		return expectedObjectProof{}, hostkit.ProviderError(
+			hostkit.PermissionDenied,
+			http.StatusForbidden,
+			"UnownedResourceReadRefused",
+			fmt.Sprintf("object %s/%s ownership proof returned an empty ETag", bucket, key),
+		)
+	}
+	return expectedObjectProof{
+		etag:      provenETag,
+		versionID: strings.TrimSpace(oRO.Generation),
+		entry:     oEntry,
+	}, nil
 }
 
 // --- hostkit.ObjectStore & hostkit.Queue on liveAdapter ---
@@ -1714,9 +1749,12 @@ func (l *liveAdapter) DeleteObject(ctx context.Context, bucket, key string) erro
 	if !envCfg.mutate {
 		return stage1MutationDisabledErr("object_delete")
 	}
-	_, store, _, err := l.ensureSession(ctx, envCfg)
+	sess, store, _, err := l.ensureSession(ctx, envCfg)
 	if err != nil {
 		return err
+	}
+	if existingObj, hasObj := sess.Journal().Lookup(safety.KindObject, bucket, key); hasObj && existingObj.ETag != "" {
+		ctx = context.WithValue(ctx, expectedDeleteObjectETagKey{}, cleanETag(existingObj.ETag))
 	}
 	return store.DeleteObject(withLiveCleanup(ctx), bucket, key)
 }
@@ -1736,9 +1774,11 @@ func (l *liveAdapter) GetObject(ctx context.Context, bucket, key string, limit i
 	l.mu.Lock()
 	raw := l.raw
 	l.mu.Unlock()
-	if vcerr := l.verifyLiveOwnedBucketAndObject(ctx, sess, raw, bucket, key, true); vcerr != nil {
+	proof, vcerr := l.verifyLiveOwnedBucketAndObject(ctx, sess, raw, bucket, key, true)
+	if vcerr != nil {
 		return nil, vcerr
 	}
+	ctx = context.WithValue(ctx, expectedObjectProofKey{}, proof)
 	return store.GetObject(ctx, bucket, key, limit)
 }
 
@@ -1889,9 +1929,11 @@ func (l *liveAdapter) HeadObject(ctx context.Context, bucket, key string) (hostk
 		l.mu.Lock()
 		raw := l.raw
 		l.mu.Unlock()
-		if vcerr := l.verifyLiveOwnedBucketAndObject(ctx, sess, raw, bucket, key, true); vcerr != nil {
+		proof, vcerr := l.verifyLiveOwnedBucketAndObject(ctx, sess, raw, bucket, key, true)
+		if vcerr != nil {
 			return hostkit.ObjectMeta{}, vcerr
 		}
+		ctx = context.WithValue(ctx, expectedObjectProofKey{}, proof)
 	}
 	return store.HeadObject(ctx, bucket, key)
 }
@@ -1909,7 +1951,7 @@ func (l *liveAdapter) ListObjects(ctx context.Context, bucket, prefix string, ma
 		l.mu.Lock()
 		raw := l.raw
 		l.mu.Unlock()
-		if vcerr := l.verifyLiveOwnedBucketAndObject(ctx, sess, raw, bucket, "", false); vcerr != nil {
+		if _, vcerr := l.verifyLiveOwnedBucketAndObject(ctx, sess, raw, bucket, "", false); vcerr != nil {
 			return hostkit.ObjectPage{}, vcerr
 		}
 	}
@@ -1919,13 +1961,14 @@ func (l *liveAdapter) ListObjects(ctx context.Context, bucket, prefix string, ma
 	}
 	for _, item := range page.Items {
 		oEntry, hasObj := sess.Journal().Lookup(safety.KindObject, bucket, item.Key)
-		if !hasObj || oEntry.State != safety.StateConfirmed || oEntry.Retain {
-			_ = sess.Journal().Retain(safety.KindObject, bucket, item.Key, "unjournaled or retained object encountered in ListObjects")
+		if !hasObj || oEntry.State != safety.StateConfirmed || oEntry.Retain ||
+			(oEntry.ETag != "" && item.ETag != "" && cleanETag(oEntry.ETag) != cleanETag(item.ETag)) {
+			_ = sess.Journal().Retain(safety.KindObject, bucket, item.Key, "unjournaled, retained, or ETag-mismatched object encountered in ListObjects")
 			return hostkit.ObjectPage{}, hostkit.ProviderError(
 				hostkit.PermissionDenied,
 				http.StatusForbidden,
 				"UnownedResourceReadRefused",
-				fmt.Sprintf("bucket %q contains unowned or retained object %q", bucket, item.Key),
+				fmt.Sprintf("bucket %q contains unowned or modified object %q", bucket, item.Key),
 			)
 		}
 	}
@@ -2000,13 +2043,15 @@ type liveRawBackend struct {
 	retry          hostkit.RetryPolicy
 	sess           *safety.Session
 	sweepMeter     *safety.CostMeter
+	sweepJournal   *safety.Journal
 	maxTotalBytes  int64
 
-	mu              sync.Mutex
-	redactedSecrets []string
-	attestedAccount string
-	attestedARN     string
-	authMode        string
+	mu                sync.Mutex
+	redactedSecrets   []string
+	attestedAccount   string
+	attestedARN       string
+	authMode          string
+	bucketCreatedUnix map[string]int64
 }
 
 // buildExplicitLiveCredentialsProvider constructs the Stage 1 live credential
@@ -2365,7 +2410,27 @@ func (r *liveRawBackend) activeJournal() *safety.Journal {
 	if r.sess != nil {
 		return r.sess.Journal()
 	}
-	return nil
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sweepJournal
+}
+
+func (r *liveRawBackend) recordBucketCreatedUnix(name string, ts int64) {
+	if ts <= 0 || name == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.bucketCreatedUnix == nil {
+		r.bucketCreatedUnix = make(map[string]int64)
+	}
+	r.bucketCreatedUnix[name] = ts
+}
+
+func (r *liveRawBackend) getBucketCreatedUnix(name string) int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.bucketCreatedUnix[name]
 }
 
 // doLiveAWS executes an AWS operation whose primary attempt==0 request fee was
@@ -2373,7 +2438,7 @@ func (r *liveRawBackend) activeJournal() *safety.Journal {
 // response egress bounds on attempt==0 (when maxRespBytes > 0) and full request +
 // egress fees on any retry (attempt > 0).
 func (r *liveRawBackend) doLiveAWS(ctx context.Context, opName, kind, parent, name string, maxRespBytes int64, idempotent bool, op func(ctx context.Context) error) error {
-	return r.doLiveAWSWithMode(ctx, opName, kind, parent, name, "", maxRespBytes, idempotent, false, op)
+	return r.doLiveAWSWithMode(ctx, opName, kind, parent, name, "", maxRespBytes, idempotent, isOwnSweepPhysicalAttempt(ctx), op)
 }
 
 // doExtraPhysicalAWS executes a secondary physical AWS request (such as
@@ -2417,11 +2482,12 @@ func (r *liveRawBackend) doLiveAWSWithMode(
 					return hostkit.Attempt{Status: http.StatusForbidden}
 				}
 			}
-			// When ownAttempt == false and attempt == 0, GuardStore/GuardQueue already
-			// reserved the base request fee, so reserve only the conservative
-			// response-egress bound (via object_delete which has a 0 base request fee).
-			// When ownAttempt == true or attempt > 0, reserve both the request fee
-			// and the response-egress bound for this physical HTTP dispatch.
+			// When ownAttempt == false and attempt == 0, GuardStore/GuardQueue/Sweep already
+			// reserved the base request fee and wrote the primary journal attempt, so reserve
+			// only the conservative response-egress bound (via object_delete which has a 0 base
+			// request fee). When ownAttempt == true or attempt > 0, reserve both the request fee
+			// and the response-egress bound and record a durable journal attempt for this physical
+			// HTTP dispatch.
 			pricingOp := "object_delete"
 			if ownAttempt || attempt > 0 {
 				pricingOp = opName
@@ -2448,16 +2514,14 @@ func (r *liveRawBackend) doLiveAWSWithMode(
 				lastCallErr = hostkit.ProviderError(code, 0, pcode, r.sanitizeString(rerr.Error()))
 				return hostkit.Attempt{Status: http.StatusForbidden}
 			}
-			if journal != nil {
+			if journal != nil && (ownAttempt || attempt > 0) {
 				reservedNano := res.Quote().AttemptNanoUSD + res.Quote().CleanupReserveNanoUSD
 				attReason := reason
 				if attReason == "" {
 					if attempt > 0 {
 						attReason = opName + "_retry"
-					} else if ownAttempt {
-						attReason = opName
 					} else {
-						attReason = opName + "_egress"
+						attReason = opName
 					}
 				} else if attempt > 0 {
 					attReason = fmt.Sprintf("%s_retry_%d", reason, attempt)
@@ -2496,20 +2560,34 @@ func (r *liveRawBackend) doLiveAWSWithMode(
 				}
 				charged := res.Commit(actualNano, false)
 				if journal != nil {
-					if serr := journal.SettleAttempt(attemptID, charged, true); serr != nil {
-						lastCallErr = hostkit.ProviderError(hostkit.Internal, 0, "JournalWriteFailed", r.sanitizeString(serr.Error()))
-						return hostkit.Attempt{Status: http.StatusInternalServerError}
-					}
-					if actualBytes > 0 {
-						_ = journal.RecordCostWithBytes(kind, parent, name, opName+"_bytes", 0, actualBytes)
+					if attemptID != "" {
+						if serr := journal.SettleAttempt(attemptID, charged, true); serr != nil {
+							lastCallErr = hostkit.ProviderError(hostkit.Internal, 0, "JournalWriteFailed", r.sanitizeString(serr.Error()))
+							return hostkit.Attempt{Status: http.StatusInternalServerError}
+						}
+						if actualBytes > 0 {
+							_ = journal.RecordCostWithBytes(kind, parent, name, opName+"_bytes", 0, actualBytes)
+						}
+					} else if charged > 0 || actualBytes > 0 {
+						if cerr := journal.RecordCostWithBytes(kind, parent, name, opName+"_bytes", charged, actualBytes); cerr != nil {
+							lastCallErr = hostkit.ProviderError(hostkit.Internal, 0, "JournalWriteFailed", r.sanitizeString(cerr.Error()))
+							return hostkit.Attempt{Status: http.StatusInternalServerError}
+						}
 					}
 				}
 			} else {
 				charged := res.Commit(-1, false)
 				if journal != nil {
-					if serr := journal.SettleAttempt(attemptID, charged, false); serr != nil && lastCallErr == nil {
-						lastCallErr = hostkit.ProviderError(hostkit.Internal, 0, "JournalWriteFailed", r.sanitizeString(serr.Error()))
-						return hostkit.Attempt{Status: http.StatusInternalServerError}
+					if attemptID != "" {
+						if serr := journal.SettleAttempt(attemptID, charged, false); serr != nil && lastCallErr == nil {
+							lastCallErr = hostkit.ProviderError(hostkit.Internal, 0, "JournalWriteFailed", r.sanitizeString(serr.Error()))
+							return hostkit.Attempt{Status: http.StatusInternalServerError}
+						}
+					} else if charged > 0 {
+						if cerr := journal.RecordCostWithBytes(kind, parent, name, opName+"_egress", charged, actualBytes); cerr != nil && lastCallErr == nil {
+							lastCallErr = hostkit.ProviderError(hostkit.Internal, 0, "JournalWriteFailed", r.sanitizeString(cerr.Error()))
+							return hostkit.Attempt{Status: http.StatusInternalServerError}
+						}
 					}
 				}
 			}
@@ -2896,11 +2974,12 @@ func (r *liveRawBackend) ReadOwnership(ctx context.Context, ref safety.ResourceR
 		}
 
 		ro := safety.RemoteOwnership{
-			Exists:     true,
-			ProviderID: "arn:aws:s3:::" + ref.Name,
-			Account:    owner,
-			Scope:      scopeARN,
-			Location:   r.region,
+			Exists:              true,
+			ProviderID:          "arn:aws:s3:::" + ref.Name,
+			Account:             owner,
+			Scope:               scopeARN,
+			Location:            r.region,
+			ServerCreatedAtUnix: r.getBucketCreatedUnix(ref.Name),
 		}
 
 		var tagOut *s3.GetBucketTaggingOutput
@@ -3008,6 +3087,7 @@ func (r *liveRawBackend) ReadOwnership(ctx context.Context, ref safety.ResourceR
 			Scope:      scopeARN,
 			Location:   r.region,
 			ETag:       cleanETag(aws.ToString(headOut.ETag)),
+			Generation: strings.TrimSpace(aws.ToString(headOut.VersionId)),
 		}
 		var tagOut *s3.GetObjectTaggingOutput
 		tagErr := r.doExtraPhysicalAWS(ctx, "object_head", safety.KindObject, ref.Parent, ref.Name, "read_ownership_object_tags", maxLiveSmallRespBodyBytes, true, func(ctx context.Context) error {
@@ -3124,6 +3204,9 @@ func (r *liveRawBackend) FindOwned(ctx context.Context, prefix string) ([]safety
 		}
 		for _, b := range out.Buckets {
 			name := strings.TrimSpace(aws.ToString(b.Name))
+			if b.CreationDate != nil && !b.CreationDate.IsZero() {
+				r.recordBucketCreatedUnix(name, b.CreationDate.UTC().Unix())
+			}
 			if strings.HasPrefix(name, prefix) {
 				refs = append(refs, safety.ResourceRef{
 					Kind:       safety.KindBucket,
@@ -3185,10 +3268,13 @@ func (r *liveRawBackend) FindOwned(ctx context.Context, prefix string) ([]safety
 	return refs, nil
 }
 
-func (r *liveRawBackend) DeleteOwned(ctx context.Context, ref safety.ResourceRef, _ safety.RemoteOwnership) error {
+func (r *liveRawBackend) DeleteOwned(ctx context.Context, ref safety.ResourceRef, ro safety.RemoteOwnership) error {
 	ctx = withLiveCleanup(ctx)
 	switch ref.Kind {
 	case safety.KindObject:
+		if ro.ETag != "" {
+			ctx = context.WithValue(ctx, expectedDeleteObjectETagKey{}, cleanETag(ro.ETag))
+		}
 		return r.DeleteObject(ctx, ref.Parent, ref.Name)
 	case safety.KindBucket:
 		return r.DeleteBucket(ctx, ref.Name)
@@ -3273,7 +3359,7 @@ func (r *liveRawBackend) ClassifyAbsent(err error) safety.AbsenceClass {
 	switch ce.Code {
 	case hostkit.NotFound:
 		return safety.AbsenceDefinitive
-	case hostkit.PermissionDenied, hostkit.Unauthenticated:
+	case hostkit.PermissionDenied, hostkit.Unauthenticated, hostkit.Conflict, hostkit.PreconditionFailed:
 		return safety.AbsenceAmbiguous
 	default:
 		return safety.AbsencePresentOrError
@@ -3467,12 +3553,18 @@ func (r *liveRawBackend) PutObject(ctx context.Context, bucket, key string, body
 		}
 		return hostkit.ObjectMeta{}, r.classifyLive(rerr, scopeObject)
 	}
+	var (
+		condIfNoneMatch *string
+		condIfMatch     *string
+	)
 	if rerr == nil && ro.Exists {
 		j := r.activeJournal()
+		provenETag := cleanETag(ro.ETag)
 		allowedOverwrite := hasPreState &&
 			preState.existsInJournal &&
-			(preState.entry.State == safety.StateConfirmed || preState.entry.State == safety.StatePending) &&
+			preState.entry.State == safety.StateConfirmed &&
 			!preState.entry.Retain &&
+			provenETag != "" &&
 			j != nil &&
 			ro.VerifyMatchesEntry(preState.entry, j.Meta()) == nil
 		if !allowedOverwrite {
@@ -3486,6 +3578,20 @@ func (r *liveRawBackend) PutObject(ctx context.Context, bucket, key string, body
 				fmt.Sprintf("refusing to overwrite existing unowned or untagged object %s/%s", bucket, key),
 			)
 		}
+		condIfMatch = aws.String(`"` + provenETag + `"`)
+	} else {
+		if hasPreState && preState.existsInJournal && preState.entry.State == safety.StateConfirmed {
+			if j := r.activeJournal(); j != nil {
+				_ = j.Retain(safety.KindObject, bucket, key, "confirmed object disappeared remotely before overwrite")
+			}
+			return hostkit.ObjectMeta{}, hostkit.ProviderError(
+				hostkit.Conflict,
+				http.StatusConflict,
+				"ForeignResourceCollision",
+				fmt.Sprintf("confirmed object %s/%s disappeared remotely before overwrite", bucket, key),
+			)
+		}
+		condIfNoneMatch = aws.String("*")
 	}
 
 	cli := r.s3Client()
@@ -3510,11 +3616,27 @@ func (r *liveRawBackend) PutObject(ctx context.Context, bucket, key string, body
 			Metadata:            userMeta,
 			Tagging:             aws.String(taggingHeader),
 			ExpectedBucketOwner: aws.String(owner),
+			IfNoneMatch:         condIfNoneMatch,
+			IfMatch:             condIfMatch,
 		})
 		return pErr
 	})
 	if err != nil {
-		return hostkit.ObjectMeta{}, r.classifyLive(err, scopeObject)
+		ce := r.classifyLive(err, scopeObject)
+		if ce.Code == hostkit.PreconditionFailed || ce.Code == hostkit.Conflict ||
+			ce.HTTPStatus == http.StatusPreconditionFailed || ce.HTTPStatus == http.StatusConflict ||
+			ce.ProviderCode == "PreconditionFailed" || ce.ProviderCode == "ConditionalRequestConflict" {
+			if j := r.activeJournal(); j != nil {
+				_ = j.Retain(safety.KindObject, bucket, key, "conditional PutObject precondition failed: "+ce.Error())
+			}
+			return hostkit.ObjectMeta{}, hostkit.ProviderError(
+				hostkit.Conflict,
+				http.StatusConflict,
+				"ForeignResourceCollision",
+				fmt.Sprintf("conditional PutObject failed precondition for %s/%s: refusing concurrent overwrite", bucket, key),
+			)
+		}
+		return hostkit.ObjectMeta{}, ce
 	}
 	etag := cleanETag(aws.ToString(out.ETag))
 	metaCopy := make(map[string]string, len(userMeta))
@@ -3535,16 +3657,42 @@ func (r *liveRawBackend) PutObject(ctx context.Context, bucket, key string, body
 func (r *liveRawBackend) DeleteObject(ctx context.Context, bucket, key string) error {
 	cli := r.s3Client()
 	owner := r.ownerAccount()
+	expectedETag, _ := ctx.Value(expectedDeleteObjectETagKey{}).(string)
+	if expectedETag == "" {
+		if j := r.activeJournal(); j != nil {
+			if entry, ok := j.Lookup(safety.KindObject, bucket, key); ok && entry.ETag != "" {
+				expectedETag = cleanETag(entry.ETag)
+			}
+		}
+	}
 	err := r.doLiveAWS(ctx, "object_delete", safety.KindObject, bucket, key, 0, true, func(ctx context.Context) error {
-		_, dErr := cli.DeleteObject(ctx, &s3.DeleteObjectInput{
+		in := &s3.DeleteObjectInput{
 			Bucket:              aws.String(bucket),
 			Key:                 aws.String(key),
 			ExpectedBucketOwner: aws.String(owner),
-		})
+		}
+		if expectedETag != "" {
+			in.IfMatch = aws.String(`"` + expectedETag + `"`)
+		}
+		_, dErr := cli.DeleteObject(ctx, in)
 		return dErr
 	})
 	if err != nil {
-		return r.classifyLive(err, scopeObject)
+		ce := r.classifyLive(err, scopeObject)
+		if ce.Code == hostkit.PreconditionFailed || ce.Code == hostkit.Conflict ||
+			ce.HTTPStatus == http.StatusPreconditionFailed || ce.HTTPStatus == http.StatusConflict ||
+			ce.ProviderCode == "PreconditionFailed" || ce.ProviderCode == "ConditionalRequestConflict" {
+			if j := r.activeJournal(); j != nil {
+				_ = j.Retain(safety.KindObject, bucket, key, "conditional DeleteObject precondition failed: "+ce.Error())
+			}
+			return hostkit.ProviderError(
+				hostkit.Conflict,
+				http.StatusConflict,
+				"ForeignResourceCollision",
+				fmt.Sprintf("conditional DeleteObject failed precondition for %s/%s: refusing delete", bucket, key),
+			)
+		}
+		return ce
 	}
 	return nil
 }
@@ -3553,20 +3701,37 @@ func (r *liveRawBackend) GetObject(ctx context.Context, bucket, key string, limi
 	if limit <= 0 || limit > safety.DefaultMaxObjectBytes {
 		limit = safety.DefaultMaxObjectBytes
 	}
+	proof, hasProof := ctx.Value(expectedObjectProofKey{}).(expectedObjectProof)
 	cli := r.s3Client()
 	owner := r.ownerAccount()
-	var data []byte
-	var sizeErr error
+	var (
+		data         []byte
+		sizeErr      error
+		etagMismatch bool
+	)
 	err := r.doLiveAWS(ctx, "object_get", safety.KindObject, bucket, key, 0, true, func(ctx context.Context) error {
-		out, gErr := cli.GetObject(ctx, &s3.GetObjectInput{
+		in := &s3.GetObjectInput{
 			Bucket:              aws.String(bucket),
 			Key:                 aws.String(key),
 			ExpectedBucketOwner: aws.String(owner),
-		})
+		}
+		if hasProof {
+			if proof.etag != "" {
+				in.IfMatch = aws.String(`"` + proof.etag + `"`)
+			}
+			if proof.versionID != "" {
+				in.VersionId = aws.String(proof.versionID)
+			}
+		}
+		out, gErr := cli.GetObject(ctx, in)
 		if gErr != nil {
 			return gErr
 		}
 		defer out.Body.Close()
+		if hasProof && proof.etag != "" && cleanETag(aws.ToString(out.ETag)) != proof.etag {
+			etagMismatch = true
+			return nil
+		}
 		if limit > 0 && out.ContentLength != nil && *out.ContentLength > limit {
 			sizeErr = &hostkit.CloudError{
 				Code:    hostkit.Internal,
@@ -3586,7 +3751,74 @@ func (r *liveRawBackend) GetObject(ctx context.Context, bucket, key string, limi
 		return nil, r.classifyLive(sizeErr, scopeObject)
 	}
 	if err != nil {
-		return nil, r.classifyLive(err, scopeObject)
+		ce := r.classifyLive(err, scopeObject)
+		if hasProof && (ce.Code == hostkit.PreconditionFailed || ce.Code == hostkit.Conflict ||
+			ce.HTTPStatus == http.StatusPreconditionFailed || ce.HTTPStatus == http.StatusConflict ||
+			ce.ProviderCode == "PreconditionFailed" || ce.ProviderCode == "ConditionalRequestConflict") {
+			if j := r.activeJournal(); j != nil {
+				_ = j.Retain(safety.KindObject, bucket, key, "GetObject conditional If-Match failed: "+ce.Error())
+			}
+			return nil, hostkit.ProviderError(
+				hostkit.PermissionDenied,
+				http.StatusForbidden,
+				"UnownedResourceReadRefused",
+				fmt.Sprintf("object %s/%s changed after ownership proof (conditional GET failed)", bucket, key),
+			)
+		}
+		return nil, ce
+	}
+	if etagMismatch {
+		if j := r.activeJournal(); j != nil {
+			_ = j.Retain(safety.KindObject, bucket, key, "GetObject response ETag mismatched proven ownership ETag")
+		}
+		return nil, hostkit.ProviderError(
+			hostkit.PermissionDenied,
+			http.StatusForbidden,
+			"UnownedResourceReadRefused",
+			fmt.Sprintf("object %s/%s response ETag did not match proven ownership ETag", bucket, key),
+		)
+	}
+	if hasProof {
+		var postTagOut *s3.GetObjectTaggingOutput
+		postTagErr := r.doExtraPhysicalAWS(ctx, "object_head", safety.KindObject, bucket, key, "verify_post_get_object_tags", maxLiveSmallRespBodyBytes, true, func(ctx context.Context) error {
+			var tErr error
+			postTagOut, tErr = cli.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{
+				Bucket:              aws.String(bucket),
+				Key:                 aws.String(key),
+				ExpectedBucketOwner: aws.String(owner),
+			})
+			return tErr
+		})
+		postRO := safety.RemoteOwnership{
+			Exists:     true,
+			ProviderID: "arn:aws:s3:::" + bucket + "/" + key,
+			Account:    owner,
+			Scope:      r.attestedARNValue(),
+			Location:   r.region,
+			ETag:       proof.etag,
+			Generation: proof.versionID,
+		}
+		if postTagErr == nil && postTagOut != nil {
+			applyRemoteOwnershipTags(s3TagSetToMap(postTagOut.TagSet), &postRO)
+		}
+		j := r.activeJournal()
+		if postTagErr != nil || j == nil || postRO.VerifyMatchesEntry(proof.entry, j.Meta()) != nil {
+			if j != nil {
+				_ = j.Retain(safety.KindObject, bucket, key, "post-GET object tag verification failed")
+			}
+			if postTagErr != nil {
+				var pce *hostkit.CloudError
+				if errors.As(postTagErr, &pce) && pce != nil && pce.ProviderCode == "LiveCostCapExceeded" {
+					return nil, pce
+				}
+			}
+			return nil, hostkit.ProviderError(
+				hostkit.PermissionDenied,
+				http.StatusForbidden,
+				"UnownedResourceReadRefused",
+				fmt.Sprintf("object %s/%s failed post-GET ownership tag verification", bucket, key),
+			)
+		}
 	}
 	return data, nil
 }
@@ -3666,21 +3898,44 @@ func (r *liveRawBackend) ListBuckets(ctx context.Context, token string) ([]strin
 }
 
 func (r *liveRawBackend) HeadObject(ctx context.Context, bucket, key string) (hostkit.ObjectMeta, error) {
+	proof, hasProof := ctx.Value(expectedObjectProofKey{}).(expectedObjectProof)
 	cli := r.s3Client()
 	owner := r.ownerAccount()
 	var out *s3.HeadObjectOutput
 	err := r.doLiveAWS(ctx, "object_head", safety.KindObject, bucket, key, 0, true, func(ctx context.Context) error {
-		var hErr error
-		out, hErr = cli.HeadObject(ctx, &s3.HeadObjectInput{
+		in := &s3.HeadObjectInput{
 			Bucket:              aws.String(bucket),
 			Key:                 aws.String(key),
 			ExpectedBucketOwner: aws.String(owner),
-		})
+		}
+		if hasProof {
+			if proof.etag != "" {
+				in.IfMatch = aws.String(`"` + proof.etag + `"`)
+			}
+			if proof.versionID != "" {
+				in.VersionId = aws.String(proof.versionID)
+			}
+		}
+		var hErr error
+		out, hErr = cli.HeadObject(ctx, in)
 		return hErr
 	})
 	if err != nil {
 		// Stage 1 invariant: NEVER call GetObject (not even ranged bytes=0-0) on 403.
 		ce := r.classifyLive(err, scopeObject)
+		if hasProof && (ce.Code == hostkit.PreconditionFailed || ce.Code == hostkit.Conflict ||
+			ce.HTTPStatus == http.StatusPreconditionFailed || ce.HTTPStatus == http.StatusConflict ||
+			ce.ProviderCode == "PreconditionFailed" || ce.ProviderCode == "ConditionalRequestConflict") {
+			if j := r.activeJournal(); j != nil {
+				_ = j.Retain(safety.KindObject, bucket, key, "HeadObject conditional If-Match failed: "+ce.Error())
+			}
+			return hostkit.ObjectMeta{}, hostkit.ProviderError(
+				hostkit.PermissionDenied,
+				http.StatusForbidden,
+				"UnownedResourceReadRefused",
+				fmt.Sprintf("object %s/%s changed after ownership proof (conditional HEAD failed)", bucket, key),
+			)
+		}
 		if ce.Code == hostkit.NotFound {
 			if ce.Absent == hostkit.AbsentBucket {
 				return hostkit.ObjectMeta{}, ce
@@ -3721,12 +3976,24 @@ func (r *liveRawBackend) HeadObject(ctx context.Context, bucket, key string) (ho
 			meta[lk] = v
 		}
 	}
+	gotETag := cleanETag(aws.ToString(out.ETag))
+	if hasProof && proof.etag != "" && gotETag != proof.etag {
+		if j := r.activeJournal(); j != nil {
+			_ = j.Retain(safety.KindObject, bucket, key, "HeadObject response ETag mismatched proven ownership ETag")
+		}
+		return hostkit.ObjectMeta{}, hostkit.ProviderError(
+			hostkit.PermissionDenied,
+			http.StatusForbidden,
+			"UnownedResourceReadRefused",
+			fmt.Sprintf("object %s/%s response ETag did not match proven ownership ETag", bucket, key),
+		)
+	}
 	return hostkit.ObjectMeta{
 		Exists:      true,
 		Bucket:      bucket,
 		Key:         key,
 		Size:        size,
-		ETag:        cleanETag(aws.ToString(out.ETag)),
+		ETag:        gotETag,
 		ContentType: ct,
 		Metadata:    meta,
 	}, nil
@@ -4202,12 +4469,18 @@ func parseRunStartEpoch(runID string) (int64, error) {
 }
 
 func isTagProvenOwnedByRun(ro safety.RemoteOwnership, runID string, runStartEpoch int64) bool {
-	return ro.Exists &&
-		ro.RunID == runID &&
-		ro.OwnerNonce != "" &&
-		ro.CreateToken != "" &&
-		runStartEpoch > 0 &&
-		ro.CreatedAtUnix >= runStartEpoch
+	if !ro.Exists ||
+		ro.RunID != runID ||
+		ro.OwnerNonce == "" ||
+		ro.CreateToken == "" ||
+		runStartEpoch <= 0 ||
+		ro.CreatedAtUnix < runStartEpoch {
+		return false
+	}
+	if ro.ServerCreatedAtUnix > 0 && ro.ServerCreatedAtUnix < runStartEpoch {
+		return false
+	}
+	return true
 }
 
 func sweepItemKey(kind, parent, name string) string {
@@ -4234,23 +4507,25 @@ func (r *liveRawBackend) deleteAndPollProven(
 	ctx context.Context,
 	ref safety.ResourceRef,
 	ro safety.RemoteOwnership,
-	delOp, pollOp string,
+	_, _ string,
 	rep *safety.SweepReport,
 ) bool {
-	if rerr := r.reserveCleanupOp(delOp); rerr != nil {
-		rep.Failed = append(rep.Failed, safety.SweepItem{
-			Kind:       ref.Kind,
-			Parent:     ref.Parent,
-			Name:       ref.Name,
-			ProviderID: ro.ProviderID,
-			Reason:     "cleanup cost reservation failed: " + rerr.Error(),
-		})
-		return false
-	}
+	ctx = withOwnSweepPhysicalAttempt(withLiveCleanup(ctx))
 	delCtx, delCancel := context.WithTimeout(ctx, time.Duration(safety.DefaultMaxRequestTimeoutSeconds)*time.Second)
 	delErr := r.DeleteOwned(delCtx, ref, ro)
 	delCancel()
 	if delErr != nil && r.ClassifyAbsent(delErr) != safety.AbsenceDefinitive {
+		var ce *hostkit.CloudError
+		if errors.As(delErr, &ce) && ce != nil && (ce.ProviderCode == "LiveCostCapExceeded" || ce.ProviderCode == "JournalWriteFailed") {
+			rep.Failed = append(rep.Failed, safety.SweepItem{
+				Kind:       ref.Kind,
+				Parent:     ref.Parent,
+				Name:       ref.Name,
+				ProviderID: ro.ProviderID,
+				Reason:     "cleanup cost/journal admission failed: " + delErr.Error(),
+			})
+			return false
+		}
 		if r.ClassifyAbsent(delErr) == safety.AbsenceAmbiguous {
 			rep.Retained = append(rep.Retained, safety.SweepItem{
 				Kind:       ref.Kind,
@@ -4273,16 +4548,6 @@ func (r *liveRawBackend) deleteAndPollProven(
 
 	confirmed := false
 	for attempt := 0; attempt < 5; attempt++ {
-		if rerr := r.reserveCleanupOp(pollOp); rerr != nil {
-			rep.Failed = append(rep.Failed, safety.SweepItem{
-				Kind:       ref.Kind,
-				Parent:     ref.Parent,
-				Name:       ref.Name,
-				ProviderID: ro.ProviderID,
-				Reason:     "poll-delete cost reservation failed: " + rerr.Error(),
-			})
-			return false
-		}
 		pollCtx, pollCancel := context.WithTimeout(ctx, time.Duration(safety.DefaultMaxRequestTimeoutSeconds)*time.Second)
 		done, pollErr := r.PollDelete(pollCtx, ref)
 		pollCancel()
@@ -4290,15 +4555,28 @@ func (r *liveRawBackend) deleteAndPollProven(
 			confirmed = true
 			break
 		}
-		if pollErr != nil && r.ClassifyAbsent(pollErr) == safety.AbsenceAmbiguous {
-			rep.Retained = append(rep.Retained, safety.SweepItem{
-				Kind:       ref.Kind,
-				Parent:     ref.Parent,
-				Name:       ref.Name,
-				ProviderID: ro.ProviderID,
-				Reason:     "ambiguous poll-delete response: " + pollErr.Error(),
-			})
-			return false
+		if pollErr != nil {
+			var ce *hostkit.CloudError
+			if errors.As(pollErr, &ce) && ce != nil && (ce.ProviderCode == "LiveCostCapExceeded" || ce.ProviderCode == "JournalWriteFailed") {
+				rep.Failed = append(rep.Failed, safety.SweepItem{
+					Kind:       ref.Kind,
+					Parent:     ref.Parent,
+					Name:       ref.Name,
+					ProviderID: ro.ProviderID,
+					Reason:     "poll-delete cost/journal admission failed: " + pollErr.Error(),
+				})
+				return false
+			}
+			if r.ClassifyAbsent(pollErr) == safety.AbsenceAmbiguous {
+				rep.Retained = append(rep.Retained, safety.SweepItem{
+					Kind:       ref.Kind,
+					Parent:     ref.Parent,
+					Name:       ref.Name,
+					ProviderID: ro.ProviderID,
+					Reason:     "ambiguous poll-delete response: " + pollErr.Error(),
+				})
+				return false
+			}
 		}
 	}
 	if !confirmed {
@@ -4310,6 +4588,9 @@ func (r *liveRawBackend) deleteAndPollProven(
 			Reason:     "delete not yet converged after 5 poll attempts",
 		})
 		return false
+	}
+	if j := r.activeJournal(); j != nil {
+		_ = j.Deleted(ref.Kind, ref.Parent, ref.Name, 0)
 	}
 	rep.Deleted = append(rep.Deleted, safety.SweepItem{
 		Kind:       ref.Kind,
@@ -4543,7 +4824,7 @@ func (r *liveRawBackend) sweepPrefixByTags(
 
 func (r *liveRawBackend) sweepRunWithoutJournal(
 	ctx context.Context,
-	runID string,
+	absJDir, runID string,
 	pol *safety.Policy,
 	apply bool,
 ) (safety.SweepReport, error) {
@@ -4552,23 +4833,81 @@ func (r *liveRawBackend) sweepRunWithoutJournal(
 		RunID:  runID,
 		DryRun: !apply,
 	}
-	if err := r.reserveCleanupOp("bucket_exists"); err != nil {
-		return rep, fmt.Errorf("sweep attestation reservation failed: %w", err)
+	var attestRes *safety.AttemptReservation
+	if meter := r.activeMeter(); meter != nil {
+		var rerr error
+		attestRes, rerr = meter.ReserveAttempt(safety.AttemptPricingInput{
+			Operation: "bucket_exists",
+			IsCleanup: true,
+		})
+		if rerr != nil {
+			return rep, fmt.Errorf("sweep attestation reservation failed: %w", rerr)
+		}
 	}
 	ident, err := r.AttestIdentity(ctx)
 	if err != nil {
+		if attestRes != nil {
+			attestRes.Commit(-1, false)
+		}
 		return rep, fmt.Errorf("sweep identity attestation failed: %w", err)
 	}
 	scope, err := r.ResolveScope(ctx, "storage")
 	if err != nil {
+		if attestRes != nil {
+			attestRes.Commit(-1, false)
+		}
 		return rep, fmt.Errorf("sweep scope resolution failed: %w", err)
 	}
 	if pol != nil {
 		if err := pol.CheckScope(ident.Provider, ident.Account, scope.Scope, scope.Region); err != nil {
+			if attestRes != nil {
+				attestRes.Commit(-1, false)
+			}
 			return rep, fmt.Errorf("sweep policy scope check failed: %w", err)
 		}
 	}
-	r.sweepPrefixByTags(ctx, runID, apply, &rep)
+	var attestCharged int64
+	if attestRes != nil {
+		attestCharged = attestRes.Commit(-1, false)
+	}
+	if apply && absJDir != "" && pol != nil {
+		startUnix, _ := parseRunStartEpoch(runID)
+		if startUnix <= 0 {
+			startUnix = time.Now().UTC().Unix()
+		}
+		recMeta := safety.JournalMeta{
+			RunID:         runID,
+			SessionID:     "sweep-" + safety.NewToken128()[:12],
+			PolicyHash:    pol.Hash(),
+			Provider:      ident.Provider,
+			Account:       ident.Account,
+			Scope:         scope.Scope,
+			Region:        scope.Region,
+			Endpoint:      scope.Endpoint,
+			StartedAtUnix: startUnix,
+		}
+		recJ, oerr := safety.OpenJournal(absJDir, recMeta)
+		if oerr != nil {
+			return rep, fmt.Errorf("open recovery journal for %s: %w", runID, oerr)
+		}
+		defer func() {
+			r.mu.Lock()
+			r.sweepJournal = nil
+			r.mu.Unlock()
+			_ = recJ.Close()
+		}()
+		if attestCharged > 0 {
+			if attID, berr := recJ.BeginAttempt(safety.KindBucket, "", "", "sweep_attest_identity", attestCharged, 0); berr == nil {
+				_ = recJ.SettleAttempt(attID, attestCharged, true)
+			}
+		}
+		r.mu.Lock()
+		r.sweepJournal = recJ
+		r.mu.Unlock()
+	}
+	// Ensure ReadOwnership(KindBucket) during journal-less sweep owns its page-0 ListObjectsV2 attempt.
+	noPreReserveCtx := context.WithValue(ctx, sweepPreReservesBucketListKey{}, false)
+	r.sweepPrefixByTags(noPreReserveCtx, runID, apply, &rep)
 	return rep, nil
 }
 
@@ -4739,15 +5078,6 @@ func (l *liveAdapter) SweepCLI(ctx context.Context, args []string, out io.Writer
 		_ = json.NewEncoder(out).Encode(res)
 		return 1
 	}
-	sweepMeter, merr := safety.NewCostMeter(pol.Cost, pt, raw)
-	if merr != nil {
-		res := sweepCLIOutput{OK: false, DryRun: !apply, Error: sanitizeStaticSecrets(merr.Error())}
-		_ = json.NewEncoder(out).Encode(res)
-		return 1
-	}
-	raw.mu.Lock()
-	raw.sweepMeter = sweepMeter
-	raw.mu.Unlock()
 
 	outSummary := sweepCLIOutput{
 		OK:     true,
@@ -4755,32 +5085,93 @@ func (l *liveAdapter) SweepCLI(ctx context.Context, args []string, out io.Writer
 	}
 	var errMsgs []string
 	sweepCtx := withLiveCleanup(context.WithValue(ctx, sweepPreReservesBucketListKey{}, true))
+	prefixScanCtx := withLiveCleanup(context.WithValue(ctx, sweepPreReservesBucketListKey{}, false))
+	hardCeilingNano := int64(safety.HardCostCeilingUSD * 1e9)
 	for _, rid := range runIDs {
 		var (
 			rep  safety.SweepReport
 			serr error
 		)
-		jPath, jperr := safety.JournalPath(absJDir, rid)
-		hasJournal := false
-		if jperr == nil {
-			if _, statErr := os.Stat(jPath); statErr == nil {
-				hasJournal = true
-			}
+		runMeter, merr := safety.NewCostMeter(pol.Cost, pt, raw)
+		if merr != nil {
+			outSummary.OK = false
+			errMsgs = append(errMsgs, raw.sanitizeString(merr.Error()))
+			continue
 		}
-		if hasJournal {
-			rep, serr = safety.Sweep(sweepCtx, raw, safety.SweepOptions{
-				JournalDir: absJDir,
-				RunID:      rid,
-				Policy:     &pol,
-				Meter:      sweepMeter,
-				Apply:      apply,
-				ScanPrefix: false,
-			})
-			if serr == nil {
-				raw.sweepPrefixByTags(ctx, rid, apply, &rep)
+		jPath, jperr := safety.JournalPath(absJDir, rid)
+		if jperr != nil {
+			outSummary.OK = false
+			errMsgs = append(errMsgs, raw.sanitizeString(jperr.Error()))
+			continue
+		}
+		_, statErr := os.Stat(jPath)
+		if statErr == nil {
+			loaded, lerr := safety.LoadJournal(jPath)
+			if lerr != nil {
+				rep = safety.SweepReport{RunID: rid, DryRun: !apply}
+				serr = fmt.Errorf("corrupt or unreadable journal for %s: %w", rid, lerr)
+			} else {
+				safety.RestoreMeterFromState(runMeter, pt, *loaded)
+				snap := runMeter.Snapshot()
+				if loaded.ChargedNanoUSD >= hardCeilingNano || snap.ChargedNanoUSD >= snap.CapNanoUSD {
+					rep = safety.SweepReport{RunID: rid, DryRun: !apply}
+					serr = fmt.Errorf("sweep refused for %s: recorded campaign spend (%d nano-USD) meets or exceeds cost ceiling (%d nano-USD)",
+						rid, snap.ChargedNanoUSD, snap.CapNanoUSD)
+				} else {
+					raw.mu.Lock()
+					raw.sweepMeter = runMeter
+					raw.sweepJournal = nil
+					raw.mu.Unlock()
+					if apply {
+						openedJ, oerr := safety.OpenJournal(absJDir, loaded.Meta)
+						if oerr != nil {
+							rep = safety.SweepReport{RunID: rid, DryRun: false}
+							serr = oerr
+						} else {
+							raw.mu.Lock()
+							raw.sweepJournal = openedJ
+							raw.mu.Unlock()
+							rep, serr = safety.Sweep(sweepCtx, raw, safety.SweepOptions{
+								Journal:    openedJ,
+								Policy:     &pol,
+								Meter:      runMeter,
+								Apply:      true,
+								ScanPrefix: false,
+							})
+							if serr == nil {
+								raw.sweepPrefixByTags(prefixScanCtx, rid, true, &rep)
+							}
+							raw.mu.Lock()
+							raw.sweepJournal = nil
+							raw.mu.Unlock()
+							if cerr := openedJ.Close(); cerr != nil && serr == nil {
+								serr = cerr
+							}
+						}
+					} else {
+						rep, serr = safety.Sweep(sweepCtx, raw, safety.SweepOptions{
+							JournalDir: absJDir,
+							RunID:      rid,
+							Policy:     &pol,
+							Meter:      runMeter,
+							Apply:      false,
+							ScanPrefix: false,
+						})
+						if serr == nil {
+							raw.sweepPrefixByTags(prefixScanCtx, rid, false, &rep)
+						}
+					}
+				}
 			}
+		} else if !os.IsNotExist(statErr) {
+			rep = safety.SweepReport{RunID: rid, DryRun: !apply}
+			serr = fmt.Errorf("stat journal for %s: %w", rid, statErr)
 		} else {
-			rep, serr = raw.sweepRunWithoutJournal(ctx, rid, &pol, apply)
+			raw.mu.Lock()
+			raw.sweepMeter = runMeter
+			raw.sweepJournal = nil
+			raw.mu.Unlock()
+			rep, serr = raw.sweepRunWithoutJournal(prefixScanCtx, absJDir, rid, &pol, apply)
 		}
 		outSummary.Reports = append(outSummary.Reports, rep)
 		outSummary.Deleted += len(rep.Deleted)

@@ -2405,3 +2405,639 @@ func TestLiveStage2_JournalLessSweepAndStrictRunSelection(t *testing.T) {
 		t.Fatalf("expected rc=0, ok=true on clean journal-less sweep, got rc=%d res=%+v", rcClean, resClean)
 	}
 }
+
+func TestSolR2_ObjectOverwriteAndDeleteRaceRefusedByConditionalHeaders(t *testing.T) {
+	runID := "run-1700000000-abcdef012345"
+	bucket := "lmcloud-conf-abcdef012345-condput"
+
+	var (
+		mu              sync.Mutex
+		bktExists       bool
+		bktTags         = map[string]string{}
+		objExists       bool
+		objBody         []byte
+		objCT           string
+		objTags         = map[string]string{}
+		objETag         = "etag-v1"
+		raceOnAbsent    bool
+		raceOnOverwrite bool
+		seenIfNoneMatch string
+		seenPutIfMatch  string
+		seenDelIfMatch  string
+	)
+
+	h, a, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test"))
+			return
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		q := r.URL.Query()
+		isObjPath := r.URL.Path != "" && r.URL.Path != "/"
+
+		switch r.Method {
+		case http.MethodHead:
+			if !isObjPath {
+				if !bktExists {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if !bktExists || !objExists {
+				if raceOnAbsent {
+					// Simulate foreign writer winning immediately after the absence HEAD snapshot.
+					objExists = true
+					objBody = []byte("FOREIGN_ORIGINAL")
+					objTags = map[string]string{"foreign": "owner"}
+					objETag = "foreign-etag"
+					raceOnAbsent = false
+				}
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", objCT)
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(objBody)))
+			w.Header().Set("ETag", `"`+objETag+`"`)
+			w.WriteHeader(http.StatusOK)
+
+		case http.MethodPut:
+			if !isObjPath {
+				if q.Has("tagging") {
+					var parsed mockS3TaggingXML
+					if err := xml.Unmarshal([]byte(r.Header.Get("X-Orig-Body")), &parsed); err != nil {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					bktTags = make(map[string]string, len(parsed.TagSet.Tags))
+					for _, tg := range parsed.TagSet.Tags {
+						bktTags[tg.Key] = tg.Value
+					}
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				bktExists = true
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			// PutObject with S3 conditional write enforcement (If-None-Match / If-Match).
+			if inm := strings.TrimSpace(r.Header.Get("If-None-Match")); inm != "" {
+				seenIfNoneMatch = inm
+				if inm == "*" && objExists {
+					w.WriteHeader(http.StatusPreconditionFailed)
+					_, _ = io.WriteString(w, `<Error><Code>PreconditionFailed</Code><Message>At least one of the pre-conditions you specified did not hold</Message></Error>`)
+					return
+				}
+			}
+			if im := strings.TrimSpace(r.Header.Get("If-Match")); im != "" {
+				seenPutIfMatch = im
+				if !objExists || cleanETag(im) != cleanETag(objETag) {
+					w.WriteHeader(http.StatusPreconditionFailed)
+					_, _ = io.WriteString(w, `<Error><Code>PreconditionFailed</Code><Message>At least one of the pre-conditions you specified did not hold</Message></Error>`)
+					return
+				}
+			}
+			objExists = true
+			objBody = []byte(r.Header.Get("X-Orig-Body"))
+			objCT = r.Header.Get("Content-Type")
+			tagHdr := r.Header.Get("X-Amz-Tagging")
+			parsedTags, _ := url.ParseQuery(tagHdr)
+			objTags = make(map[string]string)
+			for tk, tvals := range parsedTags {
+				if len(tvals) > 0 {
+					objTags[tk] = tvals[0]
+				}
+			}
+			objETag = fmt.Sprintf("etag-%d", len(objBody))
+			w.Header().Set("ETag", `"`+objETag+`"`)
+			w.WriteHeader(http.StatusOK)
+
+		case http.MethodGet:
+			if !isObjPath {
+				if q.Has("tagging") {
+					if len(bktTags) == 0 {
+						w.WriteHeader(http.StatusNotFound)
+						_, _ = io.WriteString(w, `<Error><Code>NoSuchTagSet</Code><Message>The TagSet does not exist</Message></Error>`)
+						return
+					}
+					w.Header().Set("Content-Type", "application/xml")
+					_, _ = io.WriteString(w, formatS3TaggingXML(bktTags))
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+				return
+			}
+			if q.Has("tagging") {
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, formatS3TaggingXML(objTags))
+				if raceOnOverwrite {
+					// Foreign writer replaces object right after pre-PUT ownership tag check.
+					objBody = []byte("FOREIGN_CONCURRENT")
+					objTags = map[string]string{"foreign": "writer"}
+					objETag = "foreign-etag-2"
+					raceOnOverwrite = false
+				}
+				return
+			}
+
+		case http.MethodDelete:
+			if !isObjPath {
+				bktExists = false
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			if im := strings.TrimSpace(r.Header.Get("If-Match")); im != "" {
+				seenDelIfMatch = im
+				if objExists && cleanETag(im) != cleanETag(objETag) {
+					w.WriteHeader(http.StatusPreconditionFailed)
+					_, _ = io.WriteString(w, `<Error><Code>PreconditionFailed</Code><Message>Precondition failed</Message></Error>`)
+					return
+				}
+			}
+			objExists = false
+			objBody = nil
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+
+	t.Setenv("LMAWS_LIVE_MUTATE", "1")
+	t.Setenv("LMAWS_RUN_ID", runID)
+
+	created, err := h.BucketCreate(false, bucket)
+	if err != nil || !created || h.LastError().Code != hostkit.OK {
+		t.Fatalf("BucketCreate: created=%v err=%v last=%+v", created, err, h.LastError())
+	}
+
+	// 1. First-put TOCTOU race: foreign object lands right after absence HEAD;
+	// If-None-Match: * triggers 412 PreconditionFailed -> Conflict/ForeignResourceCollision + Retain.
+	mu.Lock()
+	raceOnAbsent = true
+	mu.Unlock()
+	_, err = h.ObjectPut(false, bucket, "raced.txt", "REPLACED", "text/plain", nil)
+	if err != nil {
+		t.Fatalf("ObjectPut unexpected error: %v", err)
+	}
+	if h.LastError().Code != hostkit.Conflict || h.LastError().ProviderCode != "ForeignResourceCollision" {
+		t.Fatalf("expected Conflict/ForeignResourceCollision on If-None-Match race, got %+v", h.LastError())
+	}
+	mu.Lock()
+	if seenIfNoneMatch != "*" || string(objBody) != "FOREIGN_ORIGINAL" || objTags["foreign"] != "owner" {
+		mu.Unlock()
+		t.Fatalf("foreign object was modified or If-None-Match not sent: inm=%q body=%q tags=%v", seenIfNoneMatch, string(objBody), objTags)
+	}
+	objExists = false
+	objBody = nil
+	objTags = map[string]string{}
+	mu.Unlock()
+
+	// 2. Normal create + confirmed overwrite TOCTOU race with If-Match: <journaled ETag>.
+	putRes, err := h.ObjectPut(false, bucket, "owned.txt", "OWNED_V1", "text/plain", nil)
+	if err != nil || h.LastError().Code != hostkit.OK {
+		t.Fatalf("ObjectPut owned.txt: res=%+v err=%v last=%+v", putRes, err, h.LastError())
+	}
+	mu.Lock()
+	raceOnOverwrite = true
+	mu.Unlock()
+	_, err = h.ObjectPut(false, bucket, "owned.txt", "OWNED_V2", "text/plain", nil)
+	if err != nil {
+		t.Fatalf("ObjectPut overwrite unexpected error: %v", err)
+	}
+	if h.LastError().Code != hostkit.Conflict || h.LastError().ProviderCode != "ForeignResourceCollision" {
+		t.Fatalf("expected Conflict/ForeignResourceCollision on If-Match overwrite race, got %+v", h.LastError())
+	}
+	mu.Lock()
+	if cleanETag(seenPutIfMatch) != cleanETag(putRes.ETag) || string(objBody) != "FOREIGN_CONCURRENT" {
+		mu.Unlock()
+		t.Fatalf("expected If-Match=%q and preserved FOREIGN_CONCURRENT, got im=%q body=%q", putRes.ETag, seenPutIfMatch, string(objBody))
+	}
+	mu.Unlock()
+
+	// 3. Conditional DeleteObject on another confirmed object sends If-Match and refuses if ETag changed after pre-delete tag check.
+	mu.Lock()
+	objExists = false
+	objBody = nil
+	objTags = map[string]string{}
+	mu.Unlock()
+	putDel, err := h.ObjectPut(false, bucket, "del.txt", "DEL_V1", "text/plain", nil)
+	if err != nil || h.LastError().Code != hostkit.OK {
+		t.Fatalf("ObjectPut del.txt: res=%+v err=%v last=%+v", putDel, err, h.LastError())
+	}
+	mu.Lock()
+	raceOnOverwrite = true
+	mu.Unlock()
+	_ = h.ObjectDelete(false, bucket, "del.txt")
+	if h.LastError().Code == hostkit.OK || cleanETag(seenDelIfMatch) != cleanETag(putDel.ETag) {
+		t.Fatalf("expected ObjectDelete to send If-Match=%q and refuse modified object, got im=%q last=%+v", putDel.ETag, seenDelIfMatch, h.LastError())
+	}
+	_ = a.Close()
+}
+
+func TestSolR2_OwnedReadRaceRefused(t *testing.T) {
+	runID := "run-1700000000-abcdef012345"
+	bucket := "lmcloud-conf-abcdef012345-readrace"
+
+	var (
+		mu            sync.Mutex
+		bktExists     bool
+		bktTags       = map[string]string{}
+		objExists     bool
+		swapOnTag     bool
+		swapSameETag  bool
+		objBody       []byte
+		objCT         string
+		objTags       = map[string]string{}
+		objETag       = "etag-owned-v1"
+		seenGetIfMatch string
+	)
+
+	h, a, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test"))
+			return
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		q := r.URL.Query()
+		isObjPath := r.URL.Path != "" && r.URL.Path != "/"
+
+		switch r.Method {
+		case http.MethodHead:
+			if !isObjPath {
+				if !bktExists {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if !bktExists || !objExists {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", objCT)
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(objBody)))
+			w.Header().Set("ETag", `"`+objETag+`"`)
+			w.WriteHeader(http.StatusOK)
+
+		case http.MethodPut:
+			if !isObjPath {
+				if q.Has("tagging") {
+					var parsed mockS3TaggingXML
+					if err := xml.Unmarshal([]byte(r.Header.Get("X-Orig-Body")), &parsed); err != nil {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					bktTags = make(map[string]string, len(parsed.TagSet.Tags))
+					for _, tg := range parsed.TagSet.Tags {
+						bktTags[tg.Key] = tg.Value
+					}
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				bktExists = true
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			objExists = true
+			objBody = []byte(r.Header.Get("X-Orig-Body"))
+			objCT = r.Header.Get("Content-Type")
+			tagHdr := r.Header.Get("X-Amz-Tagging")
+			parsedTags, _ := url.ParseQuery(tagHdr)
+			objTags = make(map[string]string)
+			for tk, tvals := range parsedTags {
+				if len(tvals) > 0 {
+					objTags[tk] = tvals[0]
+				}
+			}
+			w.Header().Set("ETag", `"`+objETag+`"`)
+			w.WriteHeader(http.StatusOK)
+
+		case http.MethodGet:
+			if !isObjPath {
+				if q.Has("tagging") {
+					w.Header().Set("Content-Type", "application/xml")
+					_, _ = io.WriteString(w, formatS3TaggingXML(bktTags))
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+				return
+			}
+			if q.Has("tagging") {
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, formatS3TaggingXML(objTags))
+				if swapOnTag {
+					objBody = []byte("FOREIGN_SECRET_BODY")
+					objTags = map[string]string{"foreign": "owner"}
+					if !swapSameETag {
+						objETag = "foreign-etag"
+					}
+					swapOnTag = false
+				}
+				return
+			}
+			seenGetIfMatch = strings.TrimSpace(r.Header.Get("If-Match"))
+			w.Header().Set("Content-Type", objCT)
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(objBody)))
+			w.Header().Set("ETag", `"`+objETag+`"`)
+			_, _ = w.Write(objBody)
+		}
+	})
+
+	t.Setenv("LMAWS_LIVE_MUTATE", "1")
+	t.Setenv("LMAWS_RUN_ID", runID)
+
+	created, _ := h.BucketCreate(false, bucket)
+	if !created || h.LastError().Code != hostkit.OK {
+		t.Fatalf("BucketCreate failed: %+v", h.LastError())
+	}
+	_, _ = h.ObjectPut(false, bucket, "hello.txt", "OWNED", "text/plain", nil)
+	if h.LastError().Code != hostkit.OK {
+		t.Fatalf("ObjectPut failed: %+v", h.LastError())
+	}
+
+	// Case 1: Foreign replacement changes ETag/tags/body right after pre-GET tag read.
+	mu.Lock()
+	swapOnTag = true
+	swapSameETag = false
+	mu.Unlock()
+	got, _ := h.ObjectGet(false, bucket, "hello.txt")
+	if got != "" || h.LastError().Code != hostkit.PermissionDenied || h.LastError().ProviderCode != "UnownedResourceReadRefused" {
+		t.Fatalf("expected ObjectGet to refuse swapped foreign object, got=%q last=%+v", got, h.LastError())
+	}
+	mu.Lock()
+	if cleanETag(seenGetIfMatch) != "etag-owned-v1" {
+		mu.Unlock()
+		t.Fatalf("expected GetObject to send If-Match=\"etag-owned-v1\", got %q", seenGetIfMatch)
+	}
+	mu.Unlock()
+
+	// Case 2: Foreign replacement reproduces identical ETag but strips ownership tags right after pre-GET tag read.
+	mu.Lock()
+	objExists = false
+	objBody = nil
+	objTags = map[string]string{}
+	objETag = "etag-owned-v2"
+	mu.Unlock()
+	_, _ = h.ObjectPut(false, bucket, "sameetag.txt", "OWNED", "text/plain", nil)
+	if h.LastError().Code != hostkit.OK {
+		t.Fatalf("ObjectPut sameetag.txt failed: %+v", h.LastError())
+	}
+	mu.Lock()
+	swapOnTag = true
+	swapSameETag = true
+	mu.Unlock()
+	got2, _ := h.ObjectGet(false, bucket, "sameetag.txt")
+	if got2 != "" || h.LastError().Code != hostkit.PermissionDenied || h.LastError().ProviderCode != "UnownedResourceReadRefused" {
+		t.Fatalf("expected post-GET tag verification to refuse swapped same-ETag object, got=%q last=%+v", got2, h.LastError())
+	}
+	_ = a.Close()
+}
+
+func TestSolR2_SweepRestoresCampaignSpendAndJournalsAttempts1To1(t *testing.T) {
+	runID := "run-1700000000-abcdef012345"
+	bucket := "lmcloud-conf-abcdef012345-sweep"
+
+	var (
+		mu        sync.Mutex
+		bktExists bool
+		bktTags   = map[string]string{}
+	)
+
+	h, a, _, fwd := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test"))
+			return
+		}
+		if strings.HasPrefix(origHost, "sqs.") {
+			w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+			_, _ = io.WriteString(w, `{"QueueUrls":[]}`)
+			return
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		q := r.URL.Query()
+		if origHost == "s3.us-east-1.amazonaws.com" {
+			w.Header().Set("Content-Type", "application/xml")
+			if bktExists {
+				_, _ = io.WriteString(w, fmt.Sprintf(`<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Buckets><Bucket><Name>%s</Name></Bucket></Buckets></ListAllMyBucketsResult>`, bucket))
+			} else {
+				_, _ = io.WriteString(w, `<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Buckets></Buckets></ListAllMyBucketsResult>`)
+			}
+			return
+		}
+
+		switch r.Method {
+		case http.MethodHead:
+			if !bktExists {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		case http.MethodPut:
+			if q.Has("tagging") {
+				var parsed mockS3TaggingXML
+				if err := xml.Unmarshal([]byte(r.Header.Get("X-Orig-Body")), &parsed); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				bktTags = make(map[string]string, len(parsed.TagSet.Tags))
+				for _, tg := range parsed.TagSet.Tags {
+					bktTags[tg.Key] = tg.Value
+				}
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			bktExists = true
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			if q.Has("tagging") {
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, formatS3TaggingXML(bktTags))
+				return
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+		case http.MethodDelete:
+			bktExists = false
+			bktTags = nil
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+
+	t.Setenv("LMAWS_LIVE_MUTATE", "1")
+	t.Setenv("LMAWS_RUN_ID", runID)
+
+	created, _ := h.BucketCreate(false, bucket)
+	if !created || h.LastError().Code != hostkit.OK {
+		t.Fatalf("BucketCreate failed: %+v", h.LastError())
+	}
+	jPath := a.LiveSession().Journal().Path()
+	_ = a.Close()
+
+	// 1. Normal standalone --sweep --apply: every physical HTTP request must be journaled 1-to-1 via EventReserve/EventSettle.
+	rawBefore, err := os.ReadFile(jPath)
+	if err != nil {
+		t.Fatalf("ReadFile before sweep: %v", err)
+	}
+	callsBefore := len(fwd.records())
+	var sweepOut strings.Builder
+	rc := a.SweepCLI(t.Context(), []string{"--apply", runID}, &sweepOut)
+	if rc != 0 {
+		t.Fatalf("expected SweepCLI to succeed, got rc=%d out=%s", rc, sweepOut.String())
+	}
+	callsAfter := len(fwd.records())
+	physicalCalls := callsAfter - callsBefore
+	rawAfter, err := os.ReadFile(jPath)
+	if err != nil {
+		t.Fatalf("ReadFile after sweep: %v", err)
+	}
+	if !strings.HasPrefix(string(rawAfter), string(rawBefore)) {
+		t.Fatalf("expected append-only journal after sweep to preserve prefix")
+	}
+	delta := strings.TrimPrefix(string(rawAfter), string(rawBefore))
+	var reserveEvents, settleEvents int
+	for _, line := range strings.Split(strings.TrimSpace(delta), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var rec safety.JournalRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("unmarshal journal delta line %q: %v", line, err)
+		}
+		switch rec.Event {
+		case safety.EventReserve:
+			reserveEvents++
+		case safety.EventSettle:
+			settleEvents++
+		}
+	}
+	if physicalCalls != 8 || reserveEvents != physicalCalls || settleEvents != physicalCalls {
+		t.Fatalf("expected 1-to-1 sweep journal admission (8 calls, 8 reserves, 8 settles), got calls=%d reserves=%d settles=%d\ndelta:\n%s",
+			physicalCalls, reserveEvents, settleEvents, delta)
+	}
+
+	// 2. When recorded campaign spend already reaches the $0.25 hard ceiling, standalone sweep
+	// must refuse BEFORE dispatching any HTTP request.
+	runIDExhausted := "run-1700000000-fedcba987654"
+	bktExhausted := "lmcloud-conf-fedcba987654-exhausted"
+	t.Setenv("LMAWS_RUN_ID", runIDExhausted)
+	created2, _ := h.BucketCreate(false, bktExhausted)
+	if !created2 || h.LastError().Code != hostkit.OK {
+		t.Fatalf("BucketCreate bktExhausted failed: %+v", h.LastError())
+	}
+	if err := a.LiveSession().Journal().RecordCost(safety.KindBucket, "", bktExhausted, "previous_campaign_calls", 250_000_000); err != nil {
+		t.Fatalf("RecordCost: %v", err)
+	}
+	_ = a.Close()
+
+	callsBeforeExhausted := len(fwd.records())
+	var exhaustedOut strings.Builder
+	rcExhausted := a.SweepCLI(t.Context(), []string{"--apply", runIDExhausted}, &exhaustedOut)
+	callsAfterExhausted := len(fwd.records())
+	if rcExhausted == 0 {
+		t.Fatalf("expected SweepCLI on budget-exhausted journal to fail closed (rc!=0), got rc=0 out=%s", exhaustedOut.String())
+	}
+	if callsAfterExhausted != callsBeforeExhausted {
+		t.Fatalf("expected 0 physical HTTP requests when journal budget is already exhausted, got %d", callsAfterExhausted-callsBeforeExhausted)
+	}
+	mu.Lock()
+	stillExists := bktExists
+	mu.Unlock()
+	if !stillExists {
+		t.Fatalf("expected bucket to remain untouched when sweep refuses on exhausted budget")
+	}
+}
+
+func TestSolR2_BucketCreationTimestampAndTokenMismatchRefused(t *testing.T) {
+	runID := "run-1700000000-abcdef012345"
+	bucket := "lmcloud-conf-abcdef012345-stalebucket"
+
+	var (
+		mu        sync.Mutex
+		bktExists bool
+		bktTags   = map[string]string{}
+	)
+
+	h, a, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test"))
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		q := r.URL.Query()
+		switch r.Method {
+		case http.MethodHead:
+			if !bktExists {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		case http.MethodPut:
+			if q.Has("tagging") {
+				var parsed mockS3TaggingXML
+				if err := xml.Unmarshal([]byte(r.Header.Get("X-Orig-Body")), &parsed); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				bktTags = make(map[string]string, len(parsed.TagSet.Tags))
+				for _, tg := range parsed.TagSet.Tags {
+					bktTags[tg.Key] = tg.Value
+				}
+				// Simulate a pre-existing bucket whose creation timestamp predates IntentAtUnix.
+				bktTags[safety.TagKeyCreatedAt] = "1600000000"
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			bktExists = true
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			if q.Has("tagging") {
+				if len(bktTags) == 0 {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = io.WriteString(w, `<Error><Code>NoSuchTagSet</Code><Message>No tags</Message></Error>`)
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, formatS3TaggingXML(bktTags))
+				return
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+		case http.MethodDelete:
+			bktExists = false
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+
+	t.Setenv("LMAWS_LIVE_MUTATE", "1")
+	t.Setenv("LMAWS_RUN_ID", runID)
+
+	created, _ := h.BucketCreate(false, bucket)
+	if created || h.LastError().Code == hostkit.OK {
+		t.Fatalf("expected BucketCreate to refuse bucket whose CreatedAtUnix < IntentAtUnix, got created=%v last=%+v", created, h.LastError())
+	}
+	deleted, _ := h.BucketDelete(false, bucket)
+	if deleted || h.LastError().Code == hostkit.OK {
+		t.Fatalf("expected BucketDelete to refuse retained bucket, got deleted=%v last=%+v", deleted, h.LastError())
+	}
+	_ = a.Close()
+}
