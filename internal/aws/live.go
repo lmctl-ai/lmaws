@@ -4912,18 +4912,19 @@ func (r *liveRawBackend) sweepRunWithoutJournal(
 }
 
 type sweepCLIOutput struct {
-	OK             bool                `json:"ok"`
-	DryRun         bool                `json:"dry_run"`
-	Swept          int                 `json:"swept"`
-	Deleted        int                 `json:"deleted"`
-	WouldDelete    int                 `json:"would_delete"`
-	Absent         int                 `json:"absent"`
-	Retained       int                 `json:"retained"`
-	Failed         int                 `json:"failed"`
-	Pending        int                 `json:"pending"`
-	UnownedSkipped int                 `json:"unowned_skipped"`
+	OK             bool                 `json:"ok"`
+	DryRun         bool                 `json:"dry_run"`
+	Swept          int                  `json:"swept"`
+	Deleted        int                  `json:"deleted"`
+	WouldDelete    int                  `json:"would_delete"`
+	Absent         int                  `json:"absent"`
+	Retained       int                  `json:"retained"`
+	Failed         int                  `json:"failed"`
+	Pending        int                  `json:"pending"`
+	UnownedSkipped int                  `json:"unowned_skipped"`
+	ChargedNanoUSD int64                `json:"charged_nano_usd"`
 	Reports        []safety.SweepReport `json:"reports,omitempty"`
-	Error          string              `json:"error,omitempty"`
+	Error          string               `json:"error,omitempty"`
 }
 
 // SweepCLI implements `lmaws --sweep [--apply|--delete|--dry-run] [--all-stale] [--journal-dir DIR] [RUN_ID...]`.
@@ -5177,6 +5178,7 @@ func (l *liveAdapter) SweepCLI(ctx context.Context, args []string, out io.Writer
 			rep, serr = raw.sweepRunWithoutJournal(prefixScanCtx, absJDir, rid, &pol, apply)
 		}
 		outSummary.Reports = append(outSummary.Reports, rep)
+		outSummary.ChargedNanoUSD += runMeter.Snapshot().ChargedNanoUSD
 		outSummary.Deleted += len(rep.Deleted)
 		outSummary.WouldDelete += len(rep.WouldDelete)
 		outSummary.Absent += len(rep.Absent)
