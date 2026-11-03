@@ -8,9 +8,11 @@ cd "$ROOT"
 
 unset LMCLOUD_LIVE LMAWS_LIVE LMAWS_LIVE_ACCOUNT LMAWS_LIVE_REGION \
   LMAWS_LIVE_POLICY LMCLOUD_LIVE_POLICY LMAWS_LIVE_JOURNAL_DIR LMCLOUD_LIVE_JOURNAL_DIR \
+  LMAWS_LIVE_ALLOW_CREDENTIAL_PROCESS \
   LMCLOUD_ENDPOINT LMCLOUD_STORAGE_ENDPOINT LMCLOUD_QUEUE_ENDPOINT \
   LMAWS_ENDPOINT LMAWS_STORAGE_ENDPOINT LMAWS_QUEUE_ENDPOINT \
-  AWS_ENDPOINT_URL AWS_ENDPOINT_URL_S3 AWS_ENDPOINT_URL_SQS AWS_ENDPOINT_URL_STS
+  AWS_ENDPOINT_URL AWS_ENDPOINT_URL_S3 AWS_ENDPOINT_URL_SQS AWS_ENDPOINT_URL_STS \
+  AWS_EC2_METADATA_SERVICE_ENDPOINT AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
 
 LMSCRIPT_BIN="${LMSCRIPT_BIN:-/home/ubuntu/lmctl-mono/lmscript/bin/lmscript}"
 LMCLOUD_DIR="${LMCLOUD_DIR:-/home/ubuntu/cloud/lmcloud}"
@@ -148,6 +150,7 @@ r_dry = run_lmcode(p, {command:["'"$BIN"'", "cloud", "--lmcode", "$DSLFILE"]});
 assert(r_dry.ok && r_dry.dry && r_dry.result.prov == "aws" && r_dry.result.c1 && r_dry.result.ok_code && r_dry.result.nf_code && r_dry.result.exists && r_dry.result.d1, "dry run smoke failed");
 '
 python3 "$ROOT/scripts/test-dry-spy.py" "$LMSCRIPT_BIN" "$BIN" "$ROOT/schema/lmcloud.dsl.json"
+LMSCRIPT_BIN="$LMSCRIPT_BIN" LMAWS_BIN="$BIN" "$ROOT/scripts/live-readonly.sh" --check
 
 echo "=== 8. Memory budget exceeded exit 3 check ==="
 set +e

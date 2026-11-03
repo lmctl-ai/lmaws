@@ -3,10 +3,15 @@
 package aws
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -18,13 +23,15 @@ import (
 )
 
 type recordedLiveWireReq struct {
-	Scheme string
-	Host   string
-	Method string
-	Path   string
-	Query  string
-	Target string
-	Auth   string
+	Scheme      string
+	Host        string
+	Method      string
+	Path        string
+	Query       string
+	Target      string
+	Auth        string
+	BucketOwner string
+	Body        string
 }
 
 // liveGuardForwardTransport records the outgoing request's real URL scheme and
@@ -45,13 +52,15 @@ func (f *liveGuardForwardTransport) RoundTrip(req *http.Request) (*http.Response
 	}
 	f.mu.Lock()
 	f.wire = append(f.wire, recordedLiveWireReq{
-		Scheme: req.URL.Scheme,
-		Host:   req.URL.Host,
-		Method: req.Method,
-		Path:   req.URL.Path,
-		Query:  req.URL.RawQuery,
-		Target: req.Header.Get("X-Amz-Target"),
-		Auth:   req.Header.Get("Authorization"),
+		Scheme:      req.URL.Scheme,
+		Host:        req.URL.Host,
+		Method:      req.Method,
+		Path:        req.URL.Path,
+		Query:       req.URL.RawQuery,
+		Target:      req.Header.Get("X-Amz-Target"),
+		Auth:        req.Header.Get("Authorization"),
+		BucketOwner: req.Header.Get("X-Amz-Expected-Bucket-Owner"),
+		Body:        string(bodyCopy),
 	})
 	f.mu.Unlock()
 
@@ -91,6 +100,11 @@ func setValidLiveEnv(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
 	t.Setenv("AWS_SESSION_TOKEN", "AQoDYXdzEJr1EXAMPLE_SECRET_SESSION_TOKEN")
 	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "")
+	t.Setenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "")
+	t.Setenv("AWS_CONTAINER_AUTHORIZATION_TOKEN", "")
+	t.Setenv("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", "")
+	t.Setenv("LMAWS_LIVE_ALLOW_CREDENTIAL_PROCESS", "")
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", t.TempDir()+"/nonexistent-creds")
 	t.Setenv("AWS_CONFIG_FILE", t.TempDir()+"/nonexistent-config")
 	for _, k := range forbiddenLiveEndpointEnvs {
@@ -200,6 +214,9 @@ func TestLiveEndpointOverridesForbidden(t *testing.T) {
 		"AWS_ENDPOINT_URL_S3",
 		"AWS_ENDPOINT_URL_SQS",
 		"AWS_ENDPOINT_URL_STS",
+		"AWS_ENDPOINT_URL_IAM",
+		"AWS_ENDPOINT_URL_SSO",
+		"AWS_EC2_METADATA_SERVICE_ENDPOINT",
 	} {
 		t.Run(envVar, func(t *testing.T) {
 			setValidLiveEnv(t)
@@ -344,6 +361,13 @@ func TestLiveAccountRegionAndSTSAttestation(t *testing.T) {
 }
 
 func TestLiveReadOnlyOperationsAndCostMetering(t *testing.T) {
+	const (
+		bucketListXML = `<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult><Buckets><Bucket><Name>live-bkt-b</Name></Bucket><Bucket><Name>live-bkt-a</Name></Bucket></Buckets></ListAllMyBucketsResult>`
+		objectListXML = `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>live-bkt-a</Name><IsTruncated>false</IsTruncated><Contents><Key>docs/readme.txt</Key><Size>42</Size><ETag>"etag-readme"</ETag></Contents></ListBucketResult>`
+		queueListJSON = `{"QueueUrls":["https://sqs.us-east-1.amazonaws.com/254332045686/live-q-2","https://sqs.us-east-1.amazonaws.com/254332045686/live-q-1"]}`
+		queueHitJSON  = `{"QueueUrl":"https://sqs.us-east-1.amazonaws.com/254332045686/live-q-1"}`
+		queueMissJSON = `{"__type":"com.amazonaws.sqs#QueueDoesNotExist","message":"The specified queue does not exist."}`
+	)
 	h, a, _, fwd := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
 		origHost := r.Header.Get("X-Orig-Host")
 		switch {
@@ -357,7 +381,7 @@ func TestLiveReadOnlyOperationsAndCostMetering(t *testing.T) {
 		case origHost == "s3.us-east-1.amazonaws.com" && r.Method == http.MethodGet && r.URL.Path == "/":
 			httpguard.Status(
 				http.StatusOK,
-				`<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult><Buckets><Bucket><Name>live-bkt-b</Name></Bucket><Bucket><Name>live-bkt-a</Name></Bucket></Buckets></ListAllMyBucketsResult>`,
+				bucketListXML,
 				"Content-Type: application/xml",
 			)(w, r)
 
@@ -370,7 +394,7 @@ func TestLiveReadOnlyOperationsAndCostMetering(t *testing.T) {
 		case origHost == "live-bkt-a.s3.us-east-1.amazonaws.com" && r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2":
 			httpguard.Status(
 				http.StatusOK,
-				`<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>live-bkt-a</Name><IsTruncated>false</IsTruncated><Contents><Key>docs/readme.txt</Key><Size>42</Size><ETag>"etag-readme"</ETag></Contents></ListBucketResult>`,
+				objectListXML,
 				"Content-Type: application/xml",
 			)(w, r)
 
@@ -397,20 +421,20 @@ func TestLiveReadOnlyOperationsAndCostMetering(t *testing.T) {
 			case "AmazonSQS.ListQueues":
 				httpguard.Status(
 					http.StatusOK,
-					`{"QueueUrls":["https://sqs.us-east-1.amazonaws.com/254332045686/live-q-2","https://sqs.us-east-1.amazonaws.com/254332045686/live-q-1"]}`,
+					queueListJSON,
 					"Content-Type: application/x-amz-json-1.0",
 				)(w, r)
 			case "AmazonSQS.GetQueueUrl":
 				if strings.Contains(bodyStr, `"live-q-1"`) {
 					httpguard.Status(
 						http.StatusOK,
-						`{"QueueUrl":"https://sqs.us-east-1.amazonaws.com/254332045686/live-q-1"}`,
+						queueHitJSON,
 						"Content-Type: application/x-amz-json-1.0",
 					)(w, r)
 				} else {
 					httpguard.Status(
 						http.StatusBadRequest,
-						`{"__type":"com.amazonaws.sqs#QueueDoesNotExist","message":"The specified queue does not exist."}`,
+						queueMissJSON,
 						"Content-Type: application/x-amz-json-1.0",
 					)(w, r)
 				}
@@ -423,7 +447,7 @@ func TestLiveReadOnlyOperationsAndCostMetering(t *testing.T) {
 		}
 	})
 
-	// 1. bucket_list -> 5000 nano-USD
+	// 1. bucket_list -> 5000 + egress(len(bucketListXML))
 	buckets, err := h.BucketList(false)
 	if err != nil || h.LastError().Code != hostkit.OK || len(buckets) != 2 || buckets[0] != "live-bkt-a" || buckets[1] != "live-bkt-b" {
 		t.Fatalf("BucketList: buckets=%v err=%v last=%+v", buckets, err, h.LastError())
@@ -437,7 +461,7 @@ func TestLiveReadOnlyOperationsAndCostMetering(t *testing.T) {
 		t.Fatalf("BucketExists(missing-bkt): ex=%v last=%+v", ex, h.LastError())
 	}
 
-	// 3. object_list & object_list_all -> 5000 + 5000 = 10000 nano-USD
+	// 3. object_list & object_list_all -> (5000 + egress(len(objectListXML))) * 2
 	page, err := h.ObjectList(false, "live-bkt-a", "docs/", 10, "")
 	if err != nil || h.LastError().Code != hostkit.OK || len(page.Items) != 1 || page.Items[0].Key != "docs/readme.txt" {
 		t.Fatalf("ObjectList: page=%+v err=%v last=%+v", page, err, h.LastError())
@@ -461,13 +485,13 @@ func TestLiveReadOnlyOperationsAndCostMetering(t *testing.T) {
 		t.Fatalf("ObjectHead 403: meta=%+v last=%+v", metaForbid, h.LastError())
 	}
 
-	// 5. queue_list -> 400 nano-USD
+	// 5. queue_list -> 400 + egress(len(queueListJSON))
 	queues, err := h.QueueList(false)
 	if err != nil || h.LastError().Code != hostkit.OK || len(queues) != 2 || queues[0] != "live-q-1" || queues[1] != "live-q-2" {
 		t.Fatalf("QueueList: queues=%v err=%v last=%+v", queues, err, h.LastError())
 	}
 
-	// 6. queue_exists (hit + miss) -> 400 + 400 = 800 nano-USD
+	// 6. queue_exists (hit + miss) -> 400 + egress(len(queueHitJSON)) + 400 + egress(len(queueMissJSON))
 	if qex, _ := h.QueueExists(false, "live-q-1"); !qex || h.LastError().Code != hostkit.OK {
 		t.Fatalf("QueueExists(live-q-1): qex=%v last=%+v", qex, h.LastError())
 	}
@@ -475,7 +499,8 @@ func TestLiveReadOnlyOperationsAndCostMetering(t *testing.T) {
 		t.Fatalf("QueueExists(missing-q): qex=%v last=%+v", qex, h.LastError())
 	}
 
-	// Verify every wire request used https:// and carried AWS4-HMAC-SHA256 signature.
+	// Verify every wire request used https://, carried AWS4-HMAC-SHA256 signature,
+	// and every bucket-scoped S3 request carried X-Amz-Expected-Bucket-Owner.
 	wireReqs := fwd.records()
 	if len(wireReqs) == 0 {
 		t.Fatal("expected recorded wire requests")
@@ -487,17 +512,18 @@ func TestLiveReadOnlyOperationsAndCostMetering(t *testing.T) {
 		if !strings.HasPrefix(wr.Auth, "AWS4-HMAC-SHA256 ") {
 			t.Fatalf("wire request %d missing SigV4 Authorization header: %q", i, wr.Auth)
 		}
+		if strings.HasSuffix(wr.Host, ".s3.us-east-1.amazonaws.com") && wr.BucketOwner != RequiredLiveAccount {
+			t.Fatalf("wire request %d to %s missing X-Amz-Expected-Bucket-Owner=%s (got %q)", i, wr.Host, RequiredLiveAccount, wr.BucketOwner)
+		}
 	}
 
-	// Verify hostkit/safety CostMeter and Journal state:
-	// Expected nano-USD:
-	//   bucket_list:   5000
-	//   bucket_exists: 400 * 2 = 800
-	//   object_list:   5000 * 2 = 10000
-	//   object_head:   400 (hit) + (400 + 400) (miss + HeadBucket) + 400 (403) = 1600
-	//   queue_list:    400
-	//   queue_exists:  400 * 2 = 800
-	// Total = 18600 nano-USD.
+	wantEgress := liveEgressNanoUSD(int64(len(bucketListXML))) +
+		2*liveEgressNanoUSD(int64(len(objectListXML))) +
+		liveEgressNanoUSD(int64(len(queueListJSON))) +
+		liveEgressNanoUSD(int64(len(queueHitJSON))) +
+		liveEgressNanoUSD(int64(len(queueMissJSON)))
+	wantCharged := int64(18600) + wantEgress
+
 	sess := a.LiveSession()
 	if sess == nil {
 		t.Fatal("expected non-nil LiveSession")
@@ -506,7 +532,6 @@ func TestLiveReadOnlyOperationsAndCostMetering(t *testing.T) {
 	if snap.CapNanoUSD != safety.USDToNano(0.05) {
 		t.Fatalf("default cap = %d nano-USD, want %d ($0.05)", snap.CapNanoUSD, safety.USDToNano(0.05))
 	}
-	const wantCharged int64 = 18600
 	if snap.ChargedNanoUSD != wantCharged || snap.InFlightNanoUSD != 0 {
 		t.Fatalf("meter snapshot: charged=%d inFlight=%d, want charged=%d inFlight=0",
 			snap.ChargedNanoUSD, snap.InFlightNanoUSD, wantCharged)
@@ -519,11 +544,11 @@ func TestLiveReadOnlyOperationsAndCostMetering(t *testing.T) {
 }
 
 func TestLiveCostCapEnforcedOnReadOps(t *testing.T) {
-	// Cap = 0.00001 USD (10,000 nano-USD). With 20% cleanup reserve (2,000 nano-USD),
-	// work ceiling is 8,000 nano-USD: enough for 1 bucket_list (5,000 nano-USD),
-	// but the 2nd bucket_list (projected 10,000 > 8,000) must fail closed before dispatch.
-	var s3ListCount int
-	h, _, _, _ := newLiveTestHost(t, &Options{LiveCostCapUSD: 0.00001}, func(w http.ResponseWriter, r *http.Request) {
+	// Cap = 0.0000009 USD (900 nano-USD). With 20% cleanup reserve (180 nano-USD),
+	// work ceiling is 720 nano-USD: enough for 1 HeadBucket (400 nano-USD),
+	// but the 2nd HeadBucket (projected 800 > 720) must fail closed before dispatch.
+	var s3HeadCount int
+	h, _, _, _ := newLiveTestHost(t, &Options{LiveCostCapUSD: 0.0000009}, func(w http.ResponseWriter, r *http.Request) {
 		origHost := r.Header.Get("X-Orig-Host")
 		if origHost == "sts.us-east-1.amazonaws.com" {
 			httpguard.Status(
@@ -533,26 +558,22 @@ func TestLiveCostCapEnforcedOnReadOps(t *testing.T) {
 			)(w, r)
 			return
 		}
-		if origHost == "s3.us-east-1.amazonaws.com" {
-			s3ListCount++
-			httpguard.Status(
-				http.StatusOK,
-				`<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult><Buckets><Bucket><Name>b1</Name></Bucket></Buckets></ListAllMyBucketsResult>`,
-				"Content-Type: application/xml",
-			)(w, r)
+		if origHost == "bkt-1.s3.us-east-1.amazonaws.com" {
+			s3HeadCount++
+			httpguard.Status(http.StatusOK, "")(w, r)
 			return
 		}
 		t.Fatalf("unexpected request to %s", origHost)
 	})
 
-	if b, _ := h.BucketList(false); len(b) != 1 || h.LastError().Code != hostkit.OK {
-		t.Fatalf("first BucketList: b=%v last=%+v", b, h.LastError())
+	if ex, _ := h.BucketExists(false, "bkt-1"); !ex || h.LastError().Code != hostkit.OK {
+		t.Fatalf("first BucketExists: ex=%v last=%+v", ex, h.LastError())
 	}
-	if b, _ := h.BucketList(false); b != nil || h.LastError().Code != hostkit.PermissionDenied || h.LastError().ProviderCode != "LiveCostCapExceeded" {
-		t.Fatalf("second BucketList should exceed cost cap: b=%v last=%+v", b, h.LastError())
+	if ex, _ := h.BucketExists(false, "bkt-1"); ex || h.LastError().Code != hostkit.PermissionDenied || h.LastError().ProviderCode != "LiveCostCapExceeded" {
+		t.Fatalf("second BucketExists should exceed cost cap: ex=%v last=%+v", ex, h.LastError())
 	}
-	if s3ListCount != 1 {
-		t.Fatalf("expected exactly 1 S3 ListBuckets HTTP call before cost cap abort, got %d", s3ListCount)
+	if s3HeadCount != 1 {
+		t.Fatalf("expected exactly 1 S3 HeadBucket HTTP call before cost cap abort, got %d", s3HeadCount)
 	}
 }
 
@@ -592,9 +613,10 @@ func TestLiveMutatingOpsAndGetObjectRefusedStage1(t *testing.T) {
 
 func TestLiveTransportGuardBlocksDisallowedWireRequests(t *testing.T) {
 	tr := &liveEndpointGuardTransport{
-		region: "us-east-1",
+		region:  "us-east-1",
+		account: RequiredLiveAccount,
 		base: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
 		}),
 	}
 	sigHeader := "AWS4-HMAC-SHA256 Credential=AKIA/20261103/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=abcd"
@@ -605,19 +627,25 @@ func TestLiveTransportGuardBlocksDisallowedWireRequests(t *testing.T) {
 		rawURL string
 		auth   string
 		target string
+		owner  string
 		body   string
 	}{
-		{"plain http", http.MethodGet, "http://s3.us-east-1.amazonaws.com/", sigHeader, "", ""},
-		{"loopback https", http.MethodGet, "https://127.0.0.1:4566/", sigHeader, "", ""},
-		{"unsigned request", http.MethodGet, "https://s3.us-east-1.amazonaws.com/", "", "", ""},
-		{"wrong region host", http.MethodGet, "https://s3.us-west-2.amazonaws.com/", sigHeader, "", ""},
-		{"S3 PUT bucket", http.MethodPut, "https://bkt.s3.us-east-1.amazonaws.com/", sigHeader, "", ""},
-		{"S3 DELETE object", http.MethodDelete, "https://bkt.s3.us-east-1.amazonaws.com/key.txt", sigHeader, "", ""},
-		{"S3 GetObject", http.MethodGet, "https://bkt.s3.us-east-1.amazonaws.com/key.txt", sigHeader, "", ""},
-		{"S3 ranged GetObject", http.MethodGet, "https://bkt.s3.us-east-1.amazonaws.com/key.txt?x-id=GetObject", sigHeader, "", ""},
-		{"SQS CreateQueue", http.MethodPost, "https://sqs.us-east-1.amazonaws.com/", sigHeader, "AmazonSQS.CreateQueue", `{}`},
-		{"SQS ReceiveMessage", http.MethodPost, "https://sqs.us-east-1.amazonaws.com/", sigHeader, "AmazonSQS.ReceiveMessage", `{}`},
-		{"STS AssumeRole", http.MethodPost, "https://sts.us-east-1.amazonaws.com/", sigHeader, "", "Action=AssumeRole&Version=2011-06-15"},
+		{"plain http", http.MethodGet, "http://s3.us-east-1.amazonaws.com/", sigHeader, "", "", ""},
+		{"loopback https", http.MethodGet, "https://127.0.0.1:4566/", sigHeader, "", "", ""},
+		{"unsigned request", http.MethodGet, "https://s3.us-east-1.amazonaws.com/", "", "", "", ""},
+		{"wrong region host", http.MethodGet, "https://s3.us-west-2.amazonaws.com/", sigHeader, "", "", ""},
+		{"S3 PUT bucket", http.MethodPut, "https://bkt.s3.us-east-1.amazonaws.com/", sigHeader, "", RequiredLiveAccount, ""},
+		{"S3 DELETE object", http.MethodDelete, "https://bkt.s3.us-east-1.amazonaws.com/key.txt", sigHeader, "", RequiredLiveAccount, ""},
+		{"S3 GetObject", http.MethodGet, "https://bkt.s3.us-east-1.amazonaws.com/key.txt", sigHeader, "", RequiredLiveAccount, ""},
+		{"S3 ranged GetObject", http.MethodGet, "https://bkt.s3.us-east-1.amazonaws.com/key.txt?x-id=GetObject", sigHeader, "", RequiredLiveAccount, ""},
+		{"S3 ListObjects missing ExpectedBucketOwner", http.MethodGet, "https://bkt.s3.us-east-1.amazonaws.com/?list-type=2", sigHeader, "", "", ""},
+		{"S3 object-path GET with list-type=2", http.MethodGet, "https://bkt.s3.us-east-1.amazonaws.com/private-key?list-type=2", sigHeader, "", RequiredLiveAccount, ""},
+		{"S3 object-path GET with location", http.MethodGet, "https://bkt.s3.us-east-1.amazonaws.com/private-key?location", sigHeader, "", RequiredLiveAccount, ""},
+		{"SQS CreateQueue", http.MethodPost, "https://sqs.us-east-1.amazonaws.com/", sigHeader, "AmazonSQS.CreateQueue", "", `{}`},
+		{"SQS ReceiveMessage", http.MethodPost, "https://sqs.us-east-1.amazonaws.com/", sigHeader, "AmazonSQS.ReceiveMessage", "", `{}`},
+		{"SQS Action confusion", http.MethodPost, "https://sqs.us-east-1.amazonaws.com/", sigHeader, "", "", "Action=DeleteQueue&Noise=Action=ListQueues"},
+		{"STS AssumeRole", http.MethodPost, "https://sts.us-east-1.amazonaws.com/", sigHeader, "", "", "Action=AssumeRole&Version=2011-06-15"},
+		{"STS Action confusion", http.MethodPost, "https://sts.us-east-1.amazonaws.com/", sigHeader, "", "", "Action=AssumeRole&Noise=Action=GetCallerIdentity"},
 	}
 
 	for _, tc := range cases {
@@ -632,10 +660,238 @@ func TestLiveTransportGuardBlocksDisallowedWireRequests(t *testing.T) {
 			if tc.target != "" {
 				req.Header.Set("X-Amz-Target", tc.target)
 			}
+			if tc.owner != "" {
+				req.Header.Set("X-Amz-Expected-Bucket-Owner", tc.owner)
+			}
 			if _, err := tr.RoundTrip(req); err == nil {
 				t.Fatalf("expected liveEndpointGuardTransport to block %s (%s %s), but it succeeded", tc.name, tc.method, tc.rawURL)
 			}
 		})
+	}
+}
+
+// --- Regression tests for SolReviewer Findings 1-8 ---
+
+func TestSolRegression1_CredentialEndpointEscapeRejected(t *testing.T) {
+	setValidLiveEnv(t)
+	for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN", "AWS_PROFILE", "AWS_DEFAULT_PROFILE"} {
+		t.Setenv(k, "")
+	}
+	var seenRequests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenRequests++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"code":"AccessDenied","message":"synthetic-container-auth-secret"}`)
+	}))
+	defer srv.Close()
+
+	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", srv.URL)
+	t.Setenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "")
+	t.Setenv("AWS_CONTAINER_AUTHORIZATION_TOKEN", "synthetic-container-auth-secret")
+
+	a := New(&Options{LiveJournalDir: filepath.Join(t.TempDir(), "journal")})
+	defer a.Close()
+	h := cloudhost.New(cloudhost.Config{Provider: "aws", Store: a, Queue: a, Endpoints: Endpoints()})
+	h.SetAbortOnError(false)
+
+	_, _ = h.BucketList(false)
+	if seenRequests != 0 {
+		t.Fatalf("expected 0 HTTP requests to non-link-local container credential URI, got %d", seenRequests)
+	}
+	if h.LastError().Code != hostkit.InvalidArgument || h.LastError().ProviderCode != "LiveCredentialEndpointForbidden" {
+		t.Fatalf("expected InvalidArgument / LiveCredentialEndpointForbidden, got %+v", h.LastError())
+	}
+	if strings.Contains(h.LastError().Message, "synthetic-container-auth-secret") {
+		t.Fatalf("container auth secret leaked in error message: %+v", h.LastError())
+	}
+}
+
+func TestSolRegression2_CredentialProcessAndProviderCodeRedaction(t *testing.T) {
+	t.Run("credential_process_forbidden_by_default", func(t *testing.T) {
+		setValidLiveEnv(t)
+		for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN"} {
+			t.Setenv(k, "")
+		}
+		markerFile := filepath.Join(t.TempDir(), "ran")
+		process := filepath.Join(t.TempDir(), "creds.sh")
+		script := fmt.Sprintf("#!/bin/sh\ntouch %q\nprintf '%%s' '{\"AccessKeyId\":\"synthetic-key\",\"SecretAccessKey\":\"synthetic-profile-secret\",}'\n", markerFile)
+		if err := os.WriteFile(process, []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		cfg := "[profile review]\ncredential_process = " + process + "\n"
+		p := filepath.Join(t.TempDir(), "config")
+		if err := os.WriteFile(p, []byte(cfg), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AWS_CONFIG_FILE", p)
+		t.Setenv("AWS_PROFILE", "review")
+
+		a := New(&Options{LiveJournalDir: filepath.Join(t.TempDir(), "journal")})
+		defer a.Close()
+		h := cloudhost.New(cloudhost.Config{Provider: "aws", Store: a, Queue: a, Endpoints: Endpoints()})
+		h.SetAbortOnError(false)
+
+		_, _ = h.BucketList(false)
+		if h.LastError().Code != hostkit.PermissionDenied || h.LastError().ProviderCode != "LiveCredentialProcessForbidden" {
+			t.Fatalf("expected LiveCredentialProcessForbidden, got %+v", h.LastError())
+		}
+		if _, err := os.Stat(markerFile); !os.IsNotExist(err) {
+			t.Fatal("credential_process was executed despite LMAWS_LIVE_ALLOW_CREDENTIAL_PROCESS not being set")
+		}
+	})
+
+	t.Run("credential_process_malformed_output_never_leaks_secret", func(t *testing.T) {
+		setValidLiveEnv(t)
+		for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN"} {
+			t.Setenv(k, "")
+		}
+		t.Setenv("LMAWS_LIVE_ALLOW_CREDENTIAL_PROCESS", "1")
+		process := filepath.Join(t.TempDir(), "creds.sh")
+		if err := os.WriteFile(process, []byte("#!/bin/sh\nprintf '%s' '{\"AccessKeyId\":\"synthetic-key\",\"SecretAccessKey\":\"synthetic-profile-secret\",}'\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		cfg := "[profile review]\ncredential_process = " + process + "\n"
+		p := filepath.Join(t.TempDir(), "config")
+		if err := os.WriteFile(p, []byte(cfg), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AWS_CONFIG_FILE", p)
+		t.Setenv("AWS_PROFILE", "review")
+
+		a := New(&Options{LiveJournalDir: filepath.Join(t.TempDir(), "journal")})
+		defer a.Close()
+		h := cloudhost.New(cloudhost.Config{Provider: "aws", Store: a, Queue: a, Endpoints: Endpoints()})
+		h.SetAbortOnError(false)
+
+		_, _ = h.BucketList(false)
+		if strings.Contains(h.LastError().Message, "synthetic-profile-secret") || strings.Contains(h.LastError().ProviderCode, "synthetic-profile-secret") {
+			t.Fatalf("malformed credential_process output leaked secret in LastError: %+v", h.LastError())
+		}
+	})
+
+	t.Run("provider_code_and_message_redacted", func(t *testing.T) {
+		r := &liveRawBackend{}
+		r.registerSecret("synthetic-profile-secret")
+		ce := r.sanitizeCloudError(hostkit.ProviderError(hostkit.PermissionDenied, 403, "synthetic-profile-secret", "err: synthetic-profile-secret"))
+		if strings.Contains(ce.ProviderCode, "synthetic-profile-secret") || strings.Contains(ce.Message, "synthetic-profile-secret") {
+			t.Fatalf("secret survived sanitizeCloudError: %+v", ce)
+		}
+	})
+}
+
+func TestSolRegression5_LargeListCostsOwnerAndResponseBound(t *testing.T) {
+	t.Run("large_list_charges_egress_and_sends_expected_bucket_owner", func(t *testing.T) {
+		var sawOwner string
+		var xml strings.Builder
+		xml.WriteString(`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated>`)
+		for i := 0; i < 1000; i++ {
+			xml.WriteString("<Contents><Key>" + strings.Repeat("x", 1000) + "</Key><Size>1</Size></Contents>")
+		}
+		xml.WriteString("</ListBucketResult>")
+		bodyStr := xml.String()
+
+		h, a, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.Header.Get("X-Orig-Host"), "sts.") {
+				w.Header().Set("Content-Type", "text/xml")
+				_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/awsspot-admin/test"))
+				return
+			}
+			sawOwner = r.Header.Get("X-Amz-Expected-Bucket-Owner")
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, bodyStr)
+		})
+
+		page, err := h.ObjectList(false, "owned-bucket", "", 1000, "")
+		if err != nil || h.LastError().Code != hostkit.OK || len(page.Items) != 1000 {
+			t.Fatalf("list failed: err=%v last=%+v", err, h.LastError())
+		}
+		if sawOwner != RequiredLiveAccount {
+			t.Fatalf("ExpectedBucketOwner header = %q, want %q", sawOwner, RequiredLiveAccount)
+		}
+		wantCharged := int64(5000) + liveEgressNanoUSD(int64(len(bodyStr)))
+		gotCharged := a.LiveSession().Meter().Snapshot().ChargedNanoUSD
+		if gotCharged != wantCharged || gotCharged <= 5000 {
+			t.Fatalf("ChargedNanoUSD = %d, want %d (> 5000)", gotCharged, wantCharged)
+		}
+		if gotBytes := a.LiveSession().Journal().State().TotalPayloadBytes; gotBytes != int64(len(bodyStr)) {
+			t.Fatalf("Journal TotalPayloadBytes = %d, want %d", gotBytes, len(bodyStr))
+		}
+	})
+
+	t.Run("oversized_response_rejected_and_full_reservation_settled", func(t *testing.T) {
+		oversized := `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` + strings.Repeat("A", int(maxLiveResponseBodyBytes)+4096)
+		h, a, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.Header.Get("X-Orig-Host"), "sts.") {
+				w.Header().Set("Content-Type", "text/xml")
+				_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/awsspot-admin/test"))
+				return
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, oversized)
+		})
+
+		_, _ = h.ObjectList(false, "owned-bucket", "", 1000, "")
+		if h.LastError().Code != hostkit.PermissionDenied || h.LastError().ProviderCode != "LiveResponseTooLarge" {
+			t.Fatalf("expected PermissionDenied / LiveResponseTooLarge, got %+v", h.LastError())
+		}
+		wantSettled := int64(5000) + liveEgressNanoUSD(maxLiveResponseBodyBytes)
+		if got := a.LiveSession().Meter().Snapshot().ChargedNanoUSD; got != wantSettled {
+			t.Fatalf("ChargedNanoUSD on oversized response = %d, want full reserved %d", got, wantSettled)
+		}
+	})
+}
+
+func TestSolRegression6And8_OperatorScriptCompilesAndRunsDry(t *testing.T) {
+	scriptPath, err := filepath.Abs("../../scripts/live-readonly.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(scriptPath); err != nil {
+		t.Fatalf("missing operator script at %s: %v", scriptPath, err)
+	}
+	cmd := exec.Command("bash", scriptPath, "--check")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("scripts/live-readonly.sh --check failed: %v\noutput:\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "live-readonly.sh --check: _lmcode_ compiled and dry-run verified") {
+		t.Fatalf("unexpected --check output: %s", string(out))
+	}
+}
+
+func TestSolRegression7_ListQueuesSetsMaxResultsAndPaginates(t *testing.T) {
+	var seenPayloads []map[string]any
+	h, _, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/awsspot-admin/test"))
+			return
+		}
+		var payload map[string]any
+		_ = json.Unmarshal([]byte(r.Header.Get("X-Orig-Body")), &payload)
+		seenPayloads = append(seenPayloads, payload)
+		w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+		if len(seenPayloads) == 1 {
+			_, _ = io.WriteString(w, `{"QueueUrls":["https://sqs.us-east-1.amazonaws.com/254332045686/q-page-2"],"NextToken":"tok-2"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"QueueUrls":["https://sqs.us-east-1.amazonaws.com/254332045686/q-page-1"]}`)
+	})
+
+	queues, err := h.QueueList(false)
+	if err != nil || h.LastError().Code != hostkit.OK || len(queues) != 2 || queues[0] != "q-page-1" || queues[1] != "q-page-2" {
+		t.Fatalf("QueueList paginated: queues=%v err=%v last=%+v", queues, err, h.LastError())
+	}
+	if len(seenPayloads) != 2 {
+		t.Fatalf("expected 2 SQS ListQueues page requests, got %d", len(seenPayloads))
+	}
+	if gotMax, _ := seenPayloads[0]["MaxResults"].(float64); int32(gotMax) != maxLiveQueueListPageSize {
+		t.Fatalf("page 1 MaxResults = %v, want %d", seenPayloads[0]["MaxResults"], maxLiveQueueListPageSize)
+	}
+	if gotTok, _ := seenPayloads[1]["NextToken"].(string); gotTok != "tok-2" {
+		t.Fatalf("page 2 NextToken = %q, want tok-2", gotTok)
 	}
 }
 
