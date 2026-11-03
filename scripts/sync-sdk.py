@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--verify", action="store_true")
 parser.add_argument("--ensure", action="store_true", help="verify existing sources, otherwise fetch the pinned archive")
 args = parser.parse_args()
-lock = json.loads((root / "sdk.lock").read_text(encoding="utf-8"))
+lock = json.loads((root / "java-sdk.lock").read_text(encoding="utf-8"))
 destination = root / "third_party/lmcode-java"
 manifest_path = destination / ".sdk-files.json"
 if args.verify or args.ensure and manifest_path.is_file():
