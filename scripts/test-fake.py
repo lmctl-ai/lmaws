@@ -262,17 +262,16 @@ def run(host):
     runner=shutil.which("lmscript");assert runner,"lmscript missing"
     try:
         with tempfile.TemporaryDirectory(prefix="lmaws-fake-") as td:
-            work=pathlib.Path(td);schema=work/"schema.json"
-            schema.write_bytes(subprocess.check_output(host_prefix+["--lmcode-schema"],env=env,timeout=30))
+            work=pathlib.Path(td)
             def execute(name,body,expected=0,extra=None,extra_env=None,extra_flags=None):
-                src=work/(name+".lms");out=work/(name+".dslb")
-                src.write_text('p = _dsl_ schema='+json.dumps(str(schema))+';\n'+body+'\nend _dsl_\nsavedsl(p, '+json.dumps(str(out))+');\n')
-                compiled=subprocess.run([runner,str(src)],cwd=work,env=env,text=True,encoding="utf-8",capture_output=True,timeout=60)
-                assert compiled.returncode==0,compiled.stderr
+                src=work/(name+".lms")
+                accepted=expected==0
+                src.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(accepted).lower()+');\n')
                 run_env=dict(env,**(extra or {}),**(extra_env or {}))
-                flags=list(extra_flags or [])
-                result=subprocess.run(host_prefix+flags+["--lmcode",str(out)],cwd=work,env=run_env,text=True,encoding="utf-8",capture_output=True,timeout=180)
-                assert result.returncode==expected,(name,result.returncode,result.stdout,result.stderr,Fake.requests[-8:])
+                run_env['PATH']=str(host.parent)+os.pathsep+run_env.get('PATH','')
+                if extra_flags and '--apply' in extra_flags:run_env['LMAWS_APPLY']='1'
+                result=subprocess.run([runner,str(src)],cwd=work,env=run_env,text=True,encoding="utf-8",capture_output=True,timeout=180)
+                assert result.returncode==0,(name,result.returncode,result.stdout,result.stderr,Fake.requests[-8:])
                 assert "TOP_SECRET_SENTINEL" not in result.stdout+result.stderr,"AWS error message leaked"
                 return result
             kinds=["identity","buckets","instances","vpcs","security_groups","tables","queues","topics","functions","log_groups","alarms","zones","secrets","parameters","clusters","roles"]

@@ -6,7 +6,8 @@ from urllib.parse import urlsplit,unquote
 import hashlib,json,os,shutil,subprocess,tempfile,threading,xml.etree.ElementTree as ET
 ROOT=Path(__file__).resolve().parents[1]
 VERSION=ET.parse(ROOT/'pom.xml').getroot().find('{*}version').text
-JAR=ROOT/f'target/lmaws-{VERSION}.jar'
+HOST=Path(os.environ.get('LMAWS_TEST_HOST',str(ROOT/'target/jvm-bin/lmaws'))).resolve()
+LMSCRIPT=shutil.which('lmscript.cmd' if os.name=='nt' else 'lmscript') or 'lmscript'
 MD5=hashlib.md5(b'x').hexdigest();ACCOUNT='000000000000'
 class Model:
  def __init__(self,mode):
@@ -66,25 +67,29 @@ class Handler(BaseHTTPRequestHandler):
  def do_PUT(self):self.call()
  def do_DELETE(self):self.call()
 with tempfile.TemporaryDirectory(prefix='lmaws-s3check-test-') as temporary:
- work=Path(temporary);schema=work/'schema.json'
- schema.write_text(subprocess.check_output(['java','-jar',str(JAR),'--lmcode-schema','--json'],cwd=ROOT,text=True))
+ work=Path(temporary)
  def run(mode,index,bucket='',allow=False,repeat=False,reject=False,bad_path=False):
   model=Model(mode);server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.model=model;thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
   try:
-   runid=f'cafe{index:02x}';journal=work/('.lmaws-local-spoof' if bad_path else '.lmaws-local')/f'{runid}.json';result=work/(mode+'.json');source=work/(mode+'.lms');bc=work/(mode+'.dslb')
-   code=f'let cloud=aws.region("us-east-1");let result=cloud.s3_upload_check({json.dumps(runid)},{json.dumps(bucket)},{str(allow).lower()},{json.dumps(str(journal))});file_write({json.dumps(str(result))},result.json());'
+   runid=f'cafe{index:02x}';journal=work/('.lmaws-local-spoof' if bad_path else '.lmaws-local')/f'{runid}.json';result=work/(mode+'.json')
+   session='aws.demo()' if mode=='demo' else 'aws.region("us-east-1")'
+   code=f'let cloud={session};let result=cloud.s3_upload_check({json.dumps(runid)},{json.dumps(bucket)},{str(allow).lower()},{json.dumps(str(journal))});file_write({json.dumps(str(result))},result.json());'
    if mode=='recovery':
     model.tagged=True;model.run=runid;journal.parent.mkdir(exist_ok=True);journal.write_text(json.dumps({'run_id':runid,'bucket':'lmaws-s3check-'+runid,'key':'lmaws-s3check/'+runid+'.txt','sandbox':'true','bucket_created':'true','tagged':'true','default_put':'passed','etag':'"'+MD5+'"'}));code=f'let cloud=aws.region("us-east-1");let result=cloud.s3_upload_cleanup({json.dumps(runid)},{json.dumps(str(journal))});file_write({json.dumps(str(result))},result.json());'
-   source.write_text('let p=_dsl_ schema='+json.dumps(str(schema))+';\n'+code+'\nend _dsl_\nsavedsl(p,'+json.dumps(str(bc))+');\n')
-   subprocess.run(['lmscript',str(source)],cwd=work,check=True,capture_output=True,text=True,timeout=30)
-   env=dict(os.environ,AWS_PROFILE='lmaws',AWS_DEFAULT_PROFILE='lmaws',AWS_REGION='us-east-1',LMAWS_LIVE='1',LMAWS_ENDPOINT=f'http://127.0.0.1:{server.server_port}',LMAWS_MAX_COST_USD='0.05',LMAWS_LEDGER_DIR=str(work/'ledgers'))
-   p=subprocess.run(['java','-jar',str(JAR),'--dry-run' if mode=='demo' else '--live','--profile','lmaws','--lmcode',str(bc)],cwd=work,env=env,text=True,capture_output=True,timeout=60)
+   source=work/(mode+'.lms')
+   source.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+code+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n')
+   env=dict(os.environ,AWS_PROFILE='lmaws',AWS_DEFAULT_PROFILE='lmaws',AWS_REGION='us-east-1',LMAWS_LIVE='1',LMAWS_ENDPOINT=f'http://127.0.0.1:{server.server_port}',LMAWS_MAX_COST_USD='0.05',LMAWS_LEDGER_DIR=str(work/'ledgers'),PATH=str(HOST.parent)+os.pathsep+os.environ.get('PATH',''))
+   def invoke():
+    proc=subprocess.run([LMSCRIPT,str(source)],cwd=work,env=env,text=True,capture_output=True,timeout=180)
+    assert proc.returncode==0,(mode,proc.stdout,proc.stderr)
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+   response=invoke()
    if reject:
-    assert p.returncode!=0 and not model.calls,(mode,p.stdout,p.stderr);return {},model
-   assert p.returncode==0,(mode,p.stdout,p.stderr)
+    assert not response.get('ok') and not model.calls,(mode,response,model.calls);return {},model
+   assert response.get('ok'),(mode,response)
    row=json.loads(result.read_text());assert journal.exists()
    if repeat:
-    before=len(model.calls);again=subprocess.run(['java','-jar',str(JAR),'--dry-run' if mode=='demo' else '--live','--profile','lmaws','--lmcode',str(bc)],cwd=work,env=env,text=True,capture_output=True,timeout=30);assert again.returncode!=0 and len(model.calls)==before,'existing journal must refuse before SDK calls'
+    before=len(model.calls);again=invoke();assert not again.get('ok') and len(model.calls)==before,'existing journal must refuse before SDK calls'
    return row,model
   finally:server.shutdown();server.server_close();thread.join()
  row,m=run('happy',0,repeat=True);assert row['state']=='clean' and row['leftovers']=='0' and row['etag_match']=='true' and row['head_before']=='absent' and row['head_after_delete']=='absent';assert (m.puts,m.deletes,m.bucket_deletes)==(1,1,1)

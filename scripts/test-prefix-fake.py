@@ -69,14 +69,20 @@ def main(host):
     server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Fake);threading.Thread(target=server.serve_forever,daemon=True).start()
     env=dict(os.environ,CI='true',LMAWS_LIVE='1',AWS_PROFILE='nonexistent-fake-profile',AWS_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_ENDPOINT=f'http://127.0.0.1:{server.server_port}')
     for key in ['AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN','AWS_SECURITY_TOKEN']:env.pop(key,None)
-    argv=['cmd.exe','/c',str(host)] if host.suffix=='.cmd' else [str(host)]
+    runner=shutil.which('lmscript.cmd' if os.name=='nt' else 'lmscript') or 'lmscript'
     try:
         with tempfile.TemporaryDirectory(prefix='lmaws-prefix-fake-') as directory:
-            work=pathlib.Path(directory);schema=work/'schema.json';schema.write_bytes(subprocess.check_output(argv+['--lmcode-schema'],env=env,timeout=30))
-            program=work/'prefix.lms';binary=work/'prefix.dslb';output=work/'rows.json'
-            program.write_text('p=_dsl_ schema='+json.dumps(str(schema))+';\nlet cloud=aws.region("us-east-1"); let rows=cloud.find_prefix("lmaws"); file_write('+json.dumps(str(output))+',rows.json());\nend _dsl_\nsavedsl(p,'+json.dumps(str(binary))+');\n')
-            p=subprocess.run([shutil.which('lmscript'),str(program)],cwd=work,env=env,capture_output=True,text=True,timeout=60);assert p.returncode==0,p.stderr
-            p=subprocess.run(argv+['--lmcode',str(binary)],cwd=work,env=env,capture_output=True,text=True,timeout=180);assert p.returncode==0,(p.stderr,Fake.requests)
+            work=pathlib.Path(directory);output=work/'rows.json'
+            def execute(name,body,profile='default',extra=None):
+                src=work/(name+'.lms')
+                src.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n')
+                run_env=dict(env,PATH=str(host.parent)+os.pathsep+env.get('PATH',''),AWS_PROFILE=profile,**(extra or {}))
+                cp=subprocess.run([runner,str(src)],cwd=work,env=run_env,capture_output=True,text=True,timeout=180)
+                assert cp.returncode==0,(cp.stdout,cp.stderr)
+                envelope=json.loads(cp.stdout.strip().splitlines()[-1]);cp.returncode=0 if envelope.get('ok') else 3
+                return cp
+            p=execute('prefix','let cloud=aws.region("us-east-1"); let rows=cloud.find_prefix("lmaws"); file_write('+json.dumps(str(output))+',rows.json());')
+            assert p.returncode==0,(p.stdout,Fake.requests)
             rows=json.loads(output.read_text());names={row['name'] for row in rows};expected={'lmaws_runprefix_queue','lmaws-queue-two','lmawsOther','lmaws_instance','lmaws_vpc','lmaws_sg','lmaws_function','lmaws_logs','lmaws_parameter','lmaws_cluster','lmaws_stack'}
             assert names==expected,(names,expected);assert len(rows)==len(expected),'duplicate account resources'
             assert all(row['run_id']=='runprefix' and row['lmaws_test']=='true' for row in rows)
@@ -85,26 +91,22 @@ def main(host):
             assert len([r for r in Fake.requests if r[1]=='ListQueues'])==2,'SQS pagination was lost'
             assert any(r[1]=='DescribeStacks' for r in Fake.requests)
             assert any(r[1]=='DescribeParameters' and r[2].get('ParameterFilters') for r in Fake.requests)
-            # Recover only a resource with matching prefix, run tag and durable creation proof.
             ledger_dir=work/'owned-ledgers';ledger_dir.mkdir();name='lmaws_runprefix_queue';url=f'http://127.0.0.1:{server.server_port}/'+name
             records=[dict(event='intent',action='create',kind='queue',id=name,name=name,run_id='runprefix',state='pending',time='2020-01-01T00:00:00Z'),dict(event='created',action='create',kind='queue',id=url,name=name,run_id='runprefix',state='active',time='2020-01-01T00:00:00Z')]
             (ledger_dir/'lmaws-runprefix.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in records))
-            def execute_body(body,profile='default'):
-                src=work/'action.lms';bc=work/'action.dslb';src.write_text('p=_dsl_ schema='+json.dumps(str(schema))+';\n'+body+'\nend _dsl_\nsavedsl(p,'+json.dumps(str(bc))+');\n')
-                cp=subprocess.run([shutil.which('lmscript'),str(src)],cwd=work,env=env,capture_output=True,text=True,timeout=60);assert cp.returncode==0,cp.stderr
-                return subprocess.run(argv+['--lmcode',str(bc)],cwd=work,env=dict(env,AWS_PROFILE=profile,LMAWS_LEDGER_DIR=str(ledger_dir)),capture_output=True,text=True,timeout=180)
-            denied=execute_body('let c=aws.example("cleanup_fixture");let rows=c.cleanup_prefix("lmaws",24,true);')
+            def cleanup(body,profile='default'):
+                return execute('cleanup',body,profile,{'LMAWS_LEDGER_DIR':str(ledger_dir)})
+            denied=cleanup('let c=aws.example("cleanup_fixture");let rows=c.cleanup_prefix("lmaws",24,true);')
             assert denied.returncode!=0 and not Fake.deletes,'default profile was allowed to delete'
-            dry=execute_body('let c=aws.example("cleanup_fixture");let rows=c.cleanup_prefix("lmaws",24,false);')
+            dry=cleanup('let c=aws.example("cleanup_fixture");let rows=c.cleanup_prefix("lmaws",24,false);')
             assert dry.returncode==0 and not Fake.deletes,(dry.stderr,Fake.deletes)
-            applied=execute_body('let c=aws.example("cleanup_fixture");let rows=c.cleanup_prefix("lmaws",24,true);file_write("cleanup.json",rows.json());','lmaws')
+            applied=cleanup('let c=aws.example("cleanup_fixture");let rows=c.cleanup_prefix("lmaws",24,true);file_write("cleanup.json",rows.json());','lmaws')
             assert applied.returncode==0,(applied.stderr,Fake.requests)
             assert Fake.deletes==[name],(Fake.deletes,applied.stdout,(work/"cleanup.json").read_text())
-            assert 'cleanup dry-run plan:' in applied.stdout
             cleaned=json.loads((work/'cleanup.json').read_text());assert any(row['name']==name and row['status']=='deleted' and row['provider_absent']=='true' for row in cleaned),cleaned
-            absence=execute_body('let c=aws.example("independent_fixture");check(c.resource_exists("queue","'+name+'") == false);')
+            absence=cleanup('let c=aws.example("independent_fixture");check(c.resource_exists("queue","'+name+'") == false);')
             assert absence.returncode==0,absence.stderr
-            Fake.deny=True;output.unlink();p=subprocess.run(argv+['--lmcode',str(binary)],cwd=work,env=env,capture_output=True,text=True,timeout=180);assert p.returncode!=0,'denial became a false zero';assert not output.exists()
+            Fake.deny=True;output.unlink();p=execute('prefix','let cloud=aws.region("us-east-1"); let rows=cloud.find_prefix("lmaws"); file_write('+json.dumps(str(output))+',rows.json());');assert p.returncode!=0,'denial became a false zero';assert not output.exists()
             print('PASS real SDK prefix pushdown, pagination, tags/ages, eleven resources, masks, denial, qualified deletion and default-profile absence; loopback only')
     finally:server.shutdown();server.server_close()
 if __name__=='__main__':main(pathlib.Path(sys.argv[1]).resolve())

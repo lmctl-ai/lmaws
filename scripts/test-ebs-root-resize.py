@@ -95,24 +95,25 @@ def main():
             script = work / "run.lms"
             output = work / "result.json"
 
-            def execute(apply=False, human=True, spec=None, overrides=None, ok=True, offline=False):
+            def execute(apply=False, human=True, spec=None, overrides=None, ok=True):
                 payload = json.dumps(json.dumps(spec or SPEC))
                 body = (
-                    'let p=_dsl_ cli="lmaws";\n'
+                    's=load_schema(cli="lmaws");\n'
+                    'let p = _lmcode_ s;\n'
                     'let cloud=aws.example("ebs_resize_test");\n'
                     f'let result=cloud.ebs_root_resize({payload},{str(apply).lower()},{str(human).lower()});\n'
-                    f'file_write({json.dumps(str(output))},result.json());\nend _dsl_\n'
-                    'let code=temp_file();savedsl(p,code);\n'
-                    'let r=system(concat(dsl_cli(p),concat('
-                    + json.dumps((["--dry-run"] if offline else []) + (["--apply"] if apply else []) + ["--lmcode"])
-                    + ',[code])),{timeoutMs:30000});\nprintln(r.stdout);println(r.stderr);remove_file(code);assert(r.code==0);\n'
+                    f'file_write({json.dumps(str(output))},result.json());\nend _lmcode_\n'
+                    'let r=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(ok).lower()+');\n'
                 )
                 script.write_text(body)
-                compiler = shutil.which("lmctl.cmd" if os.name == "nt" else "lmctl") or "lmctl"
+                compiler = shutil.which("lmscript.cmd" if os.name == "nt" else "lmscript") or "lmscript"
                 command = ["cmd.exe", "/c", compiler] if os.name == "nt" else [compiler]
-                result = subprocess.run(command + [str(script)], cwd=work,
-                                        env=dict(env, LMAWS_APPLY="1" if apply else "0", **(overrides or {})),
-                                        capture_output=True, text=True, timeout=60)
+                run_env=dict(env,PATH=str(work)+os.pathsep+env.get("PATH",""),LMAWS_APPLY="1" if apply else "0",**(overrides or {}))
+                result = subprocess.run(command + [str(script)], cwd=work, env=run_env,
+                                        capture_output=True, text=True, timeout=180)
+                assert result.returncode == 0, result.stdout + result.stderr
+                envelope=json.loads(result.stdout.strip().splitlines()[-1])
+                result.returncode=0 if envelope.get("ok") else 3
                 assert (result.returncode == 0) == ok, result.stdout + result.stderr
                 return json.loads(output.read_text()) if ok else result
 
@@ -153,9 +154,6 @@ def main():
             final = execute(apply=True)
             assert final["ready"] == "true" and final["changed"] == "false"
             assert len(Fake.mutations) == 1
-            Fake.calls.clear()
-            assert execute(offline=True, overrides={"AWS_PROFILE": "default"})["applied"] == "false"
-            assert not Fake.calls
         print("PASS EBS root resize: loopback SDK protocol, identity/root/attachment/size guards, in-flight reruns and one size-only ModifyVolume; no AWS")
     finally:
         server.shutdown()

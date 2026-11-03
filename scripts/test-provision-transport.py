@@ -165,21 +165,20 @@ file_write("terminate.json", cloud.ec2_provision_terminate("demo-01"));
         def invoke(source, profile="default", timeout=90, crash=False):
             with tempfile.TemporaryDirectory(prefix="lmaws-provision-script-") as td:
                 path = pathlib.Path(td) / "job.lms"
-                output = pathlib.Path(td) / "job.dslb"
-                path.write_text('p = _dsl_ schema=' + json.dumps(str(schema_path)) + ';\n' + source + '\nend _dsl_\nsavedsl(p, ' + json.dumps(str(output)) + ');\n')
-                compiled = subprocess.run([runner, str(path)], cwd=td, text=True, capture_output=True, timeout=60)
-                if compiled.returncode:
-                    raise AssertionError(compiled.stdout + compiled.stderr)
-                env = dict(os.environ, LMAWS_ENDPOINT=f"http://127.0.0.1:{server.server_port}", LMAWS_LIVE="1", AWS_PROFILE=profile, AWS_REGION="us-east-1", CI="true", LMAWS_LEDGER_DIR=ledger_root, LMPROV_LEDGER_DIR=ledger_root)
+                path.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+source+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n')
+                runner=shutil.which("lmscript.cmd" if os.name=="nt" else "lmscript") or "lmscript"
+                env = dict(os.environ, LMAWS_ENDPOINT=f"http://127.0.0.1:{server.server_port}", LMAWS_LIVE="1", AWS_PROFILE=profile, AWS_REGION="us-east-1", CI="true", LMAWS_LEDGER_DIR=ledger_root, LMPROV_LEDGER_DIR=ledger_root,PATH=str(HOST and pathlib.Path(HOST[0] if isinstance(HOST,list) else HOST).parent if HOST else ROOT/"target/jvm-bin")+os.pathsep+os.environ.get("PATH",""))
                 if crash:
-                    process=subprocess.Popen(COMMAND+["--lmcode",str(output)],cwd=td,env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                    process=subprocess.Popen([runner,str(path)],cwd=td,env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
                     try:
                         assert Fake.accepted.wait(15), "RunInstances was not accepted before kill"
                     finally:
                         process.kill();stdout,stderr=process.communicate(timeout=15);Fake.release.set()
                     result=subprocess.CompletedProcess(process.args,process.returncode,stdout,stderr)
                 else:
-                    result = subprocess.run(COMMAND+["--lmcode",str(output)], cwd=td, env=env, text=True, capture_output=True, timeout=timeout)
+                    result=subprocess.run([runner,str(path)],cwd=td,env=env,text=True,capture_output=True,timeout=timeout)
+                    assert result.returncode==0,(result.stdout,result.stderr)
+                    envelope=json.loads(result.stdout.strip().splitlines()[-1]);result.returncode=0 if envelope.get("ok") else 3
                 result.receipts = {p.name: p.read_text() for p in pathlib.Path(td).glob("*.json")}
                 return result
         with tempfile.TemporaryDirectory(prefix="lmaws-provision-") as td:

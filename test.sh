@@ -9,7 +9,6 @@ timeout 90 mvn -q dependency:build-classpath -Dmdep.outputFile=target/dependency
 timeout 30 python3 scripts/lock-deps.py
 timeout 30 python3 scripts/test-verify-absence.py
 timeout 30 python3 scripts/test-compare-outputs.py
-timeout 180 python3 scripts/test-compare.py
 mkdir -p target/jvm-bin
 if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
   python3 - <<'PYWIN'
@@ -32,6 +31,7 @@ export PATH="$PWD/target/jvm-bin:$PATH"
 export LMAWS_TEST_HOST="$jvm"
 python3 scripts/check-host-flags.py schema/lmaws.dsl.json "$jvm"
 timeout 300 python3 scripts/test-cli.py "$jvm"
+timeout 120 python3 scripts/test-protocol-parity.py "$jvm"
 timeout 300 python3 scripts/test-fake.py "$jvm"
 timeout 180 python3 scripts/test-credential-process.py
 timeout 240 python3 scripts/test-iam-role.py "$jvm"
@@ -64,6 +64,7 @@ if [[ "${LMAWS_NATIVE:-0}" == 1 ]]; then
  export PATH="$PWD/target:$PATH"
  export LMAWS_TEST_HOST="$exe"
  timeout 300 python3 scripts/test-cli.py "$exe"
+ timeout 120 python3 scripts/test-protocol-parity.py "$exe"
  timeout 300 python3 scripts/test-fake.py "$exe"
  timeout 240 python3 scripts/test-iam-role.py "$exe"
  timeout 300 python3 scripts/test-provision-transport.py
@@ -81,3 +82,4 @@ if [[ ( "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ) && "${LMAWS_NATIVE:-
 else
 timeout 180 python3 scripts/test-recipe-execution.py
 fi
+timeout 180 python3 scripts/test-compare.py

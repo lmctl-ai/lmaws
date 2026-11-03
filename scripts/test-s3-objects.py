@@ -5,8 +5,9 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from urllib.parse import parse_qs,unquote,urlsplit
 from xml.sax.saxutils import escape
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-VERSION=ET.parse(ROOT/'pom.xml').getroot().find('{*}version').text
-JAR=ROOT/f'target/lmaws-{VERSION}.jar';BUCKET='lmaws-lmfiles-run01';RUN='run01';NS='http://s3.amazonaws.com/doc/2006-03-01/'
+HOST=pathlib.Path(os.environ.get('LMAWS_TEST_HOST',str(ROOT/'target/jvm-bin/lmaws'))).resolve()
+LMSCRIPT=__import__('shutil').which('lmscript.cmd' if os.name=='nt' else 'lmscript') or 'lmscript'
+BUCKET='lmaws-lmfiles-run01';RUN='run01';NS='http://s3.amazonaws.com/doc/2006-03-01/'
 class Model:
  def __init__(self,mode='ok'):
   self.mode=mode;self.exists=False;self.tag=None;self.objects={};self.calls=[];self.headers=[];self.tag_reads=0;self.block=threading.Event();self.release=threading.Event()
@@ -94,18 +95,22 @@ class Handler(BaseHTTPRequestHandler):
 class Harness:
  def __init__(self,mode='ok'):
   self.tmp=tempfile.TemporaryDirectory(prefix='s3-objects-');self.work=pathlib.Path(self.tmp.name);self.model=Model(mode);self.server=ThreadingHTTPServer(('127.0.0.1',0),Handler);self.server.model=self.model;threading.Thread(target=self.server.serve_forever,daemon=True).start();self.n=0
-  self.schema=self.work/'schema.json';self.schema.write_text(subprocess.check_output(['java','-jar',str(JAR),'--lmcode-schema','--json'],text=True));self.payload=self.work/'payload.bin';self.payload.write_bytes(b'hello object')
+  self.payload=self.work/'payload.bin';self.payload.write_bytes(b'hello object')
  def __enter__(self):return self
  def __exit__(self,*args):self.model.release.set();self.server.shutdown();self.server.server_close();self.tmp.cleanup()
  def output(self,name,expr,rows=False):return 'file_write('+json.dumps(str(self.work/(name+'.json')))+','+expr+('.json()' if rows else '')+');\n'
  def read(self,name):return json.loads((self.work/(name+'.json')).read_text())
  def run(self,body,profile='lmaws',cap='0.05',ok=True,background=False):
-  self.n+=1;source=self.work/f'code{self.n}.lms';bc=self.work/f'code{self.n}.dslb';source.write_text('let p=_dsl_ schema='+json.dumps(str(self.schema))+';\n'+body+'\nend _dsl_\nsavedsl(p,'+json.dumps(str(bc))+');\n')
-  env=dict(os.environ,AWS_PROFILE=profile,AWS_DEFAULT_PROFILE=profile,AWS_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_LIVE='1',LMAWS_ENDPOINT=f'http://127.0.0.1:{self.server.server_port}',LMAWS_LEDGER_DIR=str(self.work/'ledgers'),LMAWS_MAX_COST_USD=cap,CI='true')
-  compiled=subprocess.run(['lmscript',str(source)],env=env,cwd=self.work,capture_output=True,text=True,timeout=30);assert compiled.returncode==0,compiled.stderr
-  command=['java','-jar',str(JAR),'--lmcode',str(bc)]
+  self.n+=1;source=self.work/f'code{self.n}.lms'
+  source.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(ok).lower()+');\n')
+  env=dict(os.environ,AWS_PROFILE=profile,AWS_DEFAULT_PROFILE=profile,AWS_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_LIVE='1',LMAWS_ENDPOINT=f'http://127.0.0.1:{self.server.server_port}',LMAWS_LEDGER_DIR=str(self.work/'ledgers'),LMAWS_MAX_COST_USD=cap,CI='true',PATH=str(HOST.parent)+os.pathsep+os.environ.get('PATH',''))
+  command=[LMSCRIPT,str(source)]
   if background:return subprocess.Popen(command,env=env,cwd=self.work,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-  result=subprocess.run(command,env=env,cwd=self.work,capture_output=True,text=True,timeout=60);assert (result.returncode==0)==ok,result.stdout+result.stderr;return result
+  result=subprocess.run(command,env=env,cwd=self.work,capture_output=True,text=True,timeout=180)
+  assert result.returncode==0,result.stdout+result.stderr
+  envelope=json.loads(result.stdout.strip().splitlines()[-1]);result.returncode=0 if envelope.get('ok') else 3
+  assert (result.returncode==0)==ok,result.stdout+result.stderr
+  return result
  def create(self):return 'let c=aws.region("us-east-1");'+self.output('bucket',f'c.s3_bucket_create_exact("{BUCKET}","{RUN}")')
  def attach(self):return 'let c=aws.region("us-east-1");'+self.output('attach',f'c.s3_bucket_attach("{BUCKET}","{RUN}")')
  def put(self,key='one.txt',options=None,name='put'):

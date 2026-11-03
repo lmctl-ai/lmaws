@@ -37,8 +37,16 @@ class Fake(http.server.BaseHTTPRequestHandler):
         raise AssertionError((action,form))
 
 def run_dsl(host,work,source,env,apply=True):
-    schema=work/"schema.json";argv=["cmd.exe","/c",str(host)] if host.suffix.lower()==".cmd" else [str(host)]
-    schema.write_bytes(subprocess.check_output(argv+["--lmcode-schema"],env=env,timeout=30)); src=work/"role.lms";bc=work/"role.dslb";src.write_text('p=_dsl_ schema='+json.dumps(schema.as_posix())+';\n'+source+'\nend _dsl_\nsavedsl(p,'+json.dumps(bc.as_posix())+');\n',encoding="utf-8");lms=shutil.which("lmscript.cmd" if os.name=="nt" else "lmscript") or "lmscript";comp=["cmd.exe","/c",lms] if os.name=="nt" and lms.lower().endswith(".cmd") else [lms];compiled=subprocess.run(comp+[str(src)],cwd=work,env=env,capture_output=True,text=True,timeout=60);assert compiled.returncode==0,(compiled.stdout,compiled.stderr);return subprocess.run(argv+(["--apply"] if apply else [])+["--lmcode",str(bc)],cwd=work,env=env,capture_output=True,text=True,timeout=180)
+    src=work/"role.lms"
+    src.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+source+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n',encoding="utf-8")
+    lms=shutil.which("lmscript.cmd" if os.name=="nt" else "lmscript") or "lmscript"
+    comp=["cmd.exe","/c",lms] if os.name=="nt" and lms.lower().endswith(".cmd") else [lms]
+    run_env=dict(env,PATH=str(host.parent)+os.pathsep+env.get("PATH",""),LMAWS_APPLY="1" if apply else "0")
+    result=subprocess.run(comp+[str(src)],cwd=work,env=run_env,capture_output=True,text=True,timeout=180)
+    assert result.returncode==0,(result.stdout,result.stderr)
+    envelope=json.loads(result.stdout.strip().splitlines()[-1])
+    result.returncode=0 if envelope.get("ok") else 3
+    return result
 
 def main(host):
     server=http.server.ThreadingHTTPServer(("127.0.0.1",0),Fake);threading.Thread(target=server.serve_forever,daemon=True).start();work=pathlib.Path(tempfile.mkdtemp(prefix="lmaws-iam-role-"));empty=work/"empty";empty.write_text("")

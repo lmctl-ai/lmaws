@@ -3,11 +3,11 @@
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, unquote
-import json, os, subprocess, tempfile, threading, xml.etree.ElementTree as ET
+import json, os, shutil, subprocess, tempfile, threading, xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = ET.parse(ROOT / "pom.xml").getroot().find("{*}version").text
-JAR = ROOT / f"target/lmaws-{VERSION}.jar"
+HOST = Path(os.environ.get("LMAWS_TEST_HOST", str(ROOT / "target/jvm-bin/lmaws"))).resolve()
+LMSCRIPT = shutil.which("lmscript.cmd" if os.name == "nt" else "lmscript") or "lmscript"
 ACCOUNT = "000000000000"
 
 
@@ -117,9 +117,6 @@ class FakeHandler(BaseHTTPRequestHandler):
 
 with tempfile.TemporaryDirectory(prefix="lmaws-publish-probes-") as tmp:
     work = Path(tmp)
-    schema = work / "schema.json"
-    schema.write_text(subprocess.check_output(["java", "-jar", str(JAR), "--lmcode-schema", "--json"], cwd=ROOT, text=True))
-
     def run_dsl(mode, dsl_body, profile="default", expect_ok=True):
         model = FakeModel(mode)
         server = ThreadingHTTPServer(("127.0.0.1", 0), FakeHandler)
@@ -127,35 +124,16 @@ with tempfile.TemporaryDirectory(prefix="lmaws-publish-probes-") as tmp:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            src = work / "probe.lms"
-            bc = work / "probe.dslb"
-            src.write_text(f'let p = _dsl_ schema={json.dumps(str(schema))};\n{dsl_body}\nend _dsl_\nsavedsl(p, {json.dumps(str(bc))});\n')
-            subprocess.run(["lmscript", str(src)], cwd=work, check=True, capture_output=True, text=True, timeout=30)
-            env = dict(
-                os.environ,
-                AWS_PROFILE=profile,
-                AWS_DEFAULT_PROFILE=profile,
-                AWS_REGION="us-east-1",
-                LMAWS_LIVE="1",
-                LMAWS_ENDPOINT=f"http://127.0.0.1:{server.server_port}",
-                LMAWS_MAX_COST_USD="0.05",
-                LMAWS_LEDGER_DIR=str(work / "ledgers"),
-                LMAWS_EVIDENCE_DIR=str(work / "evidence"),
-            )
-            p = subprocess.run(
-                ["java", "-jar", str(JAR), "--live", "--profile", profile, "--lmcode", str(bc)],
-                cwd=work,
-                env=env,
-                text=True,
-                capture_output=True,
-                timeout=60,
-            )
-            assert (p.returncode == 0) == expect_ok, (mode, p.returncode, p.stdout, p.stderr)
-            return p, model
+            src=work/"probe.lms"
+            src.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+dsl_body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(expect_ok).lower()+');\n')
+            env = dict(os.environ,AWS_PROFILE=profile,AWS_DEFAULT_PROFILE=profile,AWS_REGION="us-east-1",LMAWS_LIVE="1",LMAWS_ENDPOINT=f"http://127.0.0.1:{server.server_port}",LMAWS_MAX_COST_USD="0.05",LMAWS_LEDGER_DIR=str(work/"ledgers"),LMAWS_EVIDENCE_DIR=str(work/"evidence"),PATH=str(HOST.parent)+os.pathsep+os.environ.get("PATH",""))
+            p=subprocess.run([LMSCRIPT,str(src)],cwd=work,env=env,text=True,capture_output=True,timeout=180)
+            assert p.returncode==0,(mode,p.stdout,p.stderr)
+            envelope=json.loads(p.stdout.strip().splitlines()[-1]);p.returncode=0 if envelope.get("ok") else 3
+            assert (p.returncode==0)==expect_ok,(mode,p.returncode,p.stdout,p.stderr)
+            return p,model
         finally:
-            server.shutdown()
-            server.server_close()
-            thread.join()
+            server.shutdown();server.server_close();thread.join()
 
     out_file = work / "out.json"
     batch_spec = json.dumps([

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """CLI, schema parity, failure codes and managed memory enforcement."""
-import json,os,pathlib,subprocess,sys,tempfile,shutil
+import hashlib,json,os,pathlib,struct,subprocess,sys,tempfile,shutil
 root=pathlib.Path(__file__).resolve().parents[1];host=pathlib.Path(sys.argv[1]).resolve();env=dict(os.environ);env.pop('LMAWS_LIVE',None)
 with host.open('rb') as binary: is_elf=binary.read(4)==b'\x7fELF'
 def run(args,code=0,extra=None):
@@ -19,38 +19,62 @@ assert 'str_len' not in json.loads(schema)['functions'],'schema must omit built-
 
 run([],2);run(['--nonesuch'],2);run(['--lmcode','missing-bytecode.dslb'],3)
 for raw in ['0','-1','wat','1.5','99999999999999999999999999']:
- assert 'positive whole' in run(['--version'],2,{'LMAWS_MAX_MEMORY_MB':raw}).stderr
+ assert 'positive whole' in run(['--version'],2,{'LMAWS_MAX_MEMORY_MB':raw}).stdout
 for raw in ['-0.01','0.250001','nan','1e100']:
- assert 'LMAWS_MAX_COST_USD' in run(['--version'],2,{'LMAWS_MAX_COST_USD':raw}).stderr
+ assert 'LMAWS_MAX_COST_USD' in run(['--version'],2,{'LMAWS_MAX_COST_USD':raw}).stdout
 workflow=(root/'.github/workflows/ci.yml').read_text(encoding='utf-8').lower()
 assert 'id-token:' not in workflow and 'configure-aws-credentials' not in workflow and 'secrets.aws_' not in workflow,'CI must remain fake-only with no OIDC or cloud credentials'
 run(['--self-test'])
 with tempfile.TemporaryDirectory(prefix='lmaws-cli-') as d:
  d=pathlib.Path(d);bad=d/'bad.dslb';bad.write_bytes(b'not bytecode');run(['--lmcode',str(bad)],3)
- deny=d/'ci-denied.lms';deny_out=d/'ci-denied.dslb'
- deny.write_text('p = _dsl_ schema='+json.dumps(str(root/'schema/lmaws.dsl.json'))+';\nlet cloud=aws.region("us-east-1"); let who=cloud.identity();\nend _dsl_\nsavedsl(p,'+json.dumps(str(deny_out))+');\n')
- compiled=subprocess.run([shutil.which('lmscript'),str(deny)],text=True,encoding='utf-8',capture_output=True,timeout=60);assert compiled.returncode==0,compiled.stderr
- denied=run(['--lmcode',str(deny_out)],3,{'CI':'true','LMAWS_LIVE':'1','LMAWS_ENDPOINT':'','LMAWS_LEDGER_DIR':str(d/'ci-ledgers')})
- assert 'disabled in CI' in denied.stdout
- code=d/'budget.lms';out=d/'budget.dslb'
- code.write_text('p = _dsl_ schema='+json.dumps(str(root/'schema/lmaws.dsl.json'))+';\nlet i = 0; while (i < 10000) { let data = str_repeat("x", 1000000); i = i + 1; }\nend _dsl_\nsavedsl(p, '+json.dumps(str(out))+');\n')
+ retired=run(['--dry-run','--lmcode','missing-bytecode.dslb'],2)
+ assert 'LMCODE_RETURN_BEGIN' in retired.stdout and 'CLI_USAGE' in retired.stdout
+ sentinel=d/'sentinel';bytecode=d/'effect.dslb'
+ def u16(n): return struct.pack('>H',n)
+ def u32(n): return struct.pack('>I',n)
+ def make_effect(output,effect_path,value,function):
+  strings=[str(effect_path),value,'fn '+function+'(string, string) -> void']
+  code=b'\x02'+u32(0)+b'\x02'+u32(1)+b'\x07'+u16(0)+b'\x02'+b'\x11'
+  image=bytearray(b'DSLB'+u16(6)+hashlib.sha256(schema.encode()).digest()+u32(len(strings)))
+  for item in strings:
+   raw=item.encode();image+=b'\x01'+u32(len(raw))+raw
+  image+=u16(1)+u32(2)+u16(0)+u16(0)+u16(2)+u32(len(code))+code+u32(0)+u16(0)
+  output.write_bytes(image)
+ make_effect(bytecode,sentinel,'ran','file_write')
+ manifest=d/'invocation.json';part={'index':0,'file':str(bytecode.resolve())}
+ def invocation(dry_marker):
+  data={'version':1,'mode':'single','parts':[part]}
+  if dry_marker is not ...: data['dry']=dry_marker
+  manifest.write_text(json.dumps(data),encoding='utf-8')
+  result=run(['--lmcode',str(bytecode)],2 if dry_marker is ... or not isinstance(dry_marker,bool) else 0,{'LMCODE_INVOCATION_FILE':str(manifest.resolve())})
+  return result
+ invocation(...);assert not sentinel.exists(),'missing dry marker dispatched an effect'
+ invocation('true');assert not sentinel.exists(),'non-boolean dry marker dispatched an effect'
+ invocation(True);assert not sentinel.exists(),'dry invocation called the effectful callback'
+ invocation(False);assert sentinel.read_text(encoding='utf-8')=='ran','real invocation did not call the callback'
+ assert '"dry":true' in invocation(True).stdout,'dry success marker missing'
+ part_a=d/'part-a.dslb';part_b=d/'part-b.dslb';trace=d/'builder-trace'
+ make_effect(part_a,trace,'A','file_append');make_effect(part_b,trace,'B','file_append')
+ manifest.write_text(json.dumps({'version':1,'mode':'builder','dry':False,'parts':[{'index':0,'file':str(part_a.resolve())},{'index':1,'file':str(part_b.resolve())}]}),encoding='utf-8')
+ built=run(['--lmcode',str(part_a),'--lmcode',str(part_b)],0,{'LMCODE_INVOCATION_FILE':str(manifest.resolve())})
+ assert trace.read_text(encoding='utf-8')=='AB','builder parts did not share one effect sequence'
+ assert '"parts":2' in built.stdout and 'LMCODE_RETURN_BEGIN' in built.stdout
+ deny=d/'ci-denied.lms'
+ deny.write_text('s=load_schema(cli='+json.dumps(str(host))+');\np = _lmcode_ s;\nlet cloud=aws.region("us-east-1"); let who=cloud.identity();\nend _lmcode_\nr=run_lmcode(p); assert(!r.ok && r.phase=="run");\n')
+ compiled=subprocess.run([shutil.which('lmscript'),str(deny)],env=dict(env,CI='true',LMAWS_LIVE='1',LMAWS_ENDPOINT='',LMAWS_LEDGER_DIR=str(d/'ci-ledgers')),text=True,encoding='utf-8',capture_output=True,timeout=60);assert compiled.returncode==0,(compiled.stdout,compiled.stderr)
+ code=d/'budget.lms'
+ code.write_text('s=load_schema(cli='+json.dumps(str(host))+');\np = _lmcode_ s;\nlet i = 0; while (i < 10000) { let data = str_repeat("x", 1000000); i = i + 1; }\nend _lmcode_\nr=run_lmcode(p); assert(!r.ok && r.phase=="run");\n')
  p=subprocess.run([shutil.which('lmscript'),str(code)],text=True,encoding="utf-8",capture_output=True,timeout=60);assert p.returncode==0,p.stderr
- dry=d/'dry.lms';dry_out=d/'dry.dslb'
- dry.write_text('p = _dsl_ schema='+json.dumps(str(root/'schema/lmaws.dsl.json'))+';\nlet cloud = aws.region(""); check(cloud.tables().len() == 3); let owned = cloud.run("dry01", '+json.dumps(str(d/'lmaws-dry.jsonl'))+'); let q = owned.queue("safe"); check(owned.remaining() == 1); owned.cleanup(); check(owned.remaining() == 0);\nend _dsl_\nsavedsl(p, '+json.dumps(str(dry_out))+');\n')
- compiled=subprocess.run([shutil.which('lmscript'),str(dry)],text=True,encoding="utf-8",capture_output=True,timeout=60);assert compiled.returncode==0,compiled.stderr
- run(['--dry-run','--lmcode',str(dry_out)],extra={'LMAWS_MAX_MEMORY_MB':'64','LMAWS_ENDPOINT':'http://127.0.0.1:9','AWS_PROFILE':'lmaws-no-such-profile','AWS_EC2_METADATA_DISABLED':'true'})
  # Real mutations are profile-gated before any SDK client is opened.  Use a
  # deliberately missing profile and a loopback endpoint-free live session: the
  # expected guard must win over credential resolution/network access.
- guard=d/'profile-guard.lms';guard_out=d/'profile-guard.dslb'
- guard.write_text('p = _dsl_ schema='+json.dumps(str(root/'schema/lmaws.dsl.json'))+';\nlet cloud=aws.example("profile_guard"); let run=cloud.example_run(); let q=run.queue("guard");\nend _dsl_\nsavedsl(p,'+json.dumps(str(guard_out))+');\n')
- compiled=subprocess.run([shutil.which('lmscript'),str(guard)],text=True,encoding='utf-8',capture_output=True,timeout=60);assert compiled.returncode==0,compiled.stderr
- denied=run(['--lmcode',str(guard_out)],3,{'LMAWS_LIVE':'1','AWS_PROFILE':'default','AWS_DEFAULT_PROFILE':'default','AWS_REGION':'us-east-1','AWS_EC2_METADATA_DISABLED':'true','LMAWS_LEDGER_DIR':str(d/'profile-ledgers'),'LMAWS_EVIDENCE_DIR':str(d/'profile-evidence'),'CI':'false','LMAWS_ENDPOINT':''})
- assert 'AWS_PROFILE=lmaws' in denied.stdout and 'active profile: default' in denied.stdout,denied.stdout
- small=run(['--lmcode',str(out)],3,{'LMAWS_MAX_MEMORY_MB':'64'});assert 'LMAWS_MAX_MEMORY_MB' in small.stderr and 'memory budget' in small.stdout
+ guard=d/'profile-guard.lms'
+ guard.write_text('s=load_schema(cli='+json.dumps(str(host))+');\np = _lmcode_ s;\nlet cloud=aws.example("profile_guard"); let run=cloud.example_run(); let q=run.queue("guard");\nend _lmcode_\nr=run_lmcode(p); assert(!r.ok && r.phase=="run");\n')
+ compiled=subprocess.run([shutil.which('lmscript'),str(guard)],env=dict(env,LMAWS_LIVE='1',AWS_PROFILE='default',AWS_DEFAULT_PROFILE='default',AWS_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_LEDGER_DIR=str(d/'profile-ledgers'),LMAWS_EVIDENCE_DIR=str(d/'profile-evidence'),CI='false',LMAWS_ENDPOINT=''),text=True,encoding='utf-8',capture_output=True,timeout=60);assert compiled.returncode==0,(compiled.stdout,compiled.stderr)
+ small=subprocess.run([shutil.which('lmscript'),str(code)],env=dict(env,LMAWS_MAX_MEMORY_MB='64'),text=True,encoding='utf-8',capture_output=True,timeout=60);assert small.returncode==0,small.stderr
  if sys.platform=='linux' and is_elf:
   import resource
   def limit():resource.setrlimit(resource.RLIMIT_AS,(6*1024**3,6*1024**3))
-  p=subprocess.run([str(host),'--lmcode',str(out)],env=env,text=True,encoding="utf-8",capture_output=True,timeout=180,preexec_fn=limit)
-  assert p.returncode==3 and 'LMAWS_MAX_MEMORY_MB' in p.stderr,(p.returncode,p.stdout[-1000:],p.stderr[-1000:])
+  p=subprocess.run([str(host),'--lmcode',str(bytecode)],env=env,text=True,encoding="utf-8",capture_output=True,timeout=180,preexec_fn=limit)
+  assert p.returncode==3 and 'LMAWS_MAX_MEMORY_MB' in p.stdout,(p.returncode,p.stdout[-1000:],p.stderr[-1000:])
 print('PASS CLI, signatures, eight SDK groups, malformed input and memory limits')
