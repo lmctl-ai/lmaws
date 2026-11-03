@@ -69,7 +69,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: lmctl-ai/lmcloud
-          ref: 74c8c7d1b3ca08535f2f7d61f73102be47586c9f
+          ref: 2a5bc6b4a01855bcc3dabcba7adc9cc300cd2701
           path: lmcloud
 
       - name: Set up Go
@@ -105,30 +105,27 @@ jobs:
           role-session-name: lmaws-live-conformance-${{ github.run_id }}
           aws-region: us-east-1
 
-      - name: Prepare journal directory and campaign RUN_ID
+      - name: Prepare journal directory
         run: |
           mkdir -p "$LMAWS_LIVE_JOURNAL_DIR"
           chmod 0700 "$LMAWS_LIVE_JOURNAL_DIR"
-          RAND_HEX="$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
-          RUN_ID="run-$(date -u +%s)-${RAND_HEX}"
-          echo "LMAWS_RUN_ID=${RUN_ID}" >> "$GITHUB_ENV"
-          echo "LMCLOUD_RUN_ID=${RUN_ID}" >> "$GITHUB_ENV"
 
-      - name: Run 23 live conformance scenarios
+      - name: Run 23 live conformance scenarios (per-scenario campaigns)
         working-directory: lmaws
         env:
           LMCLOUD_DIR: ${{ github.workspace }}/lmcloud
         run: |
-          ./scripts/live-conformance.sh "${{ inputs.suite || 'all' }}" "$LMAWS_RUN_ID"
+          ./scripts/live-conformance.sh "${{ inputs.suite || 'all' }}"
 
-      - name: Always run LIFO sweeper with --apply
+      - name: Always run LIFO sweeper with --apply for created run IDs
         if: always()
         working-directory: lmaws
         run: |
-          if [[ -x ./bin/lmaws && -n "${LMAWS_RUN_ID:-}" ]]; then
-            mkdir -p "$LMAWS_LIVE_JOURNAL_DIR"
-            chmod 0700 "$LMAWS_LIVE_JOURNAL_DIR"
-            ./bin/lmaws --sweep --apply --journal-dir "$LMAWS_LIVE_JOURNAL_DIR" "$LMAWS_RUN_ID"
+          if [[ -x ./bin/lmaws && -f "$LMAWS_LIVE_JOURNAL_DIR/created-run-ids.txt" ]]; then
+            mapfile -t CREATED_IDS < <(grep -E '^run-' "$LMAWS_LIVE_JOURNAL_DIR/created-run-ids.txt" || true)
+            if [[ "${#CREATED_IDS[@]}" -gt 0 ]]; then
+              ./bin/lmaws --sweep --apply --journal-dir "$LMAWS_LIVE_JOURNAL_DIR" "${CREATED_IDS[@]}"
+            fi
           fi
 
       - name: Upload live journal artifact

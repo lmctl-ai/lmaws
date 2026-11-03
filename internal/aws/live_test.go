@@ -3041,3 +3041,155 @@ func TestSolR2_BucketCreationTimestampAndTokenMismatchRefused(t *testing.T) {
 	}
 	_ = a.Close()
 }
+
+func TestLiveConformanceScript_PerScenarioCampaignsAndGlobalSpendCeiling(t *testing.T) {
+	scriptPath, err := filepath.Abs(filepath.Join("..", "..", "scripts", "live-conformance.sh"))
+	if err != nil {
+		t.Fatalf("resolve script path: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	fakeLmcloud := filepath.Join(tmpDir, "lmcloud")
+	if err := os.MkdirAll(filepath.Join(fakeLmcloud, "tests", "conformance"), 0o755); err != nil {
+		t.Fatalf("mkdir fake lmcloud/tests/conformance: %v", err)
+	}
+	invocationsLog := filepath.Join(tmpDir, "invocations.log")
+	journalDir := filepath.Join(tmpDir, "journals")
+
+	// Mock run-conformance.sh that lists 3 scenarios on --check and simulates running the filtered scenario.
+	mockConfScript := `#!/usr/bin/env bash
+set -euo pipefail
+CHECK=0
+for arg in "$@"; do
+  if [[ "$arg" == "--check" ]]; then
+    CHECK=1
+  fi
+done
+if [[ "$CHECK" -eq 1 ]]; then
+  cat <<'EOF'
+1..3
+ok 1 - [check] queue/01-queue-lifecycle (syntax OK)
+ok 2 - [check] queue/02-send-receive-ack (syntax OK)
+ok 3 - [check] queue/03-visibility-and-nack (syntax OK)
+# pass 3 / 3, skip 0, fail 0
+EOF
+  exit 0
+fi
+
+echo "SCENARIO filter=${LMCLOUD_SCENARIO_FILTER:-} run=${LMAWS_RUN_ID:-} prefix=${LMCLOUD_NAME_PREFIX:-}" >> "` + invocationsLog + `"
+mkdir -p "${LMAWS_LIVE_JOURNAL_DIR}"
+JFILE="${LMAWS_LIVE_JOURNAL_DIR}/${LMAWS_RUN_ID}.jsonl"
+if [[ "${MOCK_HIGH_SPEND:-0}" == "1" && "${LMCLOUD_SCENARIO_FILTER:-}" == "02-send-receive-ack" ]]; then
+  echo '{"seq":1,"event":"cost","run_id":"'"${LMAWS_RUN_ID}"'","kind":"queue","name":"q","charged_nano_usd":200000000}' >> "$JFILE"
+else
+  echo '{"seq":1,"event":"cost","run_id":"'"${LMAWS_RUN_ID}"'","kind":"queue","name":"q","charged_nano_usd":60000000}' >> "$JFILE"
+fi
+echo "1..1"
+echo "ok 1 - queue/${LMCLOUD_SCENARIO_FILTER} (mocked)"
+echo "# pass 1 / 1, skip 0, fail 0"
+`
+	if err := os.WriteFile(filepath.Join(fakeLmcloud, "tests", "run-conformance.sh"), []byte(mockConfScript), 0o755); err != nil {
+		t.Fatalf("write mock run-conformance.sh: %v", err)
+	}
+
+	mockBin := filepath.Join(tmpDir, "mock-lmaws")
+	mockBinScript := `#!/usr/bin/env bash
+set -euo pipefail
+echo "BIN $*" >> "` + invocationsLog + `"
+if [[ "${1:-}" == "--sweep" ]]; then
+  echo '{"ok":true,"deleted":1,"retained":0,"errors":0,"charged_nano_usd":1000000}'
+  exit 0
+fi
+exit 0
+`
+	if err := os.WriteFile(mockBin, []byte(mockBinScript), 0o755); err != nil {
+		t.Fatalf("write mock-lmaws: %v", err)
+	}
+
+	// Case 1: Normal run executes all 3 scenarios, each with a fresh RUN_ID, fresh prefix, and immediate --sweep --apply <SCEN_RUN_ID>,
+	// followed by final sweep of ONLY those 3 run IDs (never --all-stale).
+	cmd := exec.Command("bash", scriptPath, "queue")
+	cmd.Env = append(os.Environ(),
+		"LMCLOUD_LIVE=1",
+		"LMAWS_LIVE=1",
+		"LMAWS_LIVE_MUTATE=1",
+		"LMCLOUD_DIR="+fakeLmcloud,
+		"LMAWS_BIN="+mockBin,
+		"LMAWS_LIVE_JOURNAL_DIR="+journalDir,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Case 1 expected exit 0, got err=%v\noutput:\n%s", err, string(out))
+	}
+	outStr := string(out)
+	if !strings.Contains(outStr, "# pass 3 / 3, skip 0, fail 0") {
+		t.Fatalf("expected aggregated TAP summary '# pass 3 / 3, skip 0, fail 0', got:\n%s", outStr)
+	}
+
+	rawLog, err := os.ReadFile(invocationsLog)
+	if err != nil {
+		t.Fatalf("read invocations.log: %v", err)
+	}
+	logLines := strings.Split(strings.TrimSpace(string(rawLog)), "\n")
+	if strings.Contains(string(rawLog), "--all-stale") {
+		t.Fatalf("live-conformance.sh must never invoke --all-stale, got log:\n%s", string(rawLog))
+	}
+
+	seenRuns := map[string]bool{}
+	seenPrefixes := map[string]bool{}
+	var scenarioCount, sweepCount int
+	for _, line := range logLines {
+		if strings.HasPrefix(line, "SCENARIO ") {
+			scenarioCount++
+			parts := strings.Fields(line)
+			runVal := strings.TrimPrefix(parts[2], "run=")
+			prefVal := strings.TrimPrefix(parts[3], "prefix=")
+			if seenRuns[runVal] {
+				t.Fatalf("expected distinct RUN_ID per scenario, saw duplicate %q", runVal)
+			}
+			if seenPrefixes[prefVal] {
+				t.Fatalf("expected distinct LMCLOUD_TEST_PREFIX per scenario, saw duplicate %q", prefVal)
+			}
+			seenRuns[runVal] = true
+			seenPrefixes[prefVal] = true
+		} else if strings.HasPrefix(line, "BIN --sweep --apply") {
+			sweepCount++
+		}
+	}
+	if scenarioCount != 3 || len(seenRuns) != 3 {
+		t.Fatalf("expected 3 scenarios with 3 distinct run IDs, got count=%d runs=%v\nlog:\n%s", scenarioCount, seenRuns, string(rawLog))
+	}
+	// 3 per-scenario sweeps + 1 final sweep (covering all 3 run IDs) + 1 trap sweep = at least 4 sweep invocations.
+	if sweepCount < 4 {
+		t.Fatalf("expected per-scenario and final sweep invocations, got %d:\n%s", sweepCount, string(rawLog))
+	}
+
+	// Case 2: Global spend guard ($0.25 / 250,000,000 nano-USD) aborts remaining scenarios when exceeded after scenario 2.
+	_ = os.Remove(invocationsLog)
+	journalDir2 := filepath.Join(tmpDir, "journals2")
+	cmd2 := exec.Command("bash", scriptPath, "queue")
+	cmd2.Env = append(os.Environ(),
+		"LMCLOUD_LIVE=1",
+		"LMAWS_LIVE=1",
+		"LMAWS_LIVE_MUTATE=1",
+		"MOCK_HIGH_SPEND=1",
+		"LMCLOUD_DIR="+fakeLmcloud,
+		"LMAWS_BIN="+mockBin,
+		"LMAWS_LIVE_JOURNAL_DIR="+journalDir2,
+	)
+	out2, err2 := cmd2.CombinedOutput()
+	if err2 == nil {
+		t.Fatalf("Case 2 expected non-zero exit when global spend ceiling is exceeded, got exit 0:\n%s", string(out2))
+	}
+	if !strings.Contains(string(out2), "ABORTED: cumulative spend") {
+		t.Fatalf("expected global spend abort diagnostic, got:\n%s", string(out2))
+	}
+	rawLog2, err := os.ReadFile(invocationsLog)
+	if err != nil {
+		t.Fatalf("read invocations.log case 2: %v", err)
+	}
+	if strings.Contains(string(rawLog2), "filter=03-visibility-and-nack") {
+		t.Fatalf("scenario 03 must not execute after global spend ceiling is reached:\n%s", string(rawLog2))
+	}
+}
+
