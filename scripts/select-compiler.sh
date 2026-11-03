@@ -23,21 +23,11 @@ source="\n".join([
  "raise SystemExit(2)",
 ]).replace('SCHEMA_PATH',repr(str(schema)))
 (work/'probe-host.py').write_text(source)
-if sys.platform=='win32':
- (work/'lmprobe.cmd').write_bytes(b'@echo off\r\npython "%~dp0probe-host.py" %*\r\n')
-else:
- launcher=work/'lmprobe';launcher.write_text('#!/usr/bin/env python3\n'+source);launcher.chmod(0o700)
-probe="\n".join([
- 's=load_schema(cli="lmprobe");',
- 'p = _lmcode_ s;',
- 'let n = str_len("implicit std");',
- 'end _lmcode_',
- 'r=run_lmcode(p); assert(r.ok);',
-])+'\n'
-(work/'probe.lms').write_text(probe)
+python='python' if sys.platform=='win32' else pathlib.Path(sys.executable).name
+(work/'probe.lms').write_text('s=load_schema(cli='+repr(python+' probe-host.py')+');\np = _lmcode_ s;\nlet n = str_len("implicit std");\nend _lmcode_\nr=run_lmcode(p); assert(r.ok);\n')
 PYPROBE
 if [ -n "$candidate" ] &&
-   PATH="$(native "$WORK")${PATH:+:$PATH}" LMCODE_PROBE_OUTPUT="$(native "$WORK/probe.lmcode")" "$candidate" "$(native "$WORK/probe.lms")" > /dev/null 2>&1 &&
+   (cd "$WORK" && PATH="$(native "$WORK")${PATH:+:$PATH}" LMCODE_PROBE_OUTPUT="$(native "$WORK/probe.lmcode")" "$candidate" "$(native "$WORK/probe.lms")" > /dev/null 2>&1) &&
    python3 - "$(native "$WORK/probe.lmcode")" <<'PYVERIFY'
 import pathlib,sys
 p=pathlib.Path(sys.argv[1])
