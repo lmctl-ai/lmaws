@@ -128,7 +128,7 @@ def run(mode: str, profile: str = "default"):
 p = _lmcode_ s;
 let c=aws.region("us-east-1");
 let r=c.s3_publish_path("fixture-bucket","dataset/model_list.json",{json.dumps(json.dumps(inline_policy))});
-file_write("{result}",r.json());
+file_write({json.dumps(str(result))},r.json());
 end _lmcode_
 outcome=run_lmcode(p); println(json_stringify(outcome));
 ''')
