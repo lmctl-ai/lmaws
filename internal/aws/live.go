@@ -5,6 +5,7 @@ package aws
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/processcreds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -35,7 +37,22 @@ const (
 	RequiredLiveAccount = "254332045686"
 	// RequiredLiveRegion is the operator-approved AWS region for Stage 1 live mode.
 	RequiredLiveRegion = "us-east-1"
+
+	// Conservative internet egress rate ($0.09 / GiB = 90,000,000 nano-USD / GiB).
+	liveEgressGiBNanoUSD int64 = 90_000_000
+	liveBytesPerGiB      int64 = 1024 * 1024 * 1024
+
+	// Hard response body and page bounds for Stage 1 read-only operations.
+	maxLiveResponseBodyBytes  int64 = 1280 * 1024 // 1.25 MiB hard ceiling on any single HTTP response body
+	maxLiveSmallRespBodyBytes int64 = 64 * 1024   // 64 KiB bound for GetBucketLocation / GetQueueUrl
+	maxLiveListRespBodyBytes  int64 = 512 * 1024  // 512 KiB bound for ListBuckets / ListQueues
+	maxLiveObjectListPageSize int   = 1000
+	maxLiveBucketListPageSize int32 = 1000
+	maxLiveQueueListPageSize  int32 = 1000
 )
+
+// ErrLiveResponseTooLarge is returned when an HTTP response body exceeds the Stage 1 bound.
+var ErrLiveResponseTooLarge = errors.New("live response body exceeded maximum allowed byte bound")
 
 var forbiddenLiveEndpointEnvs = []string{
 	"LMCLOUD_ENDPOINT",
@@ -48,21 +65,97 @@ var forbiddenLiveEndpointEnvs = []string{
 	"AWS_ENDPOINT_URL_S3",
 	"AWS_ENDPOINT_URL_SQS",
 	"AWS_ENDPOINT_URL_STS",
+	"AWS_ENDPOINT_URL_IAM",
+	"AWS_ENDPOINT_URL_SSO",
+	"AWS_ENDPOINT_URL_SSOOIDC",
+	"AWS_EC2_METADATA_SERVICE_ENDPOINT",
 	"STORAGE_EMULATOR_HOST",
 	"PUBSUB_EMULATOR_HOST",
 }
 
-var awsAccessKeyPattern = regexp.MustCompile(`\b(AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b`)
+var (
+	awsAccessKeyPattern = regexp.MustCompile(`\b(AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b`)
+	jsonSecretPattern   = regexp.MustCompile(`(?i)"(SecretAccessKey|SessionToken|SecurityToken|AccessToken|RefreshToken|ClientSecret|IdToken|Authorization)"\s*:\s*"([^"]+)"`)
+	iniSecretPattern    = regexp.MustCompile(`(?im)^\s*(aws_secret_access_key|aws_session_token|aws_security_token)\s*=\s*(\S+)`)
+)
 
 type liveEnvConfig struct {
-	account    string
-	region     string
-	runID      string
-	journalDir string
-	policyPath string
-	policyHash string
-	principal  string
-	costCapUSD float64
+	account                string
+	region                 string
+	runID                  string
+	journalDir             string
+	policyPath             string
+	policyHash             string
+	principal              string
+	costCapUSD             float64
+	allowCredentialProcess bool
+}
+
+func isForbiddenLiveEndpointEnvKey(k string) bool {
+	if slices.Contains(forbiddenLiveEndpointEnvs, k) {
+		return true
+	}
+	if strings.HasPrefix(k, "AWS_ENDPOINT_URL") {
+		return true
+	}
+	if (strings.HasPrefix(k, "LMCLOUD_") || strings.HasPrefix(k, "LMAWS_")) && strings.Contains(k, "ENDPOINT") {
+		return true
+	}
+	return false
+}
+
+// isFixedLinkLocalCredHost returns true only for the fixed link-local IP literals
+// used by EC2 IMDSv2 (169.254.169.254, fd00:ec2::254), ECS task metadata (169.254.170.2),
+// and EKS Pod Identity (169.254.170.23, fd00:ec2::23).
+func isFixedLinkLocalCredHost(host string, allowIMDS bool) bool {
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil {
+		return false
+	}
+	if v4 := ip.To4(); v4 != nil {
+		if allowIMDS && v4.Equal(net.IPv4(169, 254, 169, 254)) {
+			return true
+		}
+		return v4.Equal(net.IPv4(169, 254, 170, 2)) || v4.Equal(net.IPv4(169, 254, 170, 23))
+	}
+	if allowIMDS && ip.Equal(net.ParseIP("fd00:ec2::254")) {
+		return true
+	}
+	return ip.Equal(net.ParseIP("fd00:ec2::23"))
+}
+
+func validateContainerFullURI(rawURI string) *hostkit.CloudError {
+	rawURI = strings.TrimSpace(rawURI)
+	if rawURI == "" {
+		return nil
+	}
+	u, err := url.Parse(rawURI)
+	if err != nil || u.Scheme != "http" || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
+		return hostkit.ProviderError(
+			hostkit.InvalidArgument,
+			0,
+			"LiveCredentialEndpointForbidden",
+			"AWS_CONTAINER_CREDENTIALS_FULL_URI must be an http:// URI to fixed link-local ECS/EKS metadata without userinfo, query, or fragment",
+		)
+	}
+	if port := u.Port(); port != "" && port != "80" {
+		return hostkit.ProviderError(
+			hostkit.InvalidArgument,
+			0,
+			"LiveCredentialEndpointForbidden",
+			fmt.Sprintf("AWS_CONTAINER_CREDENTIALS_FULL_URI port %q is not permitted in live mode", port),
+		)
+	}
+	host := u.Hostname()
+	if !isFixedLinkLocalCredHost(host, false) {
+		return hostkit.ProviderError(
+			hostkit.InvalidArgument,
+			0,
+			"LiveCredentialEndpointForbidden",
+			fmt.Sprintf("AWS_CONTAINER_CREDENTIALS_FULL_URI host %q is forbidden in live mode (only fixed link-local ECS/EKS addresses 169.254.170.2, 169.254.170.23, fd00:ec2::23 are allowed)", host),
+		)
+	}
+	return nil
 }
 
 func validateLiveGates(ctx context.Context, getenv func(string) string, opts *Options) (liveEnvConfig, *hostkit.CloudError) {
@@ -83,6 +176,24 @@ func validateLiveGates(ctx context.Context, getenv func(string) string, opts *Op
 				fmt.Sprintf("endpoint override via %s is forbidden in live mode", k),
 			)
 		}
+	}
+	for _, kv := range os.Environ() {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || strings.TrimSpace(v) == "" {
+			continue
+		}
+		if isForbiddenLiveEndpointEnvKey(k) && strings.TrimSpace(getenv(k)) != "" {
+			return liveEnvConfig{}, hostkit.ProviderError(
+				hostkit.InvalidArgument,
+				0,
+				"LiveEndpointOverrideForbidden",
+				fmt.Sprintf("endpoint override via %s is forbidden in live mode", k),
+			)
+		}
+	}
+
+	if cerr := validateContainerFullURI(getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI")); cerr != nil {
+		return liveEnvConfig{}, cerr
 	}
 
 	acct := strings.TrimSpace(getenv("LMAWS_LIVE_ACCOUNT"))
@@ -188,15 +299,18 @@ func validateLiveGates(ctx context.Context, getenv func(string) string, opts *Op
 		runID = strings.TrimSpace(getenv("LMCLOUD_RUN_ID"))
 	}
 
+	allowCredProc := strings.TrimSpace(getenv("LMAWS_LIVE_ALLOW_CREDENTIAL_PROCESS")) == "1"
+
 	return liveEnvConfig{
-		account:    acct,
-		region:     reg,
-		runID:      runID,
-		journalDir: jDir,
-		policyPath: polPath,
-		policyHash: strings.TrimSpace(getenv("LMCLOUD_POLICY_SHA256")),
-		principal:  strings.TrimSpace(getenv("LMAWS_LIVE_PRINCIPAL")),
-		costCapUSD: costCap,
+		account:                acct,
+		region:                 reg,
+		runID:                  runID,
+		journalDir:             jDir,
+		policyPath:             polPath,
+		policyHash:             strings.TrimSpace(getenv("LMCLOUD_POLICY_SHA256")),
+		principal:              strings.TrimSpace(getenv("LMAWS_LIVE_PRINCIPAL")),
+		costCapUSD:             costCap,
+		allowCredentialProcess: allowCredProc,
 	}, nil
 }
 
@@ -209,16 +323,261 @@ func stage1MutationDisabledErr(op string) *hostkit.CloudError {
 	)
 }
 
-// liveEndpointGuardTransport enforces at the HTTP transport boundary that every
-// outgoing business request in Stage 1 live mode:
-//  1. Uses https:// with no userinfo or fragment.
-//  2. Targets only the canonical AWS endpoints in the approved region (sts, s3, sqs).
-//  3. Carries a non-empty SigV4 Authorization header (AWS4-HMAC-SHA256).
-//  4. Executes only Stage 1 read-only operations (never PUT/DELETE, never S3 GetObject,
-//     and never mutating or message-consuming SQS actions).
-type liveEndpointGuardTransport struct {
+func liveEgressNanoUSD(nBytes int64) int64 {
+	if nBytes <= 0 {
+		return 0
+	}
+	num := float64(nBytes) * float64(liveEgressGiBNanoUSD)
+	nano := int64(math.Ceil(num / float64(liveBytesPerGiB)))
+	if nano < 1 {
+		nano = 1
+	}
+	return nano
+}
+
+func parseStrictQuery(rawQuery string) (url.Values, error) {
+	if rawQuery == "" {
+		return url.Values{}, nil
+	}
+	if strings.Contains(rawQuery, ";") {
+		return nil, errors.New("semicolon query separator is forbidden")
+	}
+	vals, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range vals {
+		if k == "" || len(v) != 1 {
+			return nil, fmt.Errorf("duplicate or empty query parameter %q", k)
+		}
+	}
+	return vals, nil
+}
+
+func hasOnlyAllowedKeys(vals url.Values, allowed ...string) bool {
+	for k := range vals {
+		if !slices.Contains(allowed, k) {
+			return false
+		}
+	}
+	return true
+}
+
+func validateHostAuthority(req *http.Request) (string, error) {
+	if req == nil || req.URL == nil {
+		return "", errors.New("nil request or URL")
+	}
+	if req.URL.User != nil || req.URL.Fragment != "" || req.URL.Opaque != "" {
+		return "", errors.New("refused URL with userinfo, opaque part, or fragment")
+	}
+	host := strings.ToLower(req.URL.Hostname())
+	if host == "" {
+		return "", errors.New("refused empty URL host")
+	}
+	if req.Host != "" {
+		reqHost := strings.ToLower(req.Host)
+		urlHost := strings.ToLower(req.URL.Host)
+		if reqHost != urlHost && reqHost != host {
+			return "", fmt.Errorf("refused conflicting Host header %q vs URL host %q", req.Host, req.URL.Host)
+		}
+	}
+	return host, nil
+}
+
+// liveCredGuardTransport enforces the Stage 1 endpoint allowlist on all HTTP
+// traffic performed by AWS credential providers (IMDSv2, ECS/EKS container
+// credentials, STS AssumeRole / AssumeRoleWithWebIdentity, SSO / SSO-OIDC):
+//  1. Fixed link-local HTTP addresses only for IMDS (169.254.169.254, fd00:ec2::254)
+//     and ECS/EKS container metadata (169.254.170.2, 169.254.170.23, fd00:ec2::23).
+//  2. HTTPS only to approved *.amazonaws.com STS / SSO / OIDC endpoints.
+//  3. Bounded response bodies (<= 64 KiB) to prevent memory exhaustion.
+type liveCredGuardTransport struct {
 	region string
 	base   http.RoundTripper
+}
+
+func isAllowedCredAWSHost(host string) bool {
+	if host == "sts.amazonaws.com" {
+		return true
+	}
+	for _, prefix := range []string{"sts.", "portal.sso.", "sso.", "oidc."} {
+		if strings.HasPrefix(host, prefix) && strings.HasSuffix(host, ".amazonaws.com") {
+			mid := strings.TrimSuffix(strings.TrimPrefix(host, prefix), ".amazonaws.com")
+			if mid != "" && !strings.Contains(mid, ".") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (t *liveCredGuardTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	host, err := validateHostAuthority(req)
+	if err != nil {
+		return nil, fmt.Errorf("live credential transport: %w", err)
+	}
+	scheme := strings.ToLower(req.URL.Scheme)
+	port := req.URL.Port()
+
+	switch scheme {
+	case "http":
+		if port != "" && port != "80" {
+			return nil, fmt.Errorf("live credential transport refused HTTP port %q", port)
+		}
+		if !isFixedLinkLocalCredHost(host, true) {
+			return nil, fmt.Errorf("live credential transport refused non-link-local HTTP host %q", host)
+		}
+		ip := net.ParseIP(strings.Trim(host, "[]"))
+		isIMDS := (ip.To4() != nil && ip.To4().Equal(net.IPv4(169, 254, 169, 254))) || ip.Equal(net.ParseIP("fd00:ec2::254"))
+		if isIMDS {
+			if req.Method == http.MethodPut {
+				if req.URL.Path != "/latest/api/token" || req.URL.RawQuery != "" {
+					return nil, fmt.Errorf("live credential transport refused IMDS PUT path %q", req.URL.Path)
+				}
+			} else if req.Method == http.MethodGet {
+				if !strings.HasPrefix(req.URL.Path, "/latest/meta-data/iam/security-credentials") || req.URL.RawQuery != "" {
+					return nil, fmt.Errorf("live credential transport refused IMDS GET path %q", req.URL.Path)
+				}
+			} else {
+				return nil, fmt.Errorf("live credential transport refused IMDS method %s", req.Method)
+			}
+		} else {
+			if req.Method != http.MethodGet {
+				return nil, fmt.Errorf("live credential transport refused container metadata method %s", req.Method)
+			}
+		}
+
+	case "https":
+		if port != "" && port != "443" {
+			return nil, fmt.Errorf("live credential transport refused HTTPS port %q", port)
+		}
+		if hostkit.IsLoopbackHost(host) || net.ParseIP(host) != nil {
+			return nil, fmt.Errorf("live credential transport refused loopback or IP host %q", host)
+		}
+		if !isAllowedCredAWSHost(host) {
+			return nil, fmt.Errorf("live credential transport refused unapproved HTTPS host %q", host)
+		}
+		if host == "sts.amazonaws.com" || strings.HasPrefix(host, "sts.") {
+			if req.Method != http.MethodPost || (req.URL.Path != "" && req.URL.Path != "/") || req.URL.RawQuery != "" {
+				return nil, errors.New("live credential transport refused malformed STS credential request")
+			}
+			if req.Body == nil {
+				return nil, errors.New("live credential transport refused empty STS credential request body")
+			}
+			b, rerr := io.ReadAll(io.LimitReader(req.Body, 16*1024+1))
+			if rerr != nil {
+				return nil, rerr
+			}
+			if len(b) > 16*1024 {
+				return nil, errors.New("live credential transport refused oversized STS request body")
+			}
+			req.Body = io.NopCloser(bytes.NewReader(b))
+			vals, perr := parseStrictQuery(string(b))
+			if perr != nil {
+				return nil, fmt.Errorf("live credential transport refused invalid STS form body: %w", perr)
+			}
+			act := vals.Get("Action")
+			if act != "AssumeRole" && act != "AssumeRoleWithWebIdentity" {
+				return nil, fmt.Errorf("live credential transport refused STS action %q", act)
+			}
+		}
+
+	default:
+		return nil, fmt.Errorf("live credential transport refused scheme %q", req.URL.Scheme)
+	}
+
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	resp, err := base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp != nil && resp.Body != nil {
+		resp.Body = &boundedResponseBody{
+			rc:       resp.Body,
+			maxBytes: maxLiveSmallRespBodyBytes,
+		}
+	}
+	return resp, nil
+}
+
+type respBytesTrackerKey struct{}
+
+type respBytesTracker struct {
+	mu           sync.Mutex
+	bytesRead    int64
+	completedEOF bool
+	tooLarge     bool
+}
+
+func (tr *respBytesTracker) record(n int64, eof, tooLarge bool) {
+	if tr == nil {
+		return
+	}
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	tr.bytesRead += n
+	if eof {
+		tr.completedEOF = true
+	}
+	if tooLarge {
+		tr.tooLarge = true
+	}
+}
+
+func (tr *respBytesTracker) snapshot() (int64, bool, bool) {
+	if tr == nil {
+		return 0, true, false
+	}
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	return tr.bytesRead, tr.completedEOF, tr.tooLarge
+}
+
+type boundedResponseBody struct {
+	rc       io.ReadCloser
+	maxBytes int64
+	readSoFar int64
+	tracker  *respBytesTracker
+	done     bool
+}
+
+func (b *boundedResponseBody) Read(p []byte) (int, error) {
+	n, err := b.rc.Read(p)
+	if n > 0 {
+		b.readSoFar += int64(n)
+		if b.maxBytes >= 0 && b.readSoFar > b.maxBytes {
+			b.done = true
+			b.tracker.record(int64(n), false, true)
+			return n, ErrLiveResponseTooLarge
+		}
+		b.tracker.record(int64(n), false, false)
+	}
+	if errors.Is(err, io.EOF) && !b.done {
+		b.done = true
+		b.tracker.record(0, true, false)
+	}
+	return n, err
+}
+
+func (b *boundedResponseBody) Close() error {
+	return b.rc.Close()
+}
+
+// liveEndpointGuardTransport enforces at the HTTP transport boundary that every
+// outgoing business request in Stage 1 live mode:
+//  1. Uses https:// on standard port 443 with no userinfo, fragment, or Host mismatch.
+//  2. Targets only the canonical AWS endpoints in the approved region (sts, s3, sqs).
+//  3. Carries a single non-empty SigV4 Authorization header (AWS4-HMAC-SHA256).
+//  4. Parses query/form/JSON strictly (no duplicates, no unknown params, no object-path GETs).
+//  5. Requires X-Amz-Expected-Bucket-Owner=<account> on all bucket-scoped S3 calls.
+//  6. Bounds response body size and tracks response egress bytes.
+type liveEndpointGuardTransport struct {
+	region  string
+	account string
+	base    http.RoundTripper
 }
 
 func isAllowedLiveS3Host(host, region string) bool {
@@ -237,25 +596,64 @@ func isAllowedLiveS3Host(host, region string) bool {
 	return false
 }
 
+func validateSQSJSONBody(target string, body []byte) error {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return errors.New("empty SQS JSON body")
+	}
+	var raw map[string]json.RawMessage
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&raw); err != nil {
+		return fmt.Errorf("invalid SQS JSON payload: %w", err)
+	}
+	if dec.More() {
+		return errors.New("trailing data in SQS JSON payload")
+	}
+	switch target {
+	case "AmazonSQS.ListQueues":
+		for k := range raw {
+			if k != "MaxResults" && k != "NextToken" && k != "QueueNamePrefix" {
+				return fmt.Errorf("unexpected field %q in ListQueues payload", k)
+			}
+		}
+	case "AmazonSQS.GetQueueUrl":
+		if _, ok := raw["QueueName"]; !ok {
+			return errors.New("missing QueueName in GetQueueUrl payload")
+		}
+		for k := range raw {
+			if k != "QueueName" && k != "QueueOwnerAWSAccountId" {
+				return fmt.Errorf("unexpected field %q in GetQueueUrl payload", k)
+			}
+		}
+	default:
+		return fmt.Errorf("unapproved SQS target %q", target)
+	}
+	return nil
+}
+
 func (t *liveEndpointGuardTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req == nil || req.URL == nil {
-		return nil, errors.New("live transport: nil request or URL")
+	host, err := validateHostAuthority(req)
+	if err != nil {
+		return nil, fmt.Errorf("live transport: %w", err)
 	}
 	if !strings.EqualFold(req.URL.Scheme, "https") {
 		return nil, fmt.Errorf("live transport refused non-HTTPS scheme %q", req.URL.Scheme)
 	}
-	if req.URL.User != nil || req.URL.Fragment != "" {
-		return nil, errors.New("live transport refused URL with userinfo or fragment")
+	if port := req.URL.Port(); port != "" && port != "443" {
+		return nil, fmt.Errorf("live transport refused unexpected port %q", port)
 	}
-	host := strings.ToLower(req.URL.Hostname())
-	if host == "" || hostkit.IsLoopbackHost(host) {
-		return nil, fmt.Errorf("live transport refused loopback or empty host %q", host)
+	if hostkit.IsLoopbackHost(host) {
+		return nil, fmt.Errorf("live transport refused loopback host %q", host)
 	}
 	if ip := net.ParseIP(host); ip != nil {
 		return nil, fmt.Errorf("live transport refused raw IP literal %q", host)
 	}
 
-	auth := strings.TrimSpace(req.Header.Get("Authorization"))
+	authHeaders := req.Header.Values("Authorization")
+	if len(authHeaders) != 1 {
+		return nil, errors.New("live transport refused request without a single Authorization header")
+	}
+	auth := strings.TrimSpace(authHeaders[0])
 	if !strings.HasPrefix(auth, "AWS4-HMAC-SHA256 ") ||
 		!strings.Contains(auth, "Credential=") ||
 		!strings.Contains(auth, "Signature=") {
@@ -264,42 +662,102 @@ func (t *liveEndpointGuardTransport) RoundTrip(req *http.Request) (*http.Respons
 
 	stsHost := "sts." + t.region + ".amazonaws.com"
 	sqsHost := "sqs." + t.region + ".amazonaws.com"
+	maxRespBytes := maxLiveResponseBodyBytes
 
 	switch {
 	case host == stsHost || host == "sts.amazonaws.com":
 		if req.Method != http.MethodPost {
 			return nil, fmt.Errorf("live transport refused STS method %s", req.Method)
 		}
-		if req.Body != nil {
-			b, err := io.ReadAll(io.LimitReader(req.Body, 64*1024))
-			if err != nil {
-				return nil, err
-			}
-			req.Body = io.NopCloser(bytes.NewReader(b))
-			if !strings.Contains(string(b), "Action=GetCallerIdentity") {
-				return nil, errors.New("live transport refused STS action other than GetCallerIdentity")
+		if (req.URL.Path != "" && req.URL.Path != "/") || (req.URL.RawPath != "" && req.URL.RawPath != "/") {
+			return nil, fmt.Errorf("live transport refused STS path %q", req.URL.Path)
+		}
+		if req.URL.RawQuery != "" {
+			return nil, errors.New("live transport refused STS query parameters")
+		}
+		if req.Body == nil {
+			return nil, errors.New("live transport refused empty STS body")
+		}
+		b, err := io.ReadAll(io.LimitReader(req.Body, 16*1024+1))
+		if err != nil {
+			return nil, err
+		}
+		if len(b) > 16*1024 {
+			return nil, errors.New("live transport refused oversized STS body")
+		}
+		req.Body = io.NopCloser(bytes.NewReader(b))
+		vals, perr := parseStrictQuery(string(b))
+		if perr != nil {
+			return nil, fmt.Errorf("live transport refused malformed STS body: %w", perr)
+		}
+		if vals.Get("Action") != "GetCallerIdentity" || !hasOnlyAllowedKeys(vals, "Action", "Version") {
+			return nil, errors.New("live transport refused STS action other than exact GetCallerIdentity")
+		}
+		maxRespBytes = maxLiveSmallRespBodyBytes
+
+	case isAllowedLiveS3Host(host, t.region):
+		isRootServiceHost := host == "s3."+t.region+".amazonaws.com" || host == "s3.amazonaws.com"
+		if strings.Contains(req.URL.Path, "..") || strings.Contains(req.URL.RawPath, "..") || strings.Contains(req.URL.Path, "\\") {
+			return nil, errors.New("live transport refused S3 path traversal segment")
+		}
+		vals, perr := parseStrictQuery(req.URL.RawQuery)
+		if perr != nil {
+			return nil, fmt.Errorf("live transport refused malformed S3 query: %w", perr)
+		}
+		if !isRootServiceHost && t.account != "" {
+			ownerHdr := strings.TrimSpace(req.Header.Get("X-Amz-Expected-Bucket-Owner"))
+			if ownerHdr != t.account {
+				return nil, fmt.Errorf("live transport refused S3 bucket request without X-Amz-Expected-Bucket-Owner=%s", t.account)
 			}
 		}
 
-	case isAllowedLiveS3Host(host, t.region):
 		switch req.Method {
 		case http.MethodHead:
-			// HeadBucket and HeadObject are allowed.
-		case http.MethodGet:
-			// Allowed S3 GETs in Stage 1:
-			//  - ListBuckets: GET / on s3.<region>.amazonaws.com
-			//  - ListObjectsV2: GET with list-type=2
-			//  - GetBucketLocation (403 auth-vs-permission probe): GET with ?location
-			isRootServiceHost := host == "s3."+t.region+".amazonaws.com" || host == "s3.amazonaws.com"
-			q := req.URL.Query()
-			rawQ := req.URL.RawQuery
-			isListBuckets := isRootServiceHost && (req.URL.Path == "" || req.URL.Path == "/") &&
-				(rawQ == "" || q.Get("x-id") == "ListBuckets" || q.Has("continuation-token") || q.Has("max-buckets"))
-			isListObjects := q.Get("list-type") == "2"
-			isGetLocation := q.Has("location") || rawQ == "location" || strings.HasPrefix(rawQ, "location&") || strings.Contains(rawQ, "&location")
-			if !isListBuckets && !isListObjects && !isGetLocation {
-				return nil, errors.New("live transport refused S3 GetObject in stage 1 read-only mode")
+			if isRootServiceHost {
+				return nil, errors.New("live transport refused S3 HEAD on service root host")
 			}
+			if !hasOnlyAllowedKeys(vals, "x-id") {
+				return nil, errors.New("live transport refused unexpected query parameters on S3 HEAD")
+			}
+			if xid := vals.Get("x-id"); xid != "" && xid != "HeadBucket" && xid != "HeadObject" {
+				return nil, fmt.Errorf("live transport refused S3 HEAD x-id=%q", xid)
+			}
+			maxRespBytes = 0
+
+		case http.MethodGet:
+			// Every allowed Stage 1 S3 GET (ListBuckets, ListObjectsV2, GetBucketLocation)
+			// operates on "/" (never an object key path).
+			if (req.URL.Path != "" && req.URL.Path != "/") || (req.URL.RawPath != "" && req.URL.RawPath != "/") {
+				return nil, fmt.Errorf("live transport refused S3 object-path GET %q in stage 1 read-only mode", req.URL.Path)
+			}
+			if isRootServiceHost {
+				// ListBuckets only
+				if !hasOnlyAllowedKeys(vals, "x-id", "continuation-token", "max-buckets", "bucket-region", "prefix") {
+					return nil, errors.New("live transport refused unapproved query parameters on S3 ListBuckets")
+				}
+				if xid := vals.Get("x-id"); xid != "" && xid != "ListBuckets" {
+					return nil, fmt.Errorf("live transport refused S3 root GET with x-id=%q", xid)
+				}
+				maxRespBytes = maxLiveListRespBodyBytes
+			} else {
+				isListObjects := vals.Get("list-type") == "2" &&
+					!vals.Has("location") &&
+					hasOnlyAllowedKeys(vals, "list-type", "x-id", "prefix", "max-keys", "continuation-token", "delimiter", "encoding-type", "fetch-owner", "start-after") &&
+					(vals.Get("x-id") == "" || vals.Get("x-id") == "ListObjectsV2")
+				isGetLocation := vals.Has("location") &&
+					vals.Get("location") == "" &&
+					hasOnlyAllowedKeys(vals, "location", "x-id") &&
+					(vals.Get("x-id") == "" || vals.Get("x-id") == "GetBucketLocation")
+				if !isListObjects && !isGetLocation {
+					return nil, errors.New("live transport refused S3 GET in stage 1 read-only mode")
+				}
+				if isGetLocation {
+					maxRespBytes = maxLiveSmallRespBodyBytes
+				} else {
+					maxRespBytes = maxLiveResponseBodyBytes
+				}
+			}
+
 		default:
 			return nil, fmt.Errorf("live transport refused S3 mutating method %s in stage 1 read-only mode", req.Method)
 		}
@@ -308,19 +766,64 @@ func (t *liveEndpointGuardTransport) RoundTrip(req *http.Request) (*http.Respons
 		if req.Method != http.MethodPost {
 			return nil, fmt.Errorf("live transport refused SQS method %s", req.Method)
 		}
-		target := strings.TrimSpace(req.Header.Get("X-Amz-Target"))
-		allowedSQS := target == "AmazonSQS.ListQueues" || target == "AmazonSQS.GetQueueUrl"
-		if !allowedSQS && target == "" && req.Body != nil {
-			b, err := io.ReadAll(io.LimitReader(req.Body, 64*1024))
-			if err != nil {
-				return nil, err
-			}
-			req.Body = io.NopCloser(bytes.NewReader(b))
-			bodyStr := string(b)
-			allowedSQS = strings.Contains(bodyStr, "Action=ListQueues") || strings.Contains(bodyStr, "Action=GetQueueUrl")
+		if (req.URL.Path != "" && req.URL.Path != "/") || (req.URL.RawPath != "" && req.URL.RawPath != "/") {
+			return nil, fmt.Errorf("live transport refused SQS path %q", req.URL.Path)
 		}
-		if !allowedSQS {
-			return nil, fmt.Errorf("live transport refused SQS action %q in stage 1 read-only mode", target)
+		if req.URL.RawQuery != "" {
+			return nil, errors.New("live transport refused SQS query parameters")
+		}
+		targets := req.Header.Values("X-Amz-Target")
+		if len(targets) > 1 {
+			return nil, errors.New("live transport refused multiple X-Amz-Target headers")
+		}
+		if req.Body == nil {
+			return nil, errors.New("live transport refused empty SQS request body")
+		}
+		b, err := io.ReadAll(io.LimitReader(req.Body, 64*1024+1))
+		if err != nil {
+			return nil, err
+		}
+		if len(b) > 64*1024 {
+			return nil, errors.New("live transport refused oversized SQS request body")
+		}
+		req.Body = io.NopCloser(bytes.NewReader(b))
+
+		target := ""
+		if len(targets) == 1 {
+			target = strings.TrimSpace(targets[0])
+		}
+		if target != "" {
+			if target != "AmazonSQS.ListQueues" && target != "AmazonSQS.GetQueueUrl" {
+				return nil, fmt.Errorf("live transport refused SQS target %q in stage 1 read-only mode", target)
+			}
+			if err := validateSQSJSONBody(target, b); err != nil {
+				return nil, fmt.Errorf("live transport refused SQS body: %w", err)
+			}
+			if target == "AmazonSQS.GetQueueUrl" {
+				maxRespBytes = maxLiveSmallRespBodyBytes
+			} else {
+				maxRespBytes = maxLiveListRespBodyBytes
+			}
+		} else {
+			vals, perr := parseStrictQuery(string(b))
+			if perr != nil {
+				return nil, fmt.Errorf("live transport refused malformed SQS form body: %w", perr)
+			}
+			act := vals.Get("Action")
+			switch act {
+			case "ListQueues":
+				if !hasOnlyAllowedKeys(vals, "Action", "Version", "MaxResults", "NextToken", "QueueNamePrefix") {
+					return nil, errors.New("live transport refused unexpected SQS ListQueues form parameters")
+				}
+				maxRespBytes = maxLiveListRespBodyBytes
+			case "GetQueueUrl":
+				if vals.Get("QueueName") == "" || !hasOnlyAllowedKeys(vals, "Action", "Version", "QueueName", "QueueOwnerAWSAccountId") {
+					return nil, errors.New("live transport refused invalid SQS GetQueueUrl form parameters")
+				}
+				maxRespBytes = maxLiveSmallRespBodyBytes
+			default:
+				return nil, fmt.Errorf("live transport refused SQS action %q in stage 1 read-only mode", act)
+			}
 		}
 
 	default:
@@ -331,7 +834,31 @@ func (t *liveEndpointGuardTransport) RoundTrip(req *http.Request) (*http.Respons
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	return base.RoundTrip(req)
+	resp, err := base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	var tracker *respBytesTracker
+	if req.Context() != nil {
+		tracker, _ = req.Context().Value(respBytesTrackerKey{}).(*respBytesTracker)
+	}
+	if resp != nil && resp.Body != nil {
+		if req.Method == http.MethodHead {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			_ = resp.Body.Close()
+			resp.Body = http.NoBody
+			tracker.record(0, true, false)
+		} else {
+			resp.Body = &boundedResponseBody{
+				rc:       resp.Body,
+				maxBytes: maxRespBytes,
+				tracker:  tracker,
+			}
+		}
+	} else {
+		tracker.record(0, true, false)
+	}
+	return resp, nil
 }
 
 type liveAdapter struct {
@@ -382,8 +909,8 @@ func (l *liveAdapter) ensureSession(ctx context.Context, envCfg liveEnvConfig) (
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	key := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%.9f",
-		envCfg.account, envCfg.region, envCfg.runID, envCfg.journalDir, envCfg.policyPath, envCfg.principal, envCfg.costCapUSD)
+	key := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%.9f|%t",
+		envCfg.account, envCfg.region, envCfg.runID, envCfg.journalDir, envCfg.policyPath, envCfg.principal, envCfg.costCapUSD, envCfg.allowCredentialProcess)
 	if l.sess != nil && l.sessKey == key {
 		return l.sess, l.store, l.queue, nil
 	}
@@ -467,10 +994,11 @@ func (l *liveAdapter) ensureSession(ctx context.Context, envCfg liveEnvConfig) (
 		return nil, nil, nil, hostkit.ProviderError(hostkit.InvalidArgument, 0, "InvalidLivePolicy", err.Error())
 	}
 
-	raw, err := newLiveRawBackend(ctx, envCfg, l.opts, l.retry, l.baseCli)
+	raw, err := newLiveRawBackend(ctx, envCfg, l.opts, l.retry, l.baseCli, l.getenv)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	raw.maxTotalBytes = pol.Limits.MaxTotalBytes
 
 	sess, err := safety.OpenSession(ctx, safety.SessionConfig{
 		Policy:   pol,
@@ -654,6 +1182,31 @@ func (l *liveAdapter) ListQueues(ctx context.Context, token string) ([]string, s
 	return queue.ListQueues(ctx, token)
 }
 
+// liveCredentialsProvider wraps an aws.CredentialsProvider so that:
+//  1. Every retrieved credential (initial or refreshed) is registered for redaction before returning.
+//  2. Any provider failure returns a stable sanitized error that never includes raw process output,
+//     container authorization tokens, or profile secrets.
+type liveCredentialsProvider struct {
+	inner aws.CredentialsProvider
+	raw   *liveRawBackend
+}
+
+func (p *liveCredentialsProvider) Retrieve(ctx context.Context) (aws.Credentials, error) {
+	if p == nil || p.inner == nil {
+		return aws.Credentials{}, errors.New("live credential provider unavailable")
+	}
+	creds, err := p.inner.Retrieve(ctx)
+	if p.raw != nil {
+		p.raw.registerSecret(creds.SecretAccessKey)
+		p.raw.registerSecret(creds.SessionToken)
+		p.raw.registerSecret(creds.AccessKeyID)
+	}
+	if err != nil {
+		return aws.Credentials{}, errors.New("AWS credential provider failed to retrieve credentials")
+	}
+	return creds, nil
+}
+
 // liveRawBackend implements hostkit.ObjectStore, hostkit.Queue, and
 // safety.RecoveryAdapter against real AWS HTTPS endpoints in us-east-1.
 type liveRawBackend struct {
@@ -663,6 +1216,7 @@ type liveRawBackend struct {
 	businessClient *http.Client
 	retry          hostkit.RetryPolicy
 	sess           *safety.Session
+	maxTotalBytes  int64
 
 	mu              sync.Mutex
 	redactedSecrets []string
@@ -671,24 +1225,164 @@ type liveRawBackend struct {
 	authMode        string
 }
 
-func newLiveRawBackend(ctx context.Context, envCfg liveEnvConfig, opts *Options, retry hostkit.RetryPolicy, baseCli *http.Client) (*liveRawBackend, error) {
+func (r *liveRawBackend) preRegisterSecretsAndValidateConfig(ctx context.Context, envCfg liveEnvConfig, getenv func(string) string) *hostkit.CloudError {
+	for _, envSecret := range []string{
+		"AWS_SECRET_ACCESS_KEY",
+		"AWS_SESSION_TOKEN",
+		"AWS_SECURITY_TOKEN",
+		"AWS_ACCESS_KEY_ID",
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN",
+	} {
+		if v := strings.TrimSpace(getenv(envSecret)); v != "" {
+			r.registerSecret(v)
+		}
+		if v := strings.TrimSpace(os.Getenv(envSecret)); v != "" {
+			r.registerSecret(v)
+		}
+	}
+	for _, tokenFileEnv := range []string{"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", "AWS_WEB_IDENTITY_TOKEN_FILE"} {
+		for _, p := range []string{strings.TrimSpace(getenv(tokenFileEnv)), strings.TrimSpace(os.Getenv(tokenFileEnv))} {
+			if p != "" {
+				if data, err := os.ReadFile(p); err == nil {
+					r.registerSecret(strings.TrimSpace(string(data)))
+				}
+			}
+		}
+	}
+
+	var cfgFiles []string
+	if cf := strings.TrimSpace(getenv("AWS_CONFIG_FILE")); cf != "" {
+		cfgFiles = append(cfgFiles, cf)
+	} else if cf := strings.TrimSpace(os.Getenv("AWS_CONFIG_FILE")); cf != "" {
+		cfgFiles = append(cfgFiles, cf)
+	}
+	var credFiles []string
+	if scf := strings.TrimSpace(getenv("AWS_SHARED_CREDENTIALS_FILE")); scf != "" {
+		credFiles = append(credFiles, scf)
+	} else if scf := strings.TrimSpace(os.Getenv("AWS_SHARED_CREDENTIALS_FILE")); scf != "" {
+		credFiles = append(credFiles, scf)
+	}
+
+	for _, f := range append(slices.Clone(cfgFiles), credFiles...) {
+		if data, err := os.ReadFile(f); err == nil {
+			for _, m := range iniSecretPattern.FindAllStringSubmatch(string(data), -1) {
+				if len(m) >= 3 {
+					r.registerSecret(m[2])
+				}
+			}
+			for _, m := range jsonSecretPattern.FindAllStringSubmatch(string(data), -1) {
+				if len(m) >= 3 {
+					r.registerSecret(m[2])
+				}
+			}
+		}
+	}
+
+	profile := strings.TrimSpace(getenv("AWS_PROFILE"))
+	if profile == "" {
+		profile = strings.TrimSpace(getenv("AWS_DEFAULT_PROFILE"))
+	}
+	hasStaticEnvCreds := strings.TrimSpace(getenv("AWS_ACCESS_KEY_ID")) != "" &&
+		strings.TrimSpace(getenv("AWS_SECRET_ACCESS_KEY")) != "" &&
+		profile == ""
+
+	// Load and inspect SharedConfig when shared profile resolution can be used.
+	if !hasStaticEnvCreds || len(cfgFiles) > 0 || len(credFiles) > 0 || profile != "" {
+		profName := profile
+		if profName == "" {
+			profName = config.DefaultSharedConfigProfile
+		}
+		var loadOpts []func(*config.LoadSharedConfigOptions)
+		if len(cfgFiles) > 0 {
+			loadOpts = append(loadOpts, func(o *config.LoadSharedConfigOptions) { o.ConfigFiles = cfgFiles })
+		}
+		if len(credFiles) > 0 {
+			loadOpts = append(loadOpts, func(o *config.LoadSharedConfigOptions) { o.CredentialsFiles = credFiles })
+		}
+		if sc, err := config.LoadSharedConfigProfile(ctx, profName, loadOpts...); err == nil {
+			for cur := &sc; cur != nil; cur = cur.Source {
+				r.registerSecret(cur.Credentials.SecretAccessKey)
+				r.registerSecret(cur.Credentials.SessionToken)
+				r.registerSecret(cur.Credentials.AccessKeyID)
+				if cur.WebIdentityTokenFile != "" {
+					if data, rerr := os.ReadFile(cur.WebIdentityTokenFile); rerr == nil {
+						r.registerSecret(strings.TrimSpace(string(data)))
+					}
+				}
+				if !hasStaticEnvCreds {
+					if strings.TrimSpace(cur.BaseEndpoint) != "" {
+						return hostkit.ProviderError(
+							hostkit.InvalidArgument,
+							0,
+							"LiveEndpointOverrideForbidden",
+							"shared profile endpoint_url override is forbidden in live mode",
+						)
+					}
+					if strings.TrimSpace(cur.EC2IMDSEndpoint) != "" {
+						return hostkit.ProviderError(
+							hostkit.InvalidArgument,
+							0,
+							"LiveEndpointOverrideForbidden",
+							"shared profile ec2_metadata_service_endpoint override is forbidden in live mode",
+						)
+					}
+					if strings.TrimSpace(cur.LoginSession) != "" {
+						return hostkit.ProviderError(
+							hostkit.PermissionDenied,
+							0,
+							"LiveCredentialSourceForbidden",
+							"shared profile login_session is not an approved live credential source",
+						)
+					}
+					if strings.TrimSpace(cur.CredentialProcess) != "" && !envCfg.allowCredentialProcess {
+						return hostkit.ProviderError(
+							hostkit.PermissionDenied,
+							0,
+							"LiveCredentialProcessForbidden",
+							"credential_process is disabled in live mode unless LMAWS_LIVE_ALLOW_CREDENTIAL_PROCESS=1",
+						)
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func newLiveRawBackend(ctx context.Context, envCfg liveEnvConfig, opts *Options, retry hostkit.RetryPolicy, baseCli *http.Client, getenv func(string) string) (*liveRawBackend, error) {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
 	enforcedBase := hostkit.EnforceClient(baseCli)
 	businessCli := &http.Client{
 		Timeout:       enforcedBase.Timeout,
 		CheckRedirect: enforcedBase.CheckRedirect,
 		Transport: &liveEndpointGuardTransport{
+			region:  envCfg.region,
+			account: envCfg.account,
+			base:    enforcedBase.Transport,
+		},
+	}
+	credHTTPCli := &http.Client{
+		Timeout:       10 * time.Second,
+		CheckRedirect: enforcedBase.CheckRedirect,
+		Transport: &liveCredGuardTransport{
 			region: envCfg.region,
 			base:   enforcedBase.Transport,
 		},
 	}
 
-	// Auth/credential resolution client: if a test injected a custom HTTPClient,
-	// use businessCli so unit tests never contact external network or IMDS;
-	// otherwise use a bounded hostkit HTTP client so EC2 IMDSv2 / OIDC web identity
-	// can resolve credentials before business calls go through liveEndpointGuardTransport.
-	credHTTPCli := hostkit.NewHTTPClient(10 * time.Second)
-	if opts != nil && opts.HTTPClient != nil {
-		credHTTPCli = businessCli
+	raw := &liveRawBackend{
+		account:        envCfg.account,
+		region:         envCfg.region,
+		businessClient: businessCli,
+		retry:          retry,
+		authMode:       "imds_role",
+	}
+
+	if cerr := raw.preRegisterSecretsAndValidateConfig(ctx, envCfg, getenv); cerr != nil {
+		return nil, raw.sanitizeCloudError(cerr)
 	}
 
 	loadCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -700,34 +1394,40 @@ func newLiveRawBackend(ctx context.Context, envCfg liveEnvConfig, opts *Options,
 		config.WithRetryMaxAttempts(1),
 		config.WithClientLogMode(0),
 		config.WithHTTPClient(credHTTPCli),
+		config.WithProcessCredentialOptions(func(o *processcreds.Options) {
+			o.Timeout = 5 * time.Second
+		}),
 	)
 	if err != nil {
 		return nil, hostkit.ProviderError(
 			hostkit.Unauthenticated,
 			0,
 			"LiveConfigLoadFailed",
-			sanitizeStaticSecrets(err.Error()),
+			"failed to load live AWS configuration",
 		)
 	}
 	awsCfg.Region = envCfg.region
 	awsCfg.ClientLogMode = 0
 	awsCfg.RetryMaxAttempts = 1
 	awsCfg.Retryer = func() aws.Retryer { return aws.NopRetryer{} }
-
-	raw := &liveRawBackend{
-		account:        envCfg.account,
-		region:         envCfg.region,
-		awsCfg:         awsCfg,
-		businessClient: businessCli,
-		retry:          retry,
-		authMode:       "imds_role",
-	}
-	for _, envSecret := range []string{"AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN", "AWS_ACCESS_KEY_ID"} {
-		if v := strings.TrimSpace(os.Getenv(envSecret)); v != "" {
-			raw.registerSecret(v)
+	if awsCfg.Credentials != nil {
+		awsCfg.Credentials = &liveCredentialsProvider{
+			inner: awsCfg.Credentials,
+			raw:   raw,
 		}
 	}
+	raw.awsCfg = awsCfg
 	return raw, nil
+}
+
+func (r *liveRawBackend) ownerAccount() string {
+	r.mu.Lock()
+	acct := r.attestedAccount
+	r.mu.Unlock()
+	if acct != "" {
+		return acct
+	}
+	return r.account
 }
 
 func (r *liveRawBackend) registerSecret(s string) {
@@ -736,29 +1436,39 @@ func (r *liveRawBackend) registerSecret(s string) {
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if !slices.Contains(r.redactedSecrets, s) {
 		r.redactedSecrets = append(r.redactedSecrets, s)
 	}
+	r.mu.Unlock()
 }
 
 func sanitizeStaticSecrets(msg string) string {
-	for _, envKey := range []string{"AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN", "AWS_ACCESS_KEY_ID"} {
+	for _, envKey := range []string{
+		"AWS_SECRET_ACCESS_KEY",
+		"AWS_SESSION_TOKEN",
+		"AWS_SECURITY_TOKEN",
+		"AWS_ACCESS_KEY_ID",
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN",
+	} {
 		if v := strings.TrimSpace(os.Getenv(envKey)); len(v) >= 4 {
 			msg = strings.ReplaceAll(msg, v, "[redacted]")
 		}
 	}
+	msg = jsonSecretPattern.ReplaceAllString(msg, `"$1":"[redacted]"`)
+	msg = iniSecretPattern.ReplaceAllString(msg, `$1 = [redacted]`)
 	msg = awsAccessKeyPattern.ReplaceAllString(msg, "[redacted-key-id]")
 	return msg
 }
 
 func (r *liveRawBackend) sanitizeString(msg string) string {
-	r.mu.Lock()
-	secrets := slices.Clone(r.redactedSecrets)
-	r.mu.Unlock()
-	for _, s := range secrets {
-		if s != "" {
-			msg = strings.ReplaceAll(msg, s, "[redacted]")
+	if r != nil {
+		r.mu.Lock()
+		secrets := slices.Clone(r.redactedSecrets)
+		r.mu.Unlock()
+		for _, s := range secrets {
+			if s != "" {
+				msg = strings.ReplaceAll(msg, s, "[redacted]")
+			}
 		}
 	}
 	return sanitizeStaticSecrets(msg)
@@ -770,10 +1480,19 @@ func (r *liveRawBackend) sanitizeCloudError(ce *hostkit.CloudError) *hostkit.Clo
 	}
 	cp := *ce
 	cp.Message = r.sanitizeString(cp.Message)
+	cp.ProviderCode = r.sanitizeString(cp.ProviderCode)
 	return &cp
 }
 
 func (r *liveRawBackend) classifyLive(err error, sc scope) *hostkit.CloudError {
+	if errors.Is(err, ErrLiveResponseTooLarge) {
+		return hostkit.ProviderError(
+			hostkit.PermissionDenied,
+			0,
+			"LiveResponseTooLarge",
+			fmt.Sprintf("live response body exceeded maximum bound (%d bytes)", maxLiveResponseBodyBytes),
+		)
+	}
 	return r.sanitizeCloudError(classify(err, sc))
 }
 
@@ -807,16 +1526,47 @@ func (r *liveRawBackend) sqsClient() *sqs.Client {
 	})
 }
 
-// doLiveAWS executes an idempotent AWS read operation. Attempt 1 is already
-// reserved and settled by LiveGuard; if RetryPolicy triggers a retry attempt
-// (attempt > 0) after a transient 5xx/429, doLiveAWS reserves and settles an
-// additional durable attempt on the session's CostMeter and Journal BEFORE
-// dispatching the retry request.
-func (r *liveRawBackend) doLiveAWS(ctx context.Context, opName, kind, parent, name string, idempotent bool, op func(ctx context.Context) error) error {
+// doLiveAWS executes an idempotent AWS read operation with pre-dispatch
+// reservation of response egress cost & byte bounds and post-dispatch settlement
+// of actual response egress bytes (or full reserved amount on failed/truncated reads).
+func (r *liveRawBackend) doLiveAWS(ctx context.Context, opName, kind, parent, name string, maxRespBytes int64, idempotent bool, op func(ctx context.Context) error) error {
 	var lastCallErr error
 	r.retry.Do(ctx, idempotent, func(ctx context.Context, attempt int) hostkit.Attempt {
-		if attempt > 0 && r.sess != nil {
-			res, rerr := r.sess.Meter().ReserveAttempt(safety.AttemptPricingInput{Operation: opName})
+		var (
+			res       *safety.AttemptReservation
+			attemptID string
+			baseFee   int64
+		)
+		if r.sess != nil && (attempt > 0 || maxRespBytes > 0) {
+			if maxRespBytes > 0 {
+				maxTotal := r.maxTotalBytes
+				if maxTotal > 0 && r.sess.Journal().State().TotalPayloadBytes+maxRespBytes > maxTotal {
+					lastCallErr = hostkit.ProviderError(
+						hostkit.PermissionDenied,
+						0,
+						"LiveLimitExceeded",
+						fmt.Sprintf("projected response bytes (%d + %d) exceed max_total_bytes (%d)",
+							r.sess.Journal().State().TotalPayloadBytes, maxRespBytes, maxTotal),
+					)
+					return hostkit.Attempt{Status: http.StatusForbidden}
+				}
+			}
+			// On attempt == 0, GuardStore/GuardQueue already reserved the base request fee,
+			// so reserve only the conservative response-egress bound (via object_delete which
+			// has a 0 base request fee) before dispatch. On attempt > 0, reserve both the
+			// retry request fee and the response-egress bound.
+			pricingOp := "object_delete"
+			if attempt > 0 {
+				pricingOp = opName
+				if baseQuote, qerr := r.sess.Meter().QuoteAttempt(safety.AttemptPricingInput{Operation: opName}); qerr == nil {
+					baseFee = baseQuote.AttemptNanoUSD
+				}
+			}
+			var rerr error
+			res, rerr = r.sess.Meter().ReserveAttempt(safety.AttemptPricingInput{
+				Operation:   pricingOp,
+				EgressBytes: maxRespBytes,
+			})
 			if rerr != nil {
 				code := hostkit.PermissionDenied
 				pcode := "LiveCostCapExceeded"
@@ -828,24 +1578,55 @@ func (r *liveRawBackend) doLiveAWS(ctx context.Context, opName, kind, parent, na
 				return hostkit.Attempt{Status: http.StatusForbidden}
 			}
 			reservedNano := res.Quote().AttemptNanoUSD + res.Quote().CleanupReserveNanoUSD
-			attemptID, jerr := r.sess.Journal().BeginAttempt(kind, parent, name, opName+"_retry", reservedNano, 0)
+			reason := opName + "_egress"
+			if attempt > 0 {
+				reason = opName + "_retry"
+			}
+			var jerr error
+			attemptID, jerr = r.sess.Journal().BeginAttempt(kind, parent, name, reason, reservedNano, maxRespBytes)
 			if jerr != nil {
 				res.Commit(0, false)
 				lastCallErr = hostkit.ProviderError(hostkit.Internal, 0, "JournalWriteFailed", r.sanitizeString(jerr.Error()))
 				return hostkit.Attempt{Status: http.StatusInternalServerError}
 			}
-			lastCallErr = op(ctx)
-			charged := res.Commit(-1, false)
-			if serr := r.sess.Journal().SettleAttempt(attemptID, charged, false); serr != nil && lastCallErr == nil {
-				lastCallErr = hostkit.ProviderError(hostkit.Internal, 0, "JournalWriteFailed", r.sanitizeString(serr.Error()))
-				return hostkit.Attempt{Status: http.StatusInternalServerError}
+		}
+
+		tracker := &respBytesTracker{}
+		callCtx := context.WithValue(ctx, respBytesTrackerKey{}, tracker)
+		lastCallErr = op(callCtx)
+		actualBytes, completedEOF, tooLarge := tracker.snapshot()
+
+		if res != nil {
+			// Settle at actual egress cost only when the response stream completed cleanly
+			// to EOF within bounds; otherwise (transport error, timeout, or oversized body)
+			// settle at the full pre-dispatch reservation.
+			if completedEOF && !tooLarge {
+				actualNano := baseFee + liveEgressNanoUSD(actualBytes)
+				charged := res.Commit(actualNano, false)
+				if serr := r.sess.Journal().SettleAttempt(attemptID, charged, true); serr != nil {
+					lastCallErr = hostkit.ProviderError(hostkit.Internal, 0, "JournalWriteFailed", r.sanitizeString(serr.Error()))
+					return hostkit.Attempt{Status: http.StatusInternalServerError}
+				}
+				if actualBytes > 0 {
+					bID, berr := r.sess.Journal().BeginAttempt(kind, parent, name, opName+"_bytes", 0, actualBytes)
+					if berr == nil {
+						_ = r.sess.Journal().SettleAttempt(bID, 0, false)
+					}
+				}
+			} else {
+				charged := res.Commit(-1, false)
+				if serr := r.sess.Journal().SettleAttempt(attemptID, charged, false); serr != nil && lastCallErr == nil {
+					lastCallErr = hostkit.ProviderError(hostkit.Internal, 0, "JournalWriteFailed", r.sanitizeString(serr.Error()))
+					return hostkit.Attempt{Status: http.StatusInternalServerError}
+				}
 			}
-		} else {
-			lastCallErr = op(ctx)
 		}
 
 		if lastCallErr == nil {
 			return hostkit.Attempt{Status: http.StatusOK}
+		}
+		if errors.Is(lastCallErr, ErrLiveResponseTooLarge) {
+			return hostkit.Attempt{Status: http.StatusForbidden}
 		}
 		status, hdr := extractHTTPResponse(lastCallErr)
 		if status == 0 {
@@ -908,7 +1689,7 @@ func (r *liveRawBackend) AttestIdentity(ctx context.Context) (safety.AttestedIde
 			hostkit.Unauthenticated,
 			0,
 			"LiveCredentialsUnavailable",
-			r.sanitizeString(err.Error()),
+			"AWS credential chain failed to retrieve credentials",
 		)
 	}
 	r.registerSecret(creds.SecretAccessKey)
@@ -1043,8 +1824,12 @@ func (r *liveRawBackend) ClassifyAbsent(err error) safety.AbsenceClass {
 	}
 }
 
-func (r *liveRawBackend) QuoteAttempt(_ safety.AttemptPricingInput, base safety.AttemptQuote) (safety.AttemptQuote, error) {
-	return base, nil
+func (r *liveRawBackend) QuoteAttempt(in safety.AttemptPricingInput, base safety.AttemptQuote) (safety.AttemptQuote, error) {
+	q := base
+	if in.EgressBytes > 0 && in.Operation != "object_get" {
+		q.AttemptNanoUSD += liveEgressNanoUSD(in.EgressBytes)
+	}
+	return q, nil
 }
 
 // --- Stage 1 Read-Only S3 & SQS Implementations on liveRawBackend ---
@@ -1071,8 +1856,12 @@ func (r *liveRawBackend) GetObject(_ context.Context, _, _ string, _ int64) ([]b
 
 func (r *liveRawBackend) HeadBucket(ctx context.Context, name string) error {
 	cli := r.s3Client()
-	err := r.doLiveAWS(ctx, "bucket_exists", safety.KindBucket, "", name, true, func(ctx context.Context) error {
-		_, hErr := cli.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(name)})
+	owner := r.ownerAccount()
+	err := r.doLiveAWS(ctx, "bucket_exists", safety.KindBucket, "", name, 0, true, func(ctx context.Context) error {
+		_, hErr := cli.HeadBucket(ctx, &s3.HeadBucketInput{
+			Bucket:              aws.String(name),
+			ExpectedBucketOwner: aws.String(owner),
+		})
 		return hErr
 	})
 	if err == nil {
@@ -1083,8 +1872,11 @@ func (r *liveRawBackend) HeadBucket(ctx context.Context, name string) error {
 	// metadata probe so UNAUTHENTICATED vs PERMISSION_DENIED is classified from XML.
 	if status == http.StatusForbidden && !hasExplicitHeadAuthHeader(err) {
 		probeErr := r.runExtraMeteredRead(ctx, "bucket_exists", safety.KindBucket, "", name, "head_bucket_403_probe", func(ctx context.Context) error {
-			return r.doLiveAWS(ctx, "bucket_exists", safety.KindBucket, "", name, true, func(ctx context.Context) error {
-				_, pErr := cli.GetBucketLocation(ctx, &s3.GetBucketLocationInput{Bucket: aws.String(name)})
+			return r.doLiveAWS(ctx, "bucket_exists", safety.KindBucket, "", name, maxLiveSmallRespBodyBytes, true, func(ctx context.Context) error {
+				_, pErr := cli.GetBucketLocation(ctx, &s3.GetBucketLocationInput{
+					Bucket:              aws.String(name),
+					ExpectedBucketOwner: aws.String(owner),
+				})
 				return pErr
 			})
 		})
@@ -1107,12 +1899,15 @@ func (r *liveRawBackend) HeadBucket(ctx context.Context, name string) error {
 
 func (r *liveRawBackend) ListBuckets(ctx context.Context, token string) ([]string, string, error) {
 	cli := r.s3Client()
-	in := &s3.ListBucketsInput{}
+	in := &s3.ListBucketsInput{
+		MaxBuckets:   aws.Int32(maxLiveBucketListPageSize),
+		BucketRegion: aws.String(r.region),
+	}
 	if token != "" {
 		in.ContinuationToken = aws.String(token)
 	}
 	var out *s3.ListBucketsOutput
-	err := r.doLiveAWS(ctx, "bucket_list", safety.KindBucket, "", "", true, func(ctx context.Context) error {
+	err := r.doLiveAWS(ctx, "bucket_list", safety.KindBucket, "", "", maxLiveListRespBodyBytes, true, func(ctx context.Context) error {
 		var lErr error
 		out, lErr = cli.ListBuckets(ctx, in)
 		return lErr
@@ -1126,17 +1921,23 @@ func (r *liveRawBackend) ListBuckets(ctx context.Context, token string) ([]strin
 			names = append(names, *b.Name)
 		}
 	}
-	return names, strings.TrimSpace(aws.ToString(out.ContinuationToken)), nil
+	next := strings.TrimSpace(aws.ToString(out.ContinuationToken))
+	if token != "" && next == token {
+		return nil, "", hostkit.ProviderError(hostkit.Internal, 0, "StalledPagination", "pagination stalled: continuation token repeated")
+	}
+	return names, next, nil
 }
 
 func (r *liveRawBackend) HeadObject(ctx context.Context, bucket, key string) (hostkit.ObjectMeta, error) {
 	cli := r.s3Client()
+	owner := r.ownerAccount()
 	var out *s3.HeadObjectOutput
-	err := r.doLiveAWS(ctx, "object_head", safety.KindObject, bucket, key, true, func(ctx context.Context) error {
+	err := r.doLiveAWS(ctx, "object_head", safety.KindObject, bucket, key, 0, true, func(ctx context.Context) error {
 		var hErr error
 		out, hErr = cli.HeadObject(ctx, &s3.HeadObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
+			Bucket:              aws.String(bucket),
+			Key:                 aws.String(key),
+			ExpectedBucketOwner: aws.String(owner),
 		})
 		return hErr
 	})
@@ -1147,7 +1948,7 @@ func (r *liveRawBackend) HeadObject(ctx context.Context, bucket, key string) (ho
 			if ce.Absent == hostkit.AbsentBucket {
 				return hostkit.ObjectMeta{}, ce
 			}
-			// Disambiguate missing key vs missing bucket via a metered HeadBucket call.
+			// Disambuate missing key vs missing bucket via a metered HeadBucket call.
 			bErr := r.runExtraMeteredRead(ctx, "bucket_exists", safety.KindBucket, "", bucket, "head_object_404_bucket_probe", func(ctx context.Context) error {
 				return r.HeadBucket(ctx, bucket)
 			})
@@ -1192,10 +1993,14 @@ func (r *liveRawBackend) HeadObject(ctx context.Context, bucket, key string) (ho
 }
 
 func (r *liveRawBackend) ListObjects(ctx context.Context, bucket, prefix string, max int, token string) (hostkit.ObjectPage, error) {
+	if max <= 0 || max > maxLiveObjectListPageSize {
+		max = maxLiveObjectListPageSize
+	}
 	cli := r.s3Client()
 	in := &s3.ListObjectsV2Input{
-		Bucket:  aws.String(bucket),
-		MaxKeys: aws.Int32(int32(max)),
+		Bucket:              aws.String(bucket),
+		MaxKeys:             aws.Int32(int32(max)),
+		ExpectedBucketOwner: aws.String(r.ownerAccount()),
 	}
 	if prefix != "" {
 		in.Prefix = aws.String(prefix)
@@ -1203,14 +2008,26 @@ func (r *liveRawBackend) ListObjects(ctx context.Context, bucket, prefix string,
 	if token != "" {
 		in.ContinuationToken = aws.String(token)
 	}
+	estimatedMaxBytes := int64(max)*1350 + 8192
+	if estimatedMaxBytes > maxLiveResponseBodyBytes {
+		estimatedMaxBytes = maxLiveResponseBodyBytes
+	}
 	var out *s3.ListObjectsV2Output
-	err := r.doLiveAWS(ctx, "object_list", safety.KindObject, bucket, prefix, true, func(ctx context.Context) error {
+	err := r.doLiveAWS(ctx, "object_list", safety.KindObject, bucket, prefix, estimatedMaxBytes, true, func(ctx context.Context) error {
 		var lErr error
 		out, lErr = cli.ListObjectsV2(ctx, in)
 		return lErr
 	})
 	if err != nil {
 		return hostkit.ObjectPage{}, r.classifyLive(err, scopeBucket)
+	}
+	if len(out.Contents) > max {
+		return hostkit.ObjectPage{}, hostkit.ProviderError(
+			hostkit.PermissionDenied,
+			0,
+			"LiveListPageOverflow",
+			fmt.Sprintf("s3 ListObjectsV2 returned %d items exceeding requested max %d", len(out.Contents), max),
+		)
 	}
 	items := make([]hostkit.ObjectSummary, 0, len(out.Contents))
 	for _, obj := range out.Contents {
@@ -1297,10 +2114,11 @@ func validateLiveQueueURL(rawURL, region, account string) (string, error) {
 func (r *liveRawBackend) LookupQueue(ctx context.Context, name string) error {
 	cli := r.sqsClient()
 	var out *sqs.GetQueueUrlOutput
-	err := r.doLiveAWS(ctx, "queue_exists", safety.KindQueue, "", name, true, func(ctx context.Context) error {
+	err := r.doLiveAWS(ctx, "queue_exists", safety.KindQueue, "", name, maxLiveSmallRespBodyBytes, true, func(ctx context.Context) error {
 		var gErr error
 		out, gErr = cli.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{
-			QueueName: aws.String(name),
+			QueueName:              aws.String(name),
+			QueueOwnerAWSAccountId: aws.String(r.ownerAccount()),
 		})
 		return gErr
 	})
@@ -1311,7 +2129,7 @@ func (r *liveRawBackend) LookupQueue(ctx context.Context, name string) error {
 		}
 		return ce
 	}
-	qName, verr := validateLiveQueueURL(aws.ToString(out.QueueUrl), r.region, r.account)
+	qName, verr := validateLiveQueueURL(aws.ToString(out.QueueUrl), r.region, r.ownerAccount())
 	if verr != nil {
 		return hostkit.ProviderError(hostkit.Internal, 0, "InvalidLiveQueueURL", r.sanitizeString(verr.Error()))
 	}
@@ -1323,12 +2141,14 @@ func (r *liveRawBackend) LookupQueue(ctx context.Context, name string) error {
 
 func (r *liveRawBackend) ListQueues(ctx context.Context, token string) ([]string, string, error) {
 	cli := r.sqsClient()
-	in := &sqs.ListQueuesInput{}
+	in := &sqs.ListQueuesInput{
+		MaxResults: aws.Int32(maxLiveQueueListPageSize),
+	}
 	if token != "" {
 		in.NextToken = aws.String(token)
 	}
 	var out *sqs.ListQueuesOutput
-	err := r.doLiveAWS(ctx, "queue_list", safety.KindQueue, "", "", true, func(ctx context.Context) error {
+	err := r.doLiveAWS(ctx, "queue_list", safety.KindQueue, "", "", maxLiveListRespBodyBytes, true, func(ctx context.Context) error {
 		var lErr error
 		out, lErr = cli.ListQueues(ctx, in)
 		return lErr
@@ -1336,13 +2156,25 @@ func (r *liveRawBackend) ListQueues(ctx context.Context, token string) ([]string
 	if err != nil {
 		return nil, "", r.classifyLive(err, scopeQueue)
 	}
+	if int32(len(out.QueueUrls)) > maxLiveQueueListPageSize {
+		return nil, "", hostkit.ProviderError(
+			hostkit.PermissionDenied,
+			0,
+			"LiveListPageOverflow",
+			fmt.Sprintf("sqs ListQueues returned %d items exceeding MaxResults %d", len(out.QueueUrls), maxLiveQueueListPageSize),
+		)
+	}
 	names := make([]string, 0, len(out.QueueUrls))
 	for _, u := range out.QueueUrls {
-		qName, verr := validateLiveQueueURL(u, r.region, r.account)
+		qName, verr := validateLiveQueueURL(u, r.region, r.ownerAccount())
 		if verr != nil {
 			return nil, "", hostkit.ProviderError(hostkit.Internal, 0, "InvalidLiveQueueURL", r.sanitizeString(verr.Error()))
 		}
 		names = append(names, qName)
 	}
-	return names, strings.TrimSpace(aws.ToString(out.NextToken)), nil
+	next := strings.TrimSpace(aws.ToString(out.NextToken))
+	if token != "" && next == token {
+		return nil, "", hostkit.ProviderError(hostkit.Internal, 0, "StalledPagination", "pagination stalled: next token repeated")
+	}
+	return names, next, nil
 }
