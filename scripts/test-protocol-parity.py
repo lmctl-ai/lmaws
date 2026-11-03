@@ -2,6 +2,7 @@
 """Compare five deterministic offline operations with pre-migration host results."""
 import hashlib
 import json
+import os
 import pathlib
 import struct
 import subprocess
@@ -19,7 +20,10 @@ expected = {
 }
 
 def run(command, *args):
-    return subprocess.run([*command, *map(str, args)], capture_output=True, check=True).stdout
+    argv=list(command)
+    if os.name=="nt" and argv and argv[0].lower().endswith(".cmd"):
+        argv=["cmd.exe","/c",*argv]
+    return subprocess.run([*argv, *map(str, args)], capture_output=True, check=True).stdout
 
 def u16(value): return struct.pack(">H", value)
 def u32(value): return struct.pack(">I", value)
