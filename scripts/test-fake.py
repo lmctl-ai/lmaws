@@ -259,7 +259,8 @@ def run(host):
     threading.Thread(target=server.serve_forever,daemon=True).start()
     env=dict(os.environ,LMAWS_FAST_WAITS="1",LMAWS_ENDPOINT="http://127.0.0.1:%d"%server.server_port,AWS_EC2_METADATA_DISABLED="true",AWS_PROFILE="lmaws-fake-no-such-profile")
     env.pop("LMAWS_LIVE",None)
-    runner=shutil.which("lmscript");assert runner,"lmscript missing"
+    runner=shutil.which("lmscript.cmd" if os.name=="nt" else "lmscript");assert runner,"lmscript missing"
+    runner_command=["cmd.exe","/c",runner] if os.name=="nt" and runner.lower().endswith(".cmd") else [runner]
     try:
         with tempfile.TemporaryDirectory(prefix="lmaws-fake-") as td:
             work=pathlib.Path(td)
@@ -270,7 +271,7 @@ def run(host):
                 run_env=dict(env,**(extra or {}),**(extra_env or {}))
                 run_env['PATH']=str(host.parent)+os.pathsep+run_env.get('PATH','')
                 if extra_flags and '--apply' in extra_flags:run_env['LMAWS_APPLY']='1'
-                result=subprocess.run([runner,str(src)],cwd=work,env=run_env,text=True,encoding="utf-8",capture_output=True,timeout=180)
+                result=subprocess.run(runner_command+[str(src)],cwd=work,env=run_env,text=True,encoding="utf-8",capture_output=True,timeout=180)
                 assert result.returncode==0,(name,result.returncode,result.stdout,result.stderr,Fake.requests[-8:])
                 assert "TOP_SECRET_SENTINEL" not in result.stdout+result.stderr,"AWS error message leaked"
                 return result

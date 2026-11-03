@@ -7,6 +7,7 @@ from xml.sax.saxutils import escape
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 HOST=pathlib.Path(os.environ.get('LMAWS_TEST_HOST',str(ROOT/'target/jvm-bin/lmaws'))).resolve()
 LMSCRIPT=__import__('shutil').which('lmscript.cmd' if os.name=='nt' else 'lmscript') or 'lmscript'
+LMSCRIPT_CMD=['cmd.exe','/c',LMSCRIPT] if os.name=='nt' and LMSCRIPT.lower().endswith('.cmd') else [LMSCRIPT]
 BUCKET='lmaws-lmfiles-run01';RUN='run01';NS='http://s3.amazonaws.com/doc/2006-03-01/'
 class Model:
  def __init__(self,mode='ok'):
@@ -104,7 +105,7 @@ class Harness:
   self.n+=1;source=self.work/f'code{self.n}.lms'
   source.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(ok).lower()+');\n')
   env=dict(os.environ,AWS_PROFILE=profile,AWS_DEFAULT_PROFILE=profile,AWS_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_LIVE='1',LMAWS_ENDPOINT=f'http://127.0.0.1:{self.server.server_port}',LMAWS_LEDGER_DIR=str(self.work/'ledgers'),LMAWS_MAX_COST_USD=cap,CI='true',PATH=str(HOST.parent)+os.pathsep+os.environ.get('PATH',''))
-  command=[LMSCRIPT,str(source)]
+  command=LMSCRIPT_CMD+[str(source)]
   if background:return subprocess.Popen(command,env=env,cwd=self.work,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
   result=subprocess.run(command,env=env,cwd=self.work,capture_output=True,text=True,timeout=180)
   assert result.returncode==0,result.stdout+result.stderr

@@ -3,6 +3,8 @@
 import hashlib,json,os,pathlib,struct,subprocess,sys,tempfile,shutil
 root=pathlib.Path(__file__).resolve().parents[1];host=pathlib.Path(sys.argv[1]).resolve();env=dict(os.environ);env.pop('LMAWS_LIVE',None)
 with host.open('rb') as binary: is_elf=binary.read(4)==b'\x7fELF'
+LMSCRIPT=shutil.which('lmscript.cmd' if os.name=='nt' else 'lmscript') or 'lmscript'
+def script_command(*args): return (['cmd.exe','/c',LMSCRIPT] if os.name=='nt' and LMSCRIPT.lower().endswith('.cmd') else [LMSCRIPT])+list(args)
 def run(args,code=0,extra=None):
  p=subprocess.run(([str(host)] if host.suffix!='.cmd' else ['cmd.exe','/c',str(host)])+args,env=dict(env,**(extra or {})),text=True,encoding="utf-8",capture_output=True,timeout=120)
  assert p.returncode==code,(args,p.returncode,p.stdout[-1200:],p.stderr[-1200:]);return p
@@ -11,9 +13,9 @@ assert run(['--notices']).stdout==(root/'THIRD_PARTY_NOTICES').read_text(encodin
 assert 'LMAWS_MAX_MEMORY_MB' in run(['--help']).stdout
 assert '\u2014 AWS SDK' in run(['--help'],extra={'JAVA_TOOL_OPTIONS':'-Dstdout.encoding=windows-1252 -Dstderr.encoding=windows-1252'}).stdout
 schema=run(['--lmcode-schema','--json']).stdout;assert schema==(root/'schema/lmaws.dsl.json').read_text(encoding="utf-8");json.loads(schema)
-p=subprocess.run([shutil.which('lmscript'),'--lmcode-signatures',str(root/'schema/lmaws.dsl.json')],text=True,encoding="utf-8",capture_output=True,timeout=45);assert p.returncode==0,p.stderr
+p=subprocess.run(script_command('--lmcode-signatures',str(root/'schema/lmaws.dsl.json')),text=True,encoding="utf-8",capture_output=True,timeout=45);assert p.returncode==0,p.stderr
 assert p.stdout==run(['--lmcode-signatures']).stdout,'schema/registry signature mismatch'
-p=subprocess.run([shutil.which('lmscript'),'--lmcode-signatures',str(root/'schema/lmaws.dsl.json'),'--without-std'],text=True,encoding="utf-8",capture_output=True,timeout=45);assert p.returncode==0,p.stderr
+p=subprocess.run(script_command('--lmcode-signatures',str(root/'schema/lmaws.dsl.json'),'--without-std'),text=True,encoding="utf-8",capture_output=True,timeout=45);assert p.returncode==0,p.stderr
 assert p.stdout==run(['--lmcode-signatures','--without-std']).stdout,'host-only schema/registry signature mismatch'
 assert 'str_len' not in json.loads(schema)['functions'],'schema must omit built-in std'
 
@@ -61,17 +63,17 @@ with tempfile.TemporaryDirectory(prefix='lmaws-cli-') as d:
  assert '"parts":2' in built.stdout and 'LMCODE_RETURN_BEGIN' in built.stdout
  deny=d/'ci-denied.lms'
  deny.write_text('s=load_schema(cli='+json.dumps(str(host))+');\np = _lmcode_ s;\nlet cloud=aws.region("us-east-1"); let who=cloud.identity();\nend _lmcode_\nr=run_lmcode(p); assert(!r.ok && r.phase=="run");\n')
- compiled=subprocess.run([shutil.which('lmscript'),str(deny)],env=dict(env,CI='true',LMAWS_LIVE='1',LMAWS_ENDPOINT='',LMAWS_LEDGER_DIR=str(d/'ci-ledgers')),text=True,encoding='utf-8',capture_output=True,timeout=60);assert compiled.returncode==0,(compiled.stdout,compiled.stderr)
+ compiled=subprocess.run(script_command(str(deny)),env=dict(env,CI='true',LMAWS_LIVE='1',LMAWS_ENDPOINT='',LMAWS_LEDGER_DIR=str(d/'ci-ledgers')),text=True,encoding='utf-8',capture_output=True,timeout=60);assert compiled.returncode==0,(compiled.stdout,compiled.stderr)
  code=d/'budget.lms'
  code.write_text('s=load_schema(cli='+json.dumps(str(host))+');\np = _lmcode_ s;\nlet i = 0; while (i < 10000) { let data = str_repeat("x", 1000000); i = i + 1; }\nend _lmcode_\nr=run_lmcode(p); assert(!r.ok && r.phase=="run");\n')
- p=subprocess.run([shutil.which('lmscript'),str(code)],text=True,encoding="utf-8",capture_output=True,timeout=60);assert p.returncode==0,p.stderr
+ p=subprocess.run(script_command(str(code)),text=True,encoding="utf-8",capture_output=True,timeout=60);assert p.returncode==0,p.stderr
  # Real mutations are profile-gated before any SDK client is opened.  Use a
  # deliberately missing profile and a loopback endpoint-free live session: the
  # expected guard must win over credential resolution/network access.
  guard=d/'profile-guard.lms'
  guard.write_text('s=load_schema(cli='+json.dumps(str(host))+');\np = _lmcode_ s;\nlet cloud=aws.example("profile_guard"); let run=cloud.example_run(); let q=run.queue("guard");\nend _lmcode_\nr=run_lmcode(p); assert(!r.ok && r.phase=="run");\n')
- compiled=subprocess.run([shutil.which('lmscript'),str(guard)],env=dict(env,LMAWS_LIVE='1',AWS_PROFILE='default',AWS_DEFAULT_PROFILE='default',AWS_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_LEDGER_DIR=str(d/'profile-ledgers'),LMAWS_EVIDENCE_DIR=str(d/'profile-evidence'),CI='false',LMAWS_ENDPOINT=''),text=True,encoding='utf-8',capture_output=True,timeout=60);assert compiled.returncode==0,(compiled.stdout,compiled.stderr)
- small=subprocess.run([shutil.which('lmscript'),str(code)],env=dict(env,LMAWS_MAX_MEMORY_MB='64'),text=True,encoding='utf-8',capture_output=True,timeout=60);assert small.returncode==0,small.stderr
+ compiled=subprocess.run(script_command(str(guard)),env=dict(env,LMAWS_LIVE='1',AWS_PROFILE='default',AWS_DEFAULT_PROFILE='default',AWS_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_LEDGER_DIR=str(d/'profile-ledgers'),LMAWS_EVIDENCE_DIR=str(d/'profile-evidence'),CI='false',LMAWS_ENDPOINT=''),text=True,encoding='utf-8',capture_output=True,timeout=60);assert compiled.returncode==0,(compiled.stdout,compiled.stderr)
+ small=subprocess.run(script_command(str(code)),env=dict(env,LMAWS_MAX_MEMORY_MB='64'),text=True,encoding='utf-8',capture_output=True,timeout=60);assert small.returncode==0,small.stderr
  if sys.platform=='linux' and is_elf:
   import resource
   def limit():resource.setrlimit(resource.RLIMIT_AS,(6*1024**3,6*1024**3))

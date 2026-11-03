@@ -8,6 +8,7 @@ import json, os, shutil, subprocess, tempfile, threading, xml.etree.ElementTree 
 ROOT = Path(__file__).resolve().parents[1]
 HOST = Path(os.environ.get("LMAWS_TEST_HOST", str(ROOT / "target/jvm-bin/lmaws"))).resolve()
 LMSCRIPT = shutil.which("lmscript.cmd" if os.name == "nt" else "lmscript") or "lmscript"
+LMSCRIPT_CMD = ["cmd.exe", "/c", LMSCRIPT] if os.name == "nt" and LMSCRIPT.lower().endswith(".cmd") else [LMSCRIPT]
 ACCOUNT = "000000000000"
 
 
@@ -127,7 +128,7 @@ with tempfile.TemporaryDirectory(prefix="lmaws-publish-probes-") as tmp:
             src=work/"probe.lms"
             src.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+dsl_body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(expect_ok).lower()+');\n')
             env = dict(os.environ,AWS_PROFILE=profile,AWS_DEFAULT_PROFILE=profile,AWS_REGION="us-east-1",LMAWS_LIVE="1",LMAWS_ENDPOINT=f"http://127.0.0.1:{server.server_port}",LMAWS_MAX_COST_USD="0.05",LMAWS_LEDGER_DIR=str(work/"ledgers"),LMAWS_EVIDENCE_DIR=str(work/"evidence"),PATH=str(HOST.parent)+os.pathsep+os.environ.get("PATH",""))
-            p=subprocess.run([LMSCRIPT,str(src)],cwd=work,env=env,text=True,capture_output=True,timeout=180)
+            p=subprocess.run(LMSCRIPT_CMD+[str(src)],cwd=work,env=env,text=True,capture_output=True,timeout=180)
             assert p.returncode==0,(mode,p.stdout,p.stderr)
             envelope=json.loads(p.stdout.strip().splitlines()[-1]);p.returncode=0 if envelope.get("ok") else 3
             assert (p.returncode==0)==expect_ok,(mode,p.returncode,p.stdout,p.stderr)

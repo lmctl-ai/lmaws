@@ -8,6 +8,7 @@ ROOT=Path(__file__).resolve().parents[1]
 VERSION=ET.parse(ROOT/'pom.xml').getroot().find('{*}version').text
 HOST=Path(os.environ.get('LMAWS_TEST_HOST',str(ROOT/'target/jvm-bin/lmaws'))).resolve()
 LMSCRIPT=shutil.which('lmscript.cmd' if os.name=='nt' else 'lmscript') or 'lmscript'
+LMSCRIPT_CMD=['cmd.exe','/c',LMSCRIPT] if os.name=='nt' and LMSCRIPT.lower().endswith('.cmd') else [LMSCRIPT]
 MD5=hashlib.md5(b'x').hexdigest();ACCOUNT='000000000000'
 class Model:
  def __init__(self,mode):
@@ -80,7 +81,7 @@ with tempfile.TemporaryDirectory(prefix='lmaws-s3check-test-') as temporary:
    source.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+code+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n')
    env=dict(os.environ,AWS_PROFILE='lmaws',AWS_DEFAULT_PROFILE='lmaws',AWS_REGION='us-east-1',LMAWS_LIVE='1',LMAWS_ENDPOINT=f'http://127.0.0.1:{server.server_port}',LMAWS_MAX_COST_USD='0.05',LMAWS_LEDGER_DIR=str(work/'ledgers'),PATH=str(HOST.parent)+os.pathsep+os.environ.get('PATH',''))
    def invoke():
-    proc=subprocess.run([LMSCRIPT,str(source)],cwd=work,env=env,text=True,capture_output=True,timeout=180)
+    proc=subprocess.run(LMSCRIPT_CMD+[str(source)],cwd=work,env=env,text=True,capture_output=True,timeout=180)
     assert proc.returncode==0,(mode,proc.stdout,proc.stderr)
     return json.loads(proc.stdout.strip().splitlines()[-1])
    response=invoke()

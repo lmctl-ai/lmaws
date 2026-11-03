@@ -22,6 +22,7 @@ import shutil
 ROOT = Path(__file__).resolve().parents[1]
 HOST = Path(os.environ.get("LMAWS_TEST_HOST", str(ROOT / "target/jvm-bin/lmaws"))).resolve()
 LMSCRIPT = shutil.which("lmscript.cmd" if os.name == "nt" else "lmscript") or "lmscript"
+LMSCRIPT_CMD = ["cmd.exe", "/c", LMSCRIPT] if os.name == "nt" and LMSCRIPT.lower().endswith(".cmd") else [LMSCRIPT]
 ACCOUNT = "000000000000"
 KEY_ID = "12345678-1234-1234-1234-123456789abc"
 
@@ -132,7 +133,7 @@ end _lmcode_
 outcome=run_lmcode(p); println(json_stringify(outcome));
 ''')
             env = dict(os.environ, AWS_PROFILE=profile, AWS_DEFAULT_PROFILE=profile, AWS_REGION="us-east-1", LMAWS_LIVE="1", LMAWS_ENDPOINT=f"http://127.0.0.1:{server.server_port}", CI="false",PATH=str(HOST.parent)+os.pathsep+os.environ.get("PATH",""))
-            proc = subprocess.run([LMSCRIPT, str(source)], cwd=work, env=env, capture_output=True, text=True, timeout=180)
+            proc = subprocess.run(LMSCRIPT_CMD + [str(source)], cwd=work, env=env, capture_output=True, text=True, timeout=180)
             assert proc.returncode == 0,(proc.stdout,proc.stderr)
             envelope=json.loads(proc.stdout.strip().splitlines()[-1]);proc.returncode=0 if envelope.get("ok") else 3
             return proc, (json.loads(result.read_text()) if result.exists() else {}), list(ReadOnlyBackend.calls)

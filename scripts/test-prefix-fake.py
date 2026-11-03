@@ -70,6 +70,7 @@ def main(host):
     env=dict(os.environ,CI='true',LMAWS_LIVE='1',AWS_PROFILE='nonexistent-fake-profile',AWS_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_ENDPOINT=f'http://127.0.0.1:{server.server_port}')
     for key in ['AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN','AWS_SECURITY_TOKEN']:env.pop(key,None)
     runner=shutil.which('lmscript.cmd' if os.name=='nt' else 'lmscript') or 'lmscript'
+    runner_command=['cmd.exe','/c',runner] if os.name=='nt' and runner.lower().endswith('.cmd') else [runner]
     try:
         with tempfile.TemporaryDirectory(prefix='lmaws-prefix-fake-') as directory:
             work=pathlib.Path(directory);output=work/'rows.json'
@@ -77,7 +78,7 @@ def main(host):
                 src=work/(name+'.lms')
                 src.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n')
                 run_env=dict(env,PATH=str(host.parent)+os.pathsep+env.get('PATH',''),AWS_PROFILE=profile,**(extra or {}))
-                cp=subprocess.run([runner,str(src)],cwd=work,env=run_env,capture_output=True,text=True,timeout=180)
+                cp=subprocess.run(runner_command+[str(src)],cwd=work,env=run_env,capture_output=True,text=True,timeout=180)
                 assert cp.returncode==0,(cp.stdout,cp.stderr)
                 envelope=json.loads(cp.stdout.strip().splitlines()[-1]);cp.returncode=0 if envelope.get('ok') else 3
                 return cp
