@@ -42,8 +42,9 @@ source="\n".join([
 python='python' if sys.platform=='win32' else pathlib.Path(sys.executable).name
 (work/'probe.lms').write_text('s=load_schema(cli='+repr(python+' probe-host.py')+');\np = _lmcode_ s;\nlet n = str_len("implicit std");\nend _lmcode_\nr=run_lmcode(p); assert(r.ok);\n')
 PYPROBE
+probe_log="$WORK/compiler-probe.log"
 if [ -n "$candidate" ] &&
-   (cd "$WORK" && PATH="$WORK${PATH:+:$PATH}" LMCODE_PROBE_OUTPUT="$(native "$WORK/probe.lmcode")" run_candidate "$(native "$WORK/probe.lms")" > /dev/null 2>&1) &&
+   (cd "$WORK" && PATH="$WORK${PATH:+:$PATH}" LMCODE_PROBE_OUTPUT="$(native "$WORK/probe.lmcode")" run_candidate "$(native "$WORK/probe.lms")" > "$probe_log" 2>&1) &&
    python3 - "$(native "$WORK/probe.lmcode")" <<'PYVERIFY'
 import pathlib,sys
 p=pathlib.Path(sys.argv[1])
@@ -57,7 +58,7 @@ then
 else
   echo "--- compiler probe diagnostics (candidate=$candidate)" >&2
   cat "$WORK/probe.lms" >&2 || true
-  [ -n "$candidate" ] && run_candidate "$(native "$WORK/probe.lms")" 2>&1 >&2 || true
+  cat "$probe_log" >&2 || true
   ls -la "$WORK" >&2
   echo "error: no implicit-std lmcode v6 compiler with current invocation support was found; build mono main or set LMSCRIPT_BIN" >&2
   exit 2
