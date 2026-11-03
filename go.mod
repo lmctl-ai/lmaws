@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.25
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.6
 	github.com/aws/smithy-go v1.28.7
-	github.com/lmctl-ai/lmcloud v0.1.1-0.20261103080912-e514b11ef9d8
+	github.com/lmctl-ai/lmcloud v0.1.1-0.20261103090217-74c8c7d1b3ca
 	github.com/lmctl-ai/lmcode-go v0.6.39-0.20261102140952-06cd9ae991d9
 )
 
