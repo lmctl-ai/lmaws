@@ -3,25 +3,34 @@
 // Package aws implements the provider-specific hostkit.ObjectStore and
 // hostkit.Queue adapters for AWS S3 and SQS (via github.com/aws/aws-sdk-go-v2).
 //
-// Phase A-C enforces a strict SIM/FAKE ONLY boundary:
-//   - When no endpoint override is active and LMAWS_LIVE != "1", operations
-//     route to hostkit's in-process fakeadapter (offline mode).
-//   - When a loopback endpoint is active (127.0.0.1, ::1, localhost), operations
-//     route to the AWS SDK v2 remote adapter against awssim.
-//   - When LMAWS_LIVE == "1" or a non-loopback HTTPS endpoint is configured,
-//     operations fail immediately with UNAUTHENTICATED (LiveCredentialsNotImplemented)
-//     before any network request is made.
+// Execution modes:
+//   - Offline fake: when neither LMCLOUD_LIVE=1 nor LMAWS_LIVE=1 is set and no
+//     endpoint override is active, operations route to hostkit/fakeadapter.
+//   - Simulator: when neither LMCLOUD_LIVE=1 nor LMAWS_LIVE=1 is set and a
+//     loopback endpoint is active (127.0.0.1, ::1, localhost), operations route
+//     to the AWS SDK v2 simulator adapter against awssim.
+//   - Live Stage 1 (read-only): when BOTH LMCLOUD_LIVE=1 and LMAWS_LIVE=1 are
+//     set, operations route through hostkit/safety (Session + LiveGuard +
+//     CostMeter + Journal) after STS GetCallerIdentity attestation against
+//     LMAWS_LIVE_ACCOUNT (254332045686) and LMAWS_LIVE_REGION (us-east-1).
+//     Only read-only metadata/list operations (bucket_list, bucket_exists,
+//     object_list/object_list_all, object_head, queue_list, queue_exists) are
+//     permitted in Stage 1; all mutating operations and arbitrary GetObject /
+//     Receive calls return PERMISSION_DENIED (LiveMutationDisabled).
 package aws
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/lmctl-ai/lmcloud/hostkit"
 	"github.com/lmctl-ai/lmcloud/hostkit/fakeadapter"
+	"github.com/lmctl-ai/lmcloud/hostkit/safety"
 )
 
 // Options configures the AWS adapter. All fields are optional.
@@ -47,11 +56,21 @@ type Options struct {
 	// HTTPClient overrides the underlying HTTP client; defaults to
 	// hostkit.NewHTTPClient(60 * time.Second).
 	HTTPClient *http.Client
+
+	// LiveJournalDir overrides the journal directory in live mode (defaults to
+	// LMAWS_LIVE_JOURNAL_DIR / LMCLOUD_LIVE_JOURNAL_DIR / private temp dir).
+	LiveJournalDir string
+
+	// LivePolicyPath overrides LMAWS_LIVE_POLICY / LMCLOUD_LIVE_POLICY.
+	LivePolicyPath string
+
+	// LiveCostCapUSD lowers the live cost cap below the $0.05 default.
+	LiveCostCapUSD float64
 }
 
 // Adapter implements hostkit.ObjectStore, hostkit.Queue,
 // hostkit.QueueCapsProvider, and hostkit.QueueCreateTokenReader for AWS by
-// delegating through hostkit.Router and hostkit.EndpointRoutes.
+// delegating through hostkit.Router.
 // Note: Adapter intentionally does NOT implement hostkit.BucketCreateTokenReader
 // because S3 CreateBucket has no atomic tag/metadata parameter (tagging requires
 // a separate PutBucketTagging request); a conflict on an accessible S3 bucket
@@ -59,6 +78,7 @@ type Options struct {
 type Adapter struct {
 	router hostkit.Router
 	remote *remote
+	live   *liveAdapter
 }
 
 // New constructs an AWS Adapter.
@@ -88,18 +108,67 @@ func New(opts *Options) *Adapter {
 		calls:      make(map[string]int),
 	}
 	fk := fakeadapter.New(fakeadapter.Options{})
-	routes := hostkit.EndpointRoutes{
-		Offline: fk,
-		Sim:     rem,
-		UseLive: func() bool { return strings.TrimSpace(getenv("LMAWS_LIVE")) == "1" },
-		Unavailable: func(_ string) error {
-			return errLiveNotImplemented
-		},
+	lv := newLiveAdapter(opts, getenv, retry, client)
+
+	pick := func(ctx context.Context) (hostkit.Backend, error) {
+		lmcloudLive := strings.TrimSpace(getenv("LMCLOUD_LIVE"))
+		lmawsLive := strings.TrimSpace(getenv("LMAWS_LIVE"))
+		if (lmcloudLive != "" && lmcloudLive != "0" && lmcloudLive != "1") ||
+			(lmawsLive != "" && lmawsLive != "0" && lmawsLive != "1") {
+			return nil, hostkit.ProviderError(
+				hostkit.InvalidArgument,
+				0,
+				"LiveDoubleOptInRequired",
+				fmt.Sprintf("LMCLOUD_LIVE and LMAWS_LIVE must be '1', '0', or unset (got LMCLOUD_LIVE=%q, LMAWS_LIVE=%q)", lmcloudLive, lmawsLive),
+			)
+		}
+		globalOn := lmcloudLive == "1"
+		hostOn := lmawsLive == "1"
+		if globalOn != hostOn {
+			return nil, hostkit.ProviderError(
+				hostkit.InvalidArgument,
+				0,
+				"LiveDoubleOptInRequired",
+				fmt.Sprintf("live mode requires both LMCLOUD_LIVE=1 and LMAWS_LIVE=1 (got LMCLOUD_LIVE=%q, LMAWS_LIVE=%q)", lmcloudLive, lmawsLive),
+			)
+		}
+		if globalOn && hostOn {
+			return lv, nil
+		}
+
+		ep := strings.TrimSpace(hostkit.EndpointFrom(ctx))
+		if ep == "" {
+			return fk, nil
+		}
+		u, err := url.Parse(ep)
+		if err == nil && hostkit.IsLoopbackHost(u.Hostname()) {
+			return rem, nil
+		}
+		return nil, errLiveOptInRequired
 	}
+
 	return &Adapter{
-		router: hostkit.Router{Pick: routes.Pick},
+		router: hostkit.Router{Pick: pick},
 		remote: rem,
+		live:   lv,
 	}
+}
+
+// Close releases any active live session and its journal flock lease.
+func (a *Adapter) Close() error {
+	if a == nil || a.live == nil {
+		return nil
+	}
+	return a.live.Close()
+}
+
+// LiveSession returns the active live safety.Session if live mode has been
+// initialized on this Adapter, or nil otherwise.
+func (a *Adapter) LiveSession() *safety.Session {
+	if a == nil || a.live == nil {
+		return nil
+	}
+	return a.live.session()
 }
 
 // Endpoints returns the AWS endpoint resolver for hostkit/cloudhost:
@@ -115,10 +184,10 @@ func Endpoints() *hostkit.EndpointResolver {
 	}
 }
 
-var errLiveNotImplemented = &hostkit.CloudError{
+var errLiveOptInRequired = &hostkit.CloudError{
 	Code:         hostkit.Unauthenticated,
-	Message:      "lmaws: live AWS credentials are not implemented in Phase A-C; set LMAWS_ENDPOINT to a loopback awssim URL or unset LMAWS_LIVE for offline mode",
-	ProviderCode: "LiveCredentialsNotImplemented",
+	Message:      "lmaws: non-loopback AWS endpoints require live double opt-in (LMCLOUD_LIVE=1 and LMAWS_LIVE=1) without endpoint overrides",
+	ProviderCode: "LiveOptInRequired",
 }
 
 // Calls returns a snapshot of remote adapter operation counts (for testing).

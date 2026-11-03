@@ -23,6 +23,13 @@ const Version = "0.1.0"
 func main() { os.Exit(run(os.Args[1:], os.Stdout)) }
 
 func run(args []string, out io.Writer) int {
+	var adapters []*aws.Adapter
+	defer func() {
+		for _, a := range adapters {
+			_ = a.Close()
+		}
+	}()
+
 	prog := cloudhost.Program{
 		Name:    "lmaws",
 		Version: Version,
@@ -32,7 +39,7 @@ func run(args []string, out io.Writer) int {
 		Notices: noticesText,
 		Commands: map[string]func(args []string, out io.Writer) int{
 			"--sweep": func(_ []string, w io.Writer) int {
-				fmt.Fprintln(w, `{"ok":true,"swept":0,"mode":"sim-or-fake-only"}`)
+				fmt.Fprintln(w, `{"ok":true,"swept":0,"mode":"sim-or-live-readonly-stage1"}`)
 				return 0
 			},
 		},
@@ -46,6 +53,7 @@ func run(args []string, out io.Writer) int {
 		},
 		NewConfig: func(_ bool) (cloudhost.Config, error) {
 			a := aws.New(nil)
+			adapters = append(adapters, a)
 			return cloudhost.Config{
 				Provider:  "aws",
 				Store:     a,
@@ -72,8 +80,14 @@ Dry runs come from the caller's invocation manifest (lmscript --dry-run).
 Endpoints (validated; plain http only for loopback; see lmcloud design 02 §3.3):
   set_endpoint(service|"all", url) > LMCLOUD_<SVC>_ENDPOINT > LMAWS_<SVC>_ENDPOINT >
   LMCLOUD_ENDPOINT > LMAWS_ENDPOINT > AWS_ENDPOINT_URL_S3 / AWS_ENDPOINT_URL_SQS > AWS_ENDPOINT_URL
-  No endpoint: offline in-process fake. LMAWS_LIVE=1 or a non-loopback endpoint:
-  not supported yet (live AWS credential chain is a future phase).
+  No endpoint + no live opt-in: offline in-process fake.
+  Loopback endpoint + no live opt-in: awssim simulator.
+
+Live Mode Stage 1 (read-only only; endpoint overrides forbidden):
+  LMCLOUD_LIVE=1 and LMAWS_LIVE=1   Required double opt-in
+  LMAWS_LIVE_ACCOUNT=254332045686   Required account policy value (verified via STS GetCallerIdentity)
+  LMAWS_LIVE_REGION=us-east-1       Required region policy value
+  LMAWS_LIVE_COST_CAP_USD           Optional cap <= 0.05 USD (default: 0.05)
 
 Simulator credentials and scope (loopback endpoints only):
   LMAWS_SIM_ACCESS_KEY_ID      SigV4 access key ID (default: test)
