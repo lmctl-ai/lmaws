@@ -98,7 +98,7 @@ def main():
             def execute(apply=False, human=True, spec=None, overrides=None, ok=True):
                 payload = json.dumps(json.dumps(spec or SPEC))
                 body = (
-                    's=load_schema(cli="lmaws");\n'
+                    's=load_schema(cli="java ai.lmctl.lmaws.Main");\n'
                     'let p = _lmcode_ s;\n'
                     'let cloud=aws.example("ebs_resize_test");\n'
                     f'let result=cloud.ebs_root_resize({payload},{str(apply).lower()},{str(human).lower()});\n'

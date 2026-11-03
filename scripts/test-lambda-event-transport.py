@@ -17,7 +17,7 @@ with tempfile.TemporaryDirectory(prefix='lmaws-serverless-error-') as directory:
     script=work/'failure.lms'
     host=pathlib.Path(env.get('LMAWS_TEST_HOST',str(root/'target/jvm-bin/lmaws'))).resolve()
     env['PATH']=str(host.parent)+os.pathsep+env.get('PATH','')
-    script.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\nlet run=aws.demo().serverless_stack("cafe05","example.com",'+json.dumps(state.as_posix())+');let made=run.step("table","{}");check(false);\nend _lmcode_\nr=run_lmcode(p);assert(!r.ok);\n',encoding='utf-8')
+    script.write_text('s=load_schema(cli="java ai.lmctl.lmaws.Main");\np = _lmcode_ s;\nlet run=aws.demo().serverless_stack("cafe05","example.com",'+json.dumps(state.as_posix())+');let made=run.step("table","{}");check(false);\nend _lmcode_\nr=run_lmcode(p);assert(!r.ok);\n',encoding='utf-8')
     compiler=shutil.which('lmscript.cmd' if os.name=='nt' else 'lmscript')
     compiler_args=['cmd.exe','/c',compiler] if os.name=='nt' else [compiler]
     result=subprocess.run(compiler_args+[str(script)],cwd=work,env=env,timeout=90,capture_output=True,text=True)

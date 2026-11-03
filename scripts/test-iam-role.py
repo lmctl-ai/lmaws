@@ -38,7 +38,7 @@ class Fake(http.server.BaseHTTPRequestHandler):
 
 def run_dsl(host,work,source,env,apply=True):
     src=work/"role.lms"
-    src.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+source+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n',encoding="utf-8")
+    src.write_text('s=load_schema(cli="java ai.lmctl.lmaws.Main");\np = _lmcode_ s;\n'+source+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n',encoding="utf-8")
     lms=shutil.which("lmscript.cmd" if os.name=="nt" else "lmscript") or "lmscript"
     comp=["cmd.exe","/c",lms] if os.name=="nt" and lms.lower().endswith(".cmd") else [lms]
     run_env=dict(env,PATH=str(host.parent)+os.pathsep+env.get("PATH",""),LMAWS_APPLY="1" if apply else "0")

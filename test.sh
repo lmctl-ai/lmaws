@@ -5,6 +5,13 @@ scripts/select-compiler.sh >/dev/null
 if ! command -v timeout >/dev/null && command -v gtimeout >/dev/null; then timeout() { gtimeout "$@"; }; export -f timeout; fi
 timeout 120 python3 scripts/sync-sdk.py --ensure
 timeout 180 mvn -q verify
+ lmaws_test_classpath="$PWD/target/lmaws-0.1.27.jar"
+ lmaws_classpath_separator=:
+ if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
+   lmaws_test_classpath="$(cygpath -w "$lmaws_test_classpath")"
+   lmaws_classpath_separator=';'
+ fi
+ export CLASSPATH="$lmaws_test_classpath${CLASSPATH:+$lmaws_classpath_separator$CLASSPATH}"
 timeout 90 mvn -q dependency:build-classpath -Dmdep.outputFile=target/dependency-classpath.txt
 timeout 30 python3 scripts/lock-deps.py
 timeout 30 python3 scripts/test-verify-absence.py

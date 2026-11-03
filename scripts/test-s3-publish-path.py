@@ -124,7 +124,7 @@ def run(mode: str, profile: str = "default"):
                 {"Sid": "DenyForeign", "Effect": "Deny", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::*/*", "Condition": {"StringNotEquals": {"s3:ResourceAccount": ACCOUNT}}},
                 {"Sid": "KmsS3", "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": "*", "Condition": {"StringEquals": {"kms:CallerAccount": ACCOUNT}, "StringLike": {"kms:ViaService": "s3.*.amazonaws.com", "kms:EncryptionContext:aws:s3:arn": "arn:aws:s3:::*"}}},
             ]}
-            source.write_text(f'''s=load_schema(cli="lmaws");
+            source.write_text(f'''s=load_schema(cli="java ai.lmctl.lmaws.Main");
 p = _lmcode_ s;
 let c=aws.region("us-east-1");
 let r=c.s3_publish_path("fixture-bucket","dataset/model_list.json",{json.dumps(json.dumps(inline_policy))});

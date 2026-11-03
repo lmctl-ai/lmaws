@@ -267,7 +267,7 @@ def run(host):
             def execute(name,body,expected=0,extra=None,extra_env=None,extra_flags=None):
                 src=work/(name+".lms")
                 accepted=expected==0
-                src.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(accepted).lower()+');\n')
+                src.write_text('s=load_schema(cli="java ai.lmctl.lmaws.Main");\np = _lmcode_ s;\n'+body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(accepted).lower()+');\n')
                 run_env=dict(env,**(extra or {}),**(extra_env or {}))
                 run_env['PATH']=str(host.parent)+os.pathsep+run_env.get('PATH','')
                 if extra_flags and '--apply' in extra_flags:run_env['LMAWS_APPLY']='1'

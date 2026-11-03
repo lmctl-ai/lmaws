@@ -78,7 +78,7 @@ with tempfile.TemporaryDirectory(prefix='lmaws-s3check-test-') as temporary:
    if mode=='recovery':
     model.tagged=True;model.run=runid;journal.parent.mkdir(exist_ok=True);journal.write_text(json.dumps({'run_id':runid,'bucket':'lmaws-s3check-'+runid,'key':'lmaws-s3check/'+runid+'.txt','sandbox':'true','bucket_created':'true','tagged':'true','default_put':'passed','etag':'"'+MD5+'"'}));code=f'let cloud=aws.region("us-east-1");let result=cloud.s3_upload_cleanup({json.dumps(runid)},{json.dumps(str(journal))});file_write({json.dumps(str(result))},result.json());'
    source=work/(mode+'.lms')
-   source.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+code+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n')
+   source.write_text('s=load_schema(cli="java ai.lmctl.lmaws.Main");\np = _lmcode_ s;\n'+code+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n')
    env=dict(os.environ,AWS_PROFILE='lmaws',AWS_DEFAULT_PROFILE='lmaws',AWS_REGION='us-east-1',LMAWS_LIVE='1',LMAWS_ENDPOINT=f'http://127.0.0.1:{server.server_port}',LMAWS_MAX_COST_USD='0.05',LMAWS_LEDGER_DIR=str(work/'ledgers'),PATH=str(HOST.parent)+os.pathsep+os.environ.get('PATH',''))
    def invoke():
     proc=subprocess.run(LMSCRIPT_CMD+[str(source)],cwd=work,env=env,text=True,capture_output=True,timeout=180)

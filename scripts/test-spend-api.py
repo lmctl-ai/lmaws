@@ -20,7 +20,7 @@ def execute(source: str, *, code: int = 0, env: dict[str, str] | None = None):
     with tempfile.TemporaryDirectory(prefix="lmaws-spend-api-") as raw:
         directory=Path(raw);src=directory/"case.lms"
         accepted=code==0
-        src.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+source+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(accepted).lower()+');\n',encoding="utf-8")
+        src.write_text('s=load_schema(cli="java ai.lmctl.lmaws.Main");\np = _lmcode_ s;\n'+source+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(accepted).lower()+');\n',encoding="utf-8")
         command=launcher_argv(LMSCRIPT,str(src))
         run_env=dict(BASE_ENV,PATH=str(HOST.parent)+os.pathsep+BASE_ENV.get("PATH",""))
         run_env.update(env or {})

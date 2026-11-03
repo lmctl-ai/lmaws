@@ -76,7 +76,7 @@ def main(host):
             work=pathlib.Path(directory);output=work/'rows.json'
             def execute(name,body,profile='default',extra=None):
                 src=work/(name+'.lms')
-                src.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n')
+                src.write_text('s=load_schema(cli="java ai.lmctl.lmaws.Main");\np = _lmcode_ s;\n'+body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n')
                 run_env=dict(env,PATH=str(host.parent)+os.pathsep+env.get('PATH',''),AWS_PROFILE=profile,**(extra or {}))
                 cp=subprocess.run(runner_command+[str(src)],cwd=work,env=run_env,capture_output=True,text=True,timeout=180)
                 assert cp.returncode==0,(cp.stdout,cp.stderr)

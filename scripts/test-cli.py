@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CLI, schema parity, failure codes and managed memory enforcement."""
 import hashlib,json,os,pathlib,struct,subprocess,sys,tempfile,shutil
-root=pathlib.Path(__file__).resolve().parents[1];host=pathlib.Path(sys.argv[1]).resolve();env=dict(os.environ);env.pop('LMAWS_LIVE',None)
+root=pathlib.Path(__file__).resolve().parents[1];host=pathlib.Path(sys.argv[1]).resolve();env=dict(os.environ);env.pop('LMAWS_LIVE',None);env['CLASSPATH']=str(pathlib.Path(__file__).resolve().parents[1]/'target/lmaws-0.1.27.jar')
 with host.open('rb') as binary: is_elf=binary.read(4)==b'\x7fELF'
 LMSCRIPT=shutil.which('lmscript.cmd' if os.name=='nt' else 'lmscript') or 'lmscript'
 def script_command(*args): return (['cmd.exe','/c',LMSCRIPT] if os.name=='nt' and LMSCRIPT.lower().endswith('.cmd') else [LMSCRIPT])+list(args)
@@ -62,16 +62,16 @@ with tempfile.TemporaryDirectory(prefix='lmaws-cli-') as d:
  assert trace.read_text(encoding='utf-8')=='AB','builder parts did not share one effect sequence'
  assert '"parts":2' in built.stdout and 'LMCODE_RETURN_BEGIN' in built.stdout
  deny=d/'ci-denied.lms'
- deny.write_text('s=load_schema(cli='+json.dumps(str(host))+');\np = _lmcode_ s;\nlet cloud=aws.region("us-east-1"); let who=cloud.identity();\nend _lmcode_\nr=run_lmcode(p); assert(!r.ok && r.phase=="run");\n')
+ deny.write_text('s=load_schema(cli=\"java ai.lmctl.lmaws.Main\");\np = _lmcode_ s;\nlet cloud=aws.region("us-east-1"); let who=cloud.identity();\nend _lmcode_\nr=run_lmcode(p); assert(!r.ok && r.phase=="run");\n')
  compiled=subprocess.run(script_command(str(deny)),env=dict(env,CI='true',LMAWS_LIVE='1',LMAWS_ENDPOINT='',LMAWS_LEDGER_DIR=str(d/'ci-ledgers')),text=True,encoding='utf-8',capture_output=True,timeout=60);assert compiled.returncode==0,(compiled.stdout,compiled.stderr)
  code=d/'budget.lms'
- code.write_text('s=load_schema(cli='+json.dumps(str(host))+');\np = _lmcode_ s;\nlet i = 0; while (i < 10000) { let data = str_repeat("x", 1000000); i = i + 1; }\nend _lmcode_\nr=run_lmcode(p); assert(!r.ok && r.phase=="run");\n')
+ code.write_text('s=load_schema(cli=\"java ai.lmctl.lmaws.Main\");\np = _lmcode_ s;\nlet i = 0; while (i < 10000) { let data = str_repeat("x", 1000000); i = i + 1; }\nend _lmcode_\nr=run_lmcode(p); assert(!r.ok && r.phase=="run");\n')
  p=subprocess.run(script_command(str(code)),text=True,encoding="utf-8",capture_output=True,timeout=60);assert p.returncode==0,p.stderr
  # Real mutations are profile-gated before any SDK client is opened.  Use a
  # deliberately missing profile and a loopback endpoint-free live session: the
  # expected guard must win over credential resolution/network access.
  guard=d/'profile-guard.lms'
- guard.write_text('s=load_schema(cli='+json.dumps(str(host))+');\np = _lmcode_ s;\nlet cloud=aws.example("profile_guard"); let run=cloud.example_run(); let q=run.queue("guard");\nend _lmcode_\nr=run_lmcode(p); assert(!r.ok && r.phase=="run");\n')
+ guard.write_text('s=load_schema(cli=\"java ai.lmctl.lmaws.Main\");\np = _lmcode_ s;\nlet cloud=aws.example("profile_guard"); let run=cloud.example_run(); let q=run.queue("guard");\nend _lmcode_\nr=run_lmcode(p); assert(!r.ok && r.phase=="run");\n')
  compiled=subprocess.run(script_command(str(guard)),env=dict(env,LMAWS_LIVE='1',AWS_PROFILE='default',AWS_DEFAULT_PROFILE='default',AWS_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_LEDGER_DIR=str(d/'profile-ledgers'),LMAWS_EVIDENCE_DIR=str(d/'profile-evidence'),CI='false',LMAWS_ENDPOINT=''),text=True,encoding='utf-8',capture_output=True,timeout=60);assert compiled.returncode==0,(compiled.stdout,compiled.stderr)
  small=subprocess.run(script_command(str(code)),env=dict(env,LMAWS_MAX_MEMORY_MB='64'),text=True,encoding='utf-8',capture_output=True,timeout=60);assert small.returncode==0,small.stderr
  if sys.platform=='linux' and is_elf:

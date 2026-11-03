@@ -103,7 +103,7 @@ class Harness:
  def read(self,name):return json.loads((self.work/(name+'.json')).read_text())
  def run(self,body,profile='lmaws',cap='0.05',ok=True,background=False):
   self.n+=1;source=self.work/f'code{self.n}.lms'
-  source.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(ok).lower()+');\n')
+  source.write_text('s=load_schema(cli="java ai.lmctl.lmaws.Main");\np = _lmcode_ s;\n'+body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(ok).lower()+');\n')
   env=dict(os.environ,AWS_PROFILE=profile,AWS_DEFAULT_PROFILE=profile,AWS_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_LIVE='1',LMAWS_ENDPOINT=f'http://127.0.0.1:{self.server.server_port}',LMAWS_LEDGER_DIR=str(self.work/'ledgers'),LMAWS_MAX_COST_USD=cap,CI='true',PATH=str(HOST.parent)+os.pathsep+os.environ.get('PATH',''))
   command=LMSCRIPT_CMD+[str(source)]
   if background:return subprocess.Popen(command,env=env,cwd=self.work,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

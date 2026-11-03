@@ -126,7 +126,7 @@ with tempfile.TemporaryDirectory(prefix="lmaws-publish-probes-") as tmp:
         thread.start()
         try:
             src=work/"probe.lms"
-            src.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+dsl_body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(expect_ok).lower()+');\n')
+            src.write_text('s=load_schema(cli="java ai.lmctl.lmaws.Main");\np = _lmcode_ s;\n'+dsl_body+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r)); assert(r.ok == '+str(expect_ok).lower()+');\n')
             env = dict(os.environ,AWS_PROFILE=profile,AWS_DEFAULT_PROFILE=profile,AWS_REGION="us-east-1",LMAWS_LIVE="1",LMAWS_ENDPOINT=f"http://127.0.0.1:{server.server_port}",LMAWS_MAX_COST_USD="0.05",LMAWS_LEDGER_DIR=str(work/"ledgers"),LMAWS_EVIDENCE_DIR=str(work/"evidence"),PATH=str(HOST.parent)+os.pathsep+os.environ.get("PATH",""))
             p=subprocess.run(LMSCRIPT_CMD+[str(src)],cwd=work,env=env,text=True,capture_output=True,timeout=180)
             assert p.returncode==0,(mode,p.stdout,p.stderr)

@@ -165,8 +165,9 @@ file_write("terminate.json", cloud.ec2_provision_terminate("demo-01"));
         def invoke(source, profile="default", timeout=90, crash=False):
             with tempfile.TemporaryDirectory(prefix="lmaws-provision-script-") as td:
                 path = pathlib.Path(td) / "job.lms"
-                path.write_text('s=load_schema(cli="lmaws");\np = _lmcode_ s;\n'+source+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n')
+                path.write_text('s=load_schema(cli="java ai.lmctl.lmaws.Main");\np = _lmcode_ s;\n'+source+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n')
                 runner=shutil.which("lmscript.cmd" if os.name=="nt" else "lmscript") or "lmscript"
+                runner_command=["cmd.exe","/c",runner] if os.name=="nt" and runner.lower().endswith(".cmd") else [runner]
                 env = dict(os.environ, LMAWS_ENDPOINT=f"http://127.0.0.1:{server.server_port}", LMAWS_LIVE="1", AWS_PROFILE=profile, AWS_REGION="us-east-1", CI="true", LMAWS_LEDGER_DIR=ledger_root, LMPROV_LEDGER_DIR=ledger_root,PATH=str(HOST and pathlib.Path(HOST[0] if isinstance(HOST,list) else HOST).parent if HOST else ROOT/"target/jvm-bin")+os.pathsep+os.environ.get("PATH",""))
                 if crash:
                     process=subprocess.Popen(runner_command+[str(path)],cwd=td,env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
