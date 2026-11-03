@@ -321,24 +321,24 @@ func validateLiveGates(ctx context.Context, getenv func(string) string, opts *Op
 	if mutate {
 		if raw := strings.TrimSpace(getenv("LMAWS_LIVE_MAX_BUCKETS")); raw != "" {
 			n, err := strconv.Atoi(raw)
-			if err != nil || n < 1 || n > 32 {
+			if err != nil || n < 1 || n > 4 {
 				return liveEnvConfig{}, hostkit.ProviderError(
 					hostkit.InvalidArgument,
 					0,
 					"InvalidLiveResourceLimit",
-					fmt.Sprintf("invalid LMAWS_LIVE_MAX_BUCKETS=%q (must be 1..32)", raw),
+					fmt.Sprintf("invalid LMAWS_LIVE_MAX_BUCKETS=%q (must be 1..4)", raw),
 				)
 			}
 			maxBuckets = n
 		}
 		if raw := strings.TrimSpace(getenv("LMAWS_LIVE_MAX_QUEUES")); raw != "" {
 			n, err := strconv.Atoi(raw)
-			if err != nil || n < 1 || n > 32 {
+			if err != nil || n < 1 || n > 4 {
 				return liveEnvConfig{}, hostkit.ProviderError(
 					hostkit.InvalidArgument,
 					0,
 					"InvalidLiveResourceLimit",
-					fmt.Sprintf("invalid LMAWS_LIVE_MAX_QUEUES=%q (must be 1..32)", raw),
+					fmt.Sprintf("invalid LMAWS_LIVE_MAX_QUEUES=%q (must be 1..4)", raw),
 				)
 			}
 			maxQueues = n
@@ -4938,6 +4938,9 @@ func (l *liveAdapter) SweepCLI(ctx context.Context, args []string, out io.Writer
 		return 0
 	}
 
+	if len(args) > 0 && strings.TrimSpace(args[0]) == "--sweep" {
+		args = args[1:] // the host dispatcher passes the command token through
+	}
 	apply := false
 	allStale := false
 	var flagJournalDir string
