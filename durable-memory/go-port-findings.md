@@ -14,14 +14,22 @@
   - All provider-neutral responsibilities—argument validation, metadata key regex enforcement, error state and `[CODE] op (target): msg (http=N, provider_code=X)` abort formatting, `last_error()`, endpoint resolution/validation, bounded retry policy (3 attempts on `429, 500, 502, 503, 504`, `Retry-After` up to 2s), `object_list_all` / `queue_list` pagination with stalled-token detection, queue payload wire encoding (`__lmcloud_empty__`, `__lmcloud_b64__`), receipt error precedence, dry-run short-circuiting, and secret redaction—now live exclusively in `hostkit`.
   - `internal/aws` implements `hostkit.ObjectStore` and `hostkit.Queue` with AWS SDK v2 (`github.com/aws/aws-sdk-go-v2/service/s3` and `service/sqs`) with SDK retries disabled (`RetryMaxAttempts: 1`, `aws.NopRetryer{}`) so `hostkit.RetryPolicy` is the single retry layer.
 
-## 3. SIM/FAKE ONLY Enforcement & Endpoint Routing
+## 3. Execution Modes, Endpoint Routing & Stage 1 Live Read-Only Mode
 
 - `aws.Endpoints()` registers prefix `"LMAWS"` and native environment variables `AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL_SQS`, and `AWS_ENDPOINT_URL`.
 - `hostkit.EndpointResolver` rejects any plain `http://` non-loopback endpoint (`0.0.0.0`, `127.0.0.1.evil.example`, RFC1918 addresses) pre-flight with `ErrorCode.INVALID_ARGUMENT` (`http_status == 0`) before any network traffic.
-- `Adapter.route(ctx)` routes:
-  - `""` with `LMAWS_LIVE != "1"` -> `hostkit/fakeadapter` (in-process offline fake).
-  - Loopback URL (`127.0.0.1`, `::1`, `localhost`) -> `internal/aws` remote adapter (`awssim`).
-  - `LMAWS_LIVE == "1"` or any non-loopback `https://` endpoint -> `ErrorCode.UNAUTHENTICATED` (`ProviderCode: "LiveCredentialsNotImplemented"`), never sending simulator credentials (`test`/`test`) off-host.
+- `Adapter` routes:
+  - `""` with neither `LMCLOUD_LIVE=1` nor `LMAWS_LIVE=1` -> `hostkit/fakeadapter` (in-process offline fake).
+  - Loopback URL (`127.0.0.1`, `::1`, `localhost`) with neither `LMCLOUD_LIVE=1` nor `LMAWS_LIVE=1` -> `internal/aws` simulator adapter (`awssim`).
+  - Partial live opt-in (only one of `LMCLOUD_LIVE=1` or `LMAWS_LIVE=1`) -> `ErrorCode.INVALID_ARGUMENT` (`ProviderCode: "LiveDoubleOptInRequired"`).
+  - Non-loopback `https://` endpoint without live opt-in -> `ErrorCode.UNAUTHENTICATED` (`ProviderCode: "LiveOptInRequired"`), never sending simulator credentials (`test`/`test`) off-host.
+  - **Stage 1 Live Read-Only (`LMCLOUD_LIVE=1` AND `LMAWS_LIVE=1`):**
+    - Rejects any endpoint override (`set_endpoint`, `LMCLOUD_*ENDPOINT*`, `LMAWS_*ENDPOINT*`, `AWS_ENDPOINT_URL*`) with `ErrorCode.INVALID_ARGUMENT` (`LiveEndpointOverrideForbidden`).
+    - Requires explicit `LMAWS_LIVE_ACCOUNT=254332045686` and `LMAWS_LIVE_REGION=us-east-1` (no default fallback to whatever the credentials say).
+    - Loads credentials exclusively in live mode via the AWS SDK for Go v2 default credential chain (`config.LoadDefaultConfig`: env, shared profile/SSO, OIDC web identity, ECS/EC2 IMDSv2), rejects simulator dummy credentials (`test`/`test`), and scrubs credential values from any error messages.
+    - Attests caller identity via STS `GetCallerIdentity` over HTTPS (`https://sts.us-east-1.amazonaws.com`) and verifies returned account `254332045686` and ARN before opening the `hostkit/safety` `Session`.
+    - Routes all allowed read-only operations (`bucket_list`, `bucket_exists`, `object_list`/`object_list_all`, `object_head`, `queue_list`, `queue_exists`) through `hostkit/safety` (`LiveGuard` + `CostMeter` + `Journal`, default cap `$0.05` USD) over signed HTTPS requests to `s3.us-east-1.amazonaws.com` and `sqs.us-east-1.amazonaws.com`.
+    - Refuses all mutating operations (`bucket_create`, `bucket_delete`, `object_put`, `object_delete`, `queue_create`, `queue_delete`, `queue_send`, `queue_ack`, `queue_nack`) as well as `object_get` and `queue_receive` with `ErrorCode.PERMISSION_DENIED` (`ProviderCode: "LiveMutationDisabled"`), enforced at the adapter, `LiveGuard`, and HTTP transport layers.
 
 ## 4. AWS-Specific Adapter Semantics & Compatibility Middleware
 

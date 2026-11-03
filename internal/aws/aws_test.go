@@ -482,6 +482,8 @@ func TestDryRunZeroMutatorCalls(t *testing.T) {
 
 // Endpoint validation from every source: unsafe endpoints rejected before any network traffic.
 func TestEndpointRouting(t *testing.T) {
+	t.Setenv("LMCLOUD_LIVE", "")
+	t.Setenv("LMAWS_LIVE", "")
 	h, _, m := newTestHost(t, nil, nil)
 
 	t.Setenv("LMAWS_ENDPOINT", "http://0.0.0.0:4566")
@@ -495,17 +497,23 @@ func TestEndpointRouting(t *testing.T) {
 	}
 
 	t.Setenv("LMAWS_ENDPOINT", "https://s3.us-east-1.amazonaws.com")
-	if _, _ = h.BucketExists(false, "bkt"); h.LastError().Code != hostkit.Unauthenticated || h.LastError().ProviderCode != "LiveCredentialsNotImplemented" {
-		t.Fatalf("live https endpoint: last=%+v", h.LastError())
+	if _, _ = h.BucketExists(false, "bkt"); h.LastError().Code != hostkit.Unauthenticated || h.LastError().ProviderCode != "LiveOptInRequired" {
+		t.Fatalf("live https endpoint without opt-in: last=%+v", h.LastError())
 	}
 
 	t.Setenv("LMAWS_ENDPOINT", "")
 	t.Setenv("LMAWS_LIVE", "1")
-	if _, _ = h.BucketCreate(false, "bkt"); h.LastError().Code != hostkit.Unauthenticated || h.LastError().ProviderCode != "LiveCredentialsNotImplemented" {
-		t.Fatalf("LMAWS_LIVE=1: last=%+v", h.LastError())
+	if _, _ = h.BucketCreate(false, "bkt"); h.LastError().Code != hostkit.InvalidArgument || h.LastError().ProviderCode != "LiveDoubleOptInRequired" {
+		t.Fatalf("partial LMAWS_LIVE=1 without LMCLOUD_LIVE=1: last=%+v", h.LastError())
 	}
 
 	t.Setenv("LMAWS_LIVE", "")
+	t.Setenv("LMCLOUD_LIVE", "1")
+	if _, _ = h.BucketCreate(false, "bkt"); h.LastError().Code != hostkit.InvalidArgument || h.LastError().ProviderCode != "LiveDoubleOptInRequired" {
+		t.Fatalf("partial LMCLOUD_LIVE=1 without LMAWS_LIVE=1: last=%+v", h.LastError())
+	}
+
+	t.Setenv("LMCLOUD_LIVE", "")
 	if c, _ := h.BucketCreate(false, "offline-bkt"); !c || h.LastError().Code != hostkit.OK {
 		t.Fatalf("offline fake: c=%v last=%+v", c, h.LastError())
 	}

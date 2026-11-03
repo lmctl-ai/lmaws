@@ -6,9 +6,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-unset LMAWS_LIVE LMCLOUD_ENDPOINT LMCLOUD_STORAGE_ENDPOINT LMCLOUD_QUEUE_ENDPOINT \
+unset LMCLOUD_LIVE LMAWS_LIVE LMAWS_LIVE_ACCOUNT LMAWS_LIVE_REGION \
+  LMAWS_LIVE_POLICY LMCLOUD_LIVE_POLICY LMAWS_LIVE_JOURNAL_DIR LMCLOUD_LIVE_JOURNAL_DIR \
+  LMCLOUD_ENDPOINT LMCLOUD_STORAGE_ENDPOINT LMCLOUD_QUEUE_ENDPOINT \
   LMAWS_ENDPOINT LMAWS_STORAGE_ENDPOINT LMAWS_QUEUE_ENDPOINT \
-  AWS_ENDPOINT_URL AWS_ENDPOINT_URL_S3 AWS_ENDPOINT_URL_SQS
+  AWS_ENDPOINT_URL AWS_ENDPOINT_URL_S3 AWS_ENDPOINT_URL_SQS AWS_ENDPOINT_URL_STS
 
 LMSCRIPT_BIN="${LMSCRIPT_BIN:-/home/ubuntu/lmctl-mono/lmscript/bin/lmscript}"
 LMCLOUD_DIR="${LMCLOUD_DIR:-/home/ubuntu/cloud/lmcloud}"
@@ -76,10 +78,10 @@ diff -u <("$BIN" cloud --lmcode-signatures) <("$LMSCRIPT_BIN" --lmcode-signature
 diff -u <("$BIN" cloud --lmcode-signatures --without-std) <("$LMSCRIPT_BIN" --lmcode-signatures --without-std "$ROOT/schema/lmcloud.dsl.json")
 
 echo "=== 6. Exit code & memory budget contract ==="
-"$BIN" --version | grep -q "^lmaws "
-"$BIN" --help | grep -q "Usage:"
-"$BIN" --notices | grep -q "Third-Party Software Notices"
-"$BIN" --sweep | grep -q '"ok":true'
+grep -q "^lmaws " <<<"$("$BIN" --version)"
+grep -q "Usage:" <<<"$("$BIN" --help)"
+grep -q "Third-Party Software Notices" <<<"$("$BIN" --notices)"
+grep -q '"ok":true' <<<"$("$BIN" --sweep)"
 
 set +e
 "$BIN" --unknown-flag >/dev/null 2>&1
