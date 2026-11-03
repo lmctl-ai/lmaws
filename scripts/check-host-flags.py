@@ -16,13 +16,14 @@ with tempfile.TemporaryDirectory(prefix='host flag control ') as directory:
     missing = scratch / 'must-not-open.dslb'
     env = dict(os.environ, HOME=str(scratch), LMCTL_HOME=str(scratch / '.lmctl'))
     def run(args):
-        return subprocess.run([*command, *map(str, args)], capture_output=True, env=env)
+        argv = (["cmd.exe", "/c", *command] if os.name == "nt" and command[0].lower().endswith(".cmd") else command)
+        return subprocess.run([*argv, *map(str, args)], capture_output=True, env=env)
     # Collect refusal controls so a baseline proves every retired spelling fails.
     failures = []
     for flag, rest in [(old, [missing]), (old + '-schema', ['--json']),
                        (old + '-signatures', [])]:
         result = run([flag, *rest])
-        if result.returncode != 2: failures.append((flag, result.returncode, 'retired option accepted or reached execution'))
+        if result.returncode != 2: failures.append((flag, result.returncode, result.stdout, result.stderr))
         if str(missing).encode() in result.stdout + result.stderr: failures.append((flag, 'opened retired-flag input'))
     assert not failures, failures
     assert not list(scratch.iterdir()), 'retired option created scratch-HOME state'
