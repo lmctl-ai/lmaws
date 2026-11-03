@@ -47,7 +47,10 @@ if [ -n "$candidate" ] &&
    python3 - "$(native "$WORK/probe.lmcode")" <<'PYVERIFY'
 import pathlib,sys
 p=pathlib.Path(sys.argv[1])
-sys.exit(0 if p.is_file() and p.read_bytes()[:6] == b'DSLB\x00\x06' else 1)
+image=p.read_bytes() if p.is_file() else b''
+if image[:6] != b'DSLB\x00\x06':
+ print('compiler probe bytecode header: '+image[:8].hex(),file=sys.stderr)
+ sys.exit(1)
 PYVERIFY
 then
   printf '%s\n' "$candidate"
