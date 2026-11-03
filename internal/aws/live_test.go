@@ -1712,3 +1712,696 @@ func TestLiveStage2_SQSLifecycleAndSweeperLIFO(t *testing.T) {
 	}
 	mu.Unlock()
 }
+
+func TestSolStage2_ForeignGetRefused(t *testing.T) {
+	runID := "run-1700000000-abcdef012345"
+	bucket := "lmcloud-conf-abcdef012345-lifecycle"
+
+	var (
+		mu        sync.Mutex
+		bktExists bool
+		bktTags   = map[string]string{}
+		objExists bool
+		objBody   []byte
+		objTags   = map[string]string{}
+	)
+
+	h, _, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test"))
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		q := r.URL.Query()
+		isObjPath := r.URL.Path != "" && r.URL.Path != "/"
+
+		switch r.Method {
+		case http.MethodHead:
+			if !isObjPath {
+				if !bktExists {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if !bktExists || !objExists {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain")
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(objBody)))
+			w.Header().Set("ETag", `"etag-foreign"`)
+			w.WriteHeader(http.StatusOK)
+
+		case http.MethodGet:
+			if !isObjPath {
+				if q.Has("tagging") {
+					if len(bktTags) == 0 {
+						w.WriteHeader(http.StatusNotFound)
+						_, _ = io.WriteString(w, `<Error><Code>NoSuchTagSet</Code><Message>The TagSet does not exist</Message></Error>`)
+						return
+					}
+					w.Header().Set("Content-Type", "application/xml")
+					_, _ = io.WriteString(w, formatS3TaggingXML(bktTags))
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				if objExists {
+					_, _ = io.WriteString(w, fmt.Sprintf(`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated><Contents><Key>hello.txt</Key><Size>%d</Size><ETag>"etag-foreign"</ETag></Contents></ListBucketResult>`, len(objBody)))
+				} else {
+					_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+				}
+				return
+			}
+			if q.Has("tagging") {
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, formatS3TaggingXML(objTags))
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain")
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(objBody)))
+			w.Header().Set("ETag", `"etag-foreign"`)
+			_, _ = w.Write(objBody)
+		}
+	})
+
+	t.Setenv("LMAWS_LIVE_MUTATE", "1")
+	t.Setenv("LMAWS_RUN_ID", runID)
+
+	// Genuinely absent bucket still returns NotFound so missing-resource conformance tests pass.
+	if _, err := h.ObjectGet(false, bucket, "hello.txt"); err != nil || h.LastError().Code != hostkit.NotFound {
+		t.Fatalf("expected NotFound on genuinely absent bucket, got err=%v last=%+v", err, h.LastError())
+	}
+
+	// Pre-existing unjournaled bucket + object with our prefix must be refused on GetObject, HeadObject, and ListObjects.
+	mu.Lock()
+	bktExists = true
+	objExists = true
+	objBody = []byte("FOREIGN_SECRET_BODY")
+	objTags = map[string]string{"foreign": "owner"}
+	mu.Unlock()
+
+	got, err := h.ObjectGet(false, bucket, "hello.txt")
+	if err != nil || got != "" || h.LastError().Code != hostkit.PermissionDenied {
+		t.Fatalf("expected PermissionDenied on unowned bucket ObjectGet, got body=%q err=%v last=%+v", got, err, h.LastError())
+	}
+	if _, err := h.ObjectHead(false, bucket, "hello.txt"); err != nil || h.LastError().Code != hostkit.PermissionDenied {
+		t.Fatalf("expected PermissionDenied on unowned bucket ObjectHead, got err=%v last=%+v", err, h.LastError())
+	}
+	if _, err := h.ObjectList(false, bucket, "", 10, ""); err != nil || h.LastError().Code != hostkit.PermissionDenied {
+		t.Fatalf("expected PermissionDenied on unowned bucket ObjectList, got err=%v last=%+v", err, h.LastError())
+	}
+}
+
+func TestSolStage2_ForeignObjectOverwriteRefused(t *testing.T) {
+	runID := "run-1700000000-abcdef012345"
+	bucket := "lmcloud-conf-abcdef012345-lifecycle"
+
+	var (
+		mu      sync.Mutex
+		bktExists bool
+		bktTags   = map[string]string{}
+		objExists bool
+		objBody   []byte
+		objTags   = map[string]string{}
+	)
+
+	h, _, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test"))
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		q := r.URL.Query()
+		isObjPath := r.URL.Path != "" && r.URL.Path != "/"
+
+		switch r.Method {
+		case http.MethodHead:
+			if !isObjPath {
+				if !bktExists {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if !bktExists || !objExists {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain")
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(objBody)))
+			w.Header().Set("ETag", `"etag-1"`)
+			w.WriteHeader(http.StatusOK)
+
+		case http.MethodPut:
+			if !isObjPath {
+				if q.Has("tagging") {
+					var parsed mockS3TaggingXML
+					_ = xml.Unmarshal([]byte(r.Header.Get("X-Orig-Body")), &parsed)
+					bktTags = make(map[string]string, len(parsed.TagSet.Tags))
+					for _, tg := range parsed.TagSet.Tags {
+						bktTags[tg.Key] = tg.Value
+					}
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				bktExists = true
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			objExists = true
+			objBody = []byte(r.Header.Get("X-Orig-Body"))
+			parsedTags, _ := url.ParseQuery(r.Header.Get("X-Amz-Tagging"))
+			objTags = make(map[string]string)
+			for tk, tvals := range parsedTags {
+				if len(tvals) > 0 {
+					objTags[tk] = tvals[0]
+				}
+			}
+			w.Header().Set("ETag", `"etag-1"`)
+			w.WriteHeader(http.StatusOK)
+
+		case http.MethodGet:
+			if !isObjPath {
+				if q.Has("tagging") {
+					if len(bktTags) == 0 {
+						w.WriteHeader(http.StatusNotFound)
+						_, _ = io.WriteString(w, `<Error><Code>NoSuchTagSet</Code><Message>The TagSet does not exist</Message></Error>`)
+						return
+					}
+					w.Header().Set("Content-Type", "application/xml")
+					_, _ = io.WriteString(w, formatS3TaggingXML(bktTags))
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+				return
+			}
+			if q.Has("tagging") {
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, formatS3TaggingXML(objTags))
+				return
+			}
+		}
+	})
+
+	t.Setenv("LMAWS_LIVE_MUTATE", "1")
+	t.Setenv("LMAWS_RUN_ID", runID)
+
+	if created, err := h.BucketCreate(false, bucket); err != nil || !created {
+		t.Fatalf("BucketCreate failed: %v (%+v)", err, h.LastError())
+	}
+
+	// Simulate an unjournaled foreign object appearing inside our owned bucket.
+	mu.Lock()
+	objExists = true
+	objBody = []byte("FOREIGN_ORIGINAL")
+	objTags = map[string]string{"foreign": "owner"}
+	mu.Unlock()
+
+	if _, err := h.ObjectPut(false, bucket, "hello.txt", "REPLACED", "text/plain", nil); err != nil || h.LastError().Code != hostkit.Conflict || h.LastError().ProviderCode != "ForeignResourceCollision" {
+		t.Fatalf("expected Conflict / ForeignResourceCollision on unjournaled object overwrite, got err=%v last=%+v", err, h.LastError())
+	}
+	mu.Lock()
+	if string(objBody) != "FOREIGN_ORIGINAL" || objTags["foreign"] != "owner" {
+		t.Fatalf("foreign object body or tags were modified! body=%q tags=%v", string(objBody), objTags)
+	}
+	mu.Unlock()
+}
+
+func TestSolStage2_BucketCreateRaceRetainedNotAdopted(t *testing.T) {
+	runID := "run-1700000000-abcdef012345"
+	bucket := "lmcloud-conf-abcdef012345-lifecycle"
+
+	var (
+		mu             sync.Mutex
+		bktExists      bool
+		bktTags        = map[string]string{}
+		putTagCalled   bool
+		deleteCalled   bool
+	)
+
+	h, a, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test"))
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		q := r.URL.Query()
+
+		switch r.Method {
+		case http.MethodHead:
+			if !bktExists {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+
+		case http.MethodPut:
+			if q.Has("tagging") {
+				putTagCalled = true
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			// Simulate another same-account actor creating and tagging the bucket
+			// between our pre-create HeadBucket check and our CreateBucket call.
+			bktExists = true
+			bktTags = map[string]string{"foreign": "owner"}
+			w.WriteHeader(http.StatusOK)
+
+		case http.MethodGet:
+			if q.Has("tagging") {
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, formatS3TaggingXML(bktTags))
+				return
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+
+		case http.MethodDelete:
+			deleteCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+
+	t.Setenv("LMAWS_LIVE_MUTATE", "1")
+	t.Setenv("LMAWS_RUN_ID", runID)
+
+	created, _ := h.BucketCreate(false, bucket)
+	if created || h.LastError().Code != hostkit.Conflict || h.LastError().ProviderCode != "ForeignResourceCollision" {
+		t.Fatalf("expected Conflict / ForeignResourceCollision on bucket create race, got created=%v last=%+v", created, h.LastError())
+	}
+	mu.Lock()
+	if putTagCalled || bktTags["foreign"] != "owner" {
+		t.Fatalf("PutBucketTagging must NEVER be called when foreign tags are present after CreateBucket (putTagCalled=%v tags=%v)", putTagCalled, bktTags)
+	}
+	mu.Unlock()
+
+	entry, ok := a.LiveSession().Journal().Lookup(safety.KindBucket, "", bucket)
+	if !ok || (!entry.Retain && entry.State != safety.StateRetained) {
+		t.Fatalf("expected raced bucket to be marked StateRetained in journal, got %+v (ok=%v)", entry, ok)
+	}
+
+	_, _ = h.BucketDelete(false, bucket)
+	if h.LastError().Code != hostkit.PermissionDenied {
+		t.Fatalf("expected PermissionDenied on deleting retained bucket, got %+v", h.LastError())
+	}
+	mu.Lock()
+	if deleteCalled {
+		t.Fatalf("DeleteBucket must never be called on a retained bucket")
+	}
+	mu.Unlock()
+}
+
+func TestSolStage2_PhysicalRequestAdmission1To1(t *testing.T) {
+	runID := "run-1700000000-abcdef012345"
+	bucket := "lmcloud-conf-abcdef012345-lifecycle"
+
+	var (
+		mu        sync.Mutex
+		bktExists bool
+		bktTags   = map[string]string{}
+	)
+
+	h, a, _, fwd := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test"))
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		q := r.URL.Query()
+
+		switch r.Method {
+		case http.MethodHead:
+			if !bktExists {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		case http.MethodPut:
+			if q.Has("tagging") {
+				var parsed mockS3TaggingXML
+				_ = xml.Unmarshal([]byte(r.Header.Get("X-Orig-Body")), &parsed)
+				bktTags = make(map[string]string, len(parsed.TagSet.Tags))
+				for _, tg := range parsed.TagSet.Tags {
+					bktTags[tg.Key] = tg.Value
+				}
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			bktExists = true
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			if q.Has("tagging") {
+				if len(bktTags) == 0 {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = io.WriteString(w, `<Error><Code>NoSuchTagSet</Code><Message>The TagSet does not exist</Message></Error>`)
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, formatS3TaggingXML(bktTags))
+				return
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+		}
+	})
+
+	t.Setenv("LMAWS_LIVE_MUTATE", "1")
+	t.Setenv("LMAWS_RUN_ID", runID)
+
+	if created, err := h.BucketCreate(false, bucket); err != nil || !created {
+		t.Fatalf("BucketCreate failed: %v (%+v)", err, h.LastError())
+	}
+
+	nonSTS := 0
+	for _, rec := range fwd.records() {
+		if !strings.HasPrefix(rec.Host, "sts.") {
+			nonSTS++
+		}
+	}
+	st := a.LiveSession().Journal().State()
+	if len(st.PendingAttempts) != 0 {
+		t.Fatalf("expected 0 pending attempts after BucketCreate, got %+v", st.PendingAttempts)
+	}
+	rawJournal, rerr := os.ReadFile(a.LiveSession().Journal().Path())
+	if rerr != nil {
+		t.Fatalf("read journal: %v", rerr)
+	}
+	beginCount := strings.Count(string(rawJournal), `"event":"reserve"`) + strings.Count(string(rawJournal), `"event":"intent"`)
+	if beginCount != nonSTS {
+		t.Fatalf("expected 1-to-1 physical S3 request admission: got %d journaled attempt begins for %d physical S3 requests", beginCount, nonSTS)
+	}
+	// 8 physical S3 requests:
+	// 1. pre-create HeadBucket (400)
+	// 2. CreateBucket (5000)
+	// 3. post-create race check GetBucketTagging (400 + egress)
+	// 4. post-create race check ListObjectsV2(MaxKeys=1) (5000 + egress)
+	// 5. PutBucketTagging (5000)
+	// 6. post-create ReadOwnership HeadBucket (400)
+	// 7. post-create ReadOwnership GetBucketTagging (400 + egress)
+	// 8. post-create ReadOwnership ListObjectsV2 (5000 + egress)
+	// Base request fees alone = 400 + 5000 + 400 + 5000 + 5000 + 400 + 400 + 5000 = 21600 nano-USD.
+	charged := a.LiveSession().Meter().Snapshot().ChargedNanoUSD
+	if nonSTS != 8 || charged < 21600 {
+		t.Fatalf("expected 8 physical S3 requests and >= 21600 nano-USD charged, got nonSTS=%d charged=%d", nonSTS, charged)
+	}
+}
+
+func TestSolStage2_RetainedSweepFailsClosed(t *testing.T) {
+	runID := "run-1700000000-abcdef012345"
+	untaggedAfterCreateBucket := "lmcloud-conf-abcdef012345-tagfail"
+	journalDir := filepath.Join(t.TempDir(), "journal")
+
+	var (
+		mu              sync.Mutex
+		createPutCalled bool
+	)
+
+	h, a, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test"))
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		q := r.URL.Query()
+		if strings.HasPrefix(origHost, untaggedAfterCreateBucket+".") {
+			switch r.Method {
+			case http.MethodHead:
+				if !createPutCalled {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			case http.MethodPut:
+				if q.Has("tagging") {
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = io.WriteString(w, `<Error><Code>AccessDenied</Code><Message>PutBucketTagging denied</Message></Error>`)
+					return
+				}
+				createPutCalled = true
+				w.WriteHeader(http.StatusOK)
+			case http.MethodGet:
+				if q.Has("tagging") {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = io.WriteString(w, `<Error><Code>NoSuchTagSet</Code><Message>No tags</Message></Error>`)
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+			}
+			return
+		}
+		// S3 ListBuckets / SQS ListQueues during prefix scan
+		if strings.HasPrefix(origHost, "s3.") {
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, fmt.Sprintf(`<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Buckets><Bucket><Name>%s</Name></Bucket></Buckets></ListAllMyBucketsResult>`, untaggedAfterCreateBucket))
+			return
+		}
+		if strings.HasPrefix(origHost, "sqs.") {
+			w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+			_, _ = io.WriteString(w, `{}`)
+			return
+		}
+	})
+
+	t.Setenv("LMAWS_LIVE_MUTATE", "1")
+	t.Setenv("LMAWS_RUN_ID", runID)
+	t.Setenv("LMAWS_LIVE_JOURNAL_DIR", journalDir)
+
+	_, _ = h.BucketCreate(false, untaggedAfterCreateBucket)
+	if h.LastError().Code != hostkit.Conflict || h.LastError().ProviderCode != "ForeignResourceCollision" {
+		t.Fatalf("expected Conflict / ForeignResourceCollision when PutBucketTagging fails, got %+v", h.LastError())
+	}
+	_ = a.Close()
+
+	var out strings.Builder
+	code := a.SweepCLI(t.Context(), []string{"--apply", "--journal-dir", journalDir, runID}, &out)
+	var result sweepCLIOutput
+	if err := json.Unmarshal([]byte(out.String()), &result); err != nil {
+		t.Fatalf("unmarshal sweep output: %v (%s)", err, out.String())
+	}
+	if code == 0 || result.OK || result.Retained < 1 {
+		t.Fatalf("expected SweepCLI to exit non-zero with ok=false when retained=%d, got code=%d result=%+v", result.Retained, code, result)
+	}
+}
+
+func TestLiveStage2_JournalLessSweepAndStrictRunSelection(t *testing.T) {
+	runA := "run-1700000000-aaaaaaaaaaaa"
+	runB := "run-1700000000-bbbbbbbbbbbb"
+	bktB := "lmcloud-conf-bbbbbbbbbbbb-owned"
+	bktUntaggedB := "lmcloud-conf-bbbbbbbbbbbb-untagged"
+	qB := "lmcloud-conf-bbbbbbbbbbbb-q"
+	journalDir := filepath.Join(t.TempDir(), "journal")
+
+	// Create a dummy journal file for runA so we can verify that sweeping runB
+	// (when runB has no journal file) NEVER sweeps runA's journal.
+	metaA := safety.JournalMeta{
+		RunID:         runA,
+		SessionID:     "sess-a",
+		PolicyHash:    strings.Repeat("a", 64),
+		Provider:      "aws",
+		Account:       RequiredLiveAccount,
+		Scope:         "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test",
+		Region:        RequiredLiveRegion,
+		StartedAtUnix: 1700000000,
+	}
+	jA, err := safety.OpenJournal(journalDir, metaA)
+	if err != nil {
+		t.Fatalf("OpenJournal(runA): %v", err)
+	}
+	if _, err := jA.BeginCreate(safety.KindBucket, "", "us-east-1", "lmcloud-conf-aaaaaaaaaaaa-other", 0); err != nil {
+		t.Fatalf("BeginCreate(runA): %v", err)
+	}
+	_ = jA.Close()
+
+	var (
+		mu          sync.Mutex
+		bktBExists  = true
+		untaggedB   = true
+		qBExists    = true
+		touchedRunA bool
+		deletedList []string
+	)
+	tagsB := map[string]string{
+		liveOwnerTagKey:             liveOwnerTagValue,
+		liveRunTagKey:               runB,
+		safety.TagKeyRunID:          runB,
+		safety.TagKeyOwnerNonce:     "nonce-b-123456",
+		safety.TagKeyCreateToken:    "tok-b-123456",
+		createTokenTagKey:           "tok-b-123456",
+		safety.TagKeyCreatedAt:   "1700000010",
+	}
+
+	_, a, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test"))
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.Contains(origHost, "aaaaaaaaaaaa") {
+			touchedRunA = true
+		}
+		if strings.HasPrefix(origHost, "sqs.") {
+			target := r.Header.Get("X-Amz-Target")
+			w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+			switch target {
+			case "AmazonSQS.ListQueues":
+				if qBExists {
+					_, _ = io.WriteString(w, fmt.Sprintf(`{"QueueUrls":["https://sqs.us-east-1.amazonaws.com/%s/%s"]}`, RequiredLiveAccount, qB))
+				} else {
+					_, _ = io.WriteString(w, `{}`)
+				}
+			case "AmazonSQS.GetQueueUrl":
+				if !qBExists {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"__type":"com.amazonaws.sqs#QueueDoesNotExist","message":"no queue"}`)
+					return
+				}
+				_, _ = io.WriteString(w, fmt.Sprintf(`{"QueueUrl":"https://sqs.us-east-1.amazonaws.com/%s/%s"}`, RequiredLiveAccount, qB))
+			case "AmazonSQS.ListQueueTags":
+				rawTags, _ := json.Marshal(tagsB)
+				_, _ = io.WriteString(w, fmt.Sprintf(`{"Tags":%s}`, string(rawTags)))
+			case "AmazonSQS.DeleteQueue":
+				deletedList = append(deletedList, "queue:"+qB)
+				qBExists = false
+				_, _ = io.WriteString(w, `{}`)
+			}
+			return
+		}
+
+		q := r.URL.Query()
+		if origHost == "s3.us-east-1.amazonaws.com" {
+			w.Header().Set("Content-Type", "application/xml")
+			var bkts strings.Builder
+			if bktBExists {
+				bkts.WriteString(fmt.Sprintf(`<Bucket><Name>%s</Name></Bucket>`, bktB))
+			}
+			if untaggedB {
+				bkts.WriteString(fmt.Sprintf(`<Bucket><Name>%s</Name></Bucket>`, bktUntaggedB))
+			}
+			_, _ = io.WriteString(w, fmt.Sprintf(`<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Buckets>%s</Buckets></ListAllMyBucketsResult>`, bkts.String()))
+			return
+		}
+
+		if strings.HasPrefix(origHost, bktB+".") {
+			switch r.Method {
+			case http.MethodHead:
+				if !bktBExists {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			case http.MethodGet:
+				if q.Has("tagging") {
+					w.Header().Set("Content-Type", "application/xml")
+					_, _ = io.WriteString(w, formatS3TaggingXML(tagsB))
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+			case http.MethodDelete:
+				deletedList = append(deletedList, "bucket:"+bktB)
+				bktBExists = false
+				w.WriteHeader(http.StatusNoContent)
+			}
+			return
+		}
+
+		if strings.HasPrefix(origHost, bktUntaggedB+".") {
+			switch r.Method {
+			case http.MethodHead:
+				w.WriteHeader(http.StatusOK)
+			case http.MethodGet:
+				if q.Has("tagging") {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = io.WriteString(w, `<Error><Code>NoSuchTagSet</Code><Message>No tags</Message></Error>`)
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+			case http.MethodDelete:
+				deletedList = append(deletedList, "bucket:"+bktUntaggedB)
+				w.WriteHeader(http.StatusNoContent)
+			}
+			return
+		}
+	})
+
+	t.Setenv("LMAWS_LIVE_MUTATE", "1")
+	t.Setenv("LMAWS_LIVE_JOURNAL_DIR", journalDir)
+
+	// 1. --sweep --apply with NO RUN_ID, NO LMAWS_RUN_ID, and NO --all-stale must fail closed
+	// rather than implicitly sweeping runA's journal in journalDir.
+	t.Setenv("LMAWS_RUN_ID", "")
+	var noArgBuf strings.Builder
+	if rc := a.SweepCLI(t.Context(), []string{"--apply", "--journal-dir", journalDir}, &noArgBuf); rc == 0 {
+		t.Fatalf("expected --sweep --apply without RUN_ID or --all-stale to fail closed, got rc=0 (%s)", noArgBuf.String())
+	}
+	mu.Lock()
+	if touchedRunA {
+		t.Fatalf("SweepCLI without RUN_ID must NEVER touch runA's journal resources")
+	}
+	mu.Unlock()
+
+	// 2. With LMAWS_RUN_ID=runB (whose journal file does not exist), SweepCLI sweeps ONLY runB
+	// via prefix + ownership tags + timestamp, deleting proven-owned bktB and qB while retaining
+	// untagged bktUntaggedB and exiting 1 because bktUntaggedB was retained.
+	t.Setenv("LMAWS_RUN_ID", runB)
+	var sweepBBuf strings.Builder
+	rcB := a.SweepCLI(t.Context(), []string{"--apply", "--journal-dir", journalDir}, &sweepBBuf)
+	var resB sweepCLIOutput
+	if err := json.Unmarshal([]byte(sweepBBuf.String()), &resB); err != nil {
+		t.Fatalf("unmarshal runB sweep output: %v (%s)", err, sweepBBuf.String())
+	}
+	mu.Lock()
+	if touchedRunA {
+		t.Fatalf("SweepCLI with LMAWS_RUN_ID=runB must NEVER touch runA's journal")
+	}
+	if bktBExists || qBExists {
+		t.Fatalf("expected tag-proven bktB and qB to be deleted by journal-less sweep, got bktBExists=%v qBExists=%v deleted=%v", bktBExists, qBExists, deletedList)
+	}
+	for _, d := range deletedList {
+		if d == "bucket:"+bktUntaggedB {
+			t.Fatalf("untagged bucket must NEVER be deleted by journal-less sweep")
+		}
+	}
+	mu.Unlock()
+	if rcB == 0 || resB.OK || resB.Deleted != 2 || resB.Retained != 1 {
+		t.Fatalf("expected rc!=0, ok=false, deleted=2, retained=1 when untagged bucket remains, got rc=%d res=%+v", rcB, resB)
+	}
+
+	// 3. Once the untagged bucket is removed, journal-less sweep for runB reports ok=true and exits 0.
+	mu.Lock()
+	untaggedB = false
+	mu.Unlock()
+	var cleanBuf strings.Builder
+	rcClean := a.SweepCLI(t.Context(), []string{"--apply", "--journal-dir", journalDir, runB}, &cleanBuf)
+	var resClean sweepCLIOutput
+	if err := json.Unmarshal([]byte(cleanBuf.String()), &resClean); err != nil {
+		t.Fatalf("unmarshal clean sweep output: %v (%s)", err, cleanBuf.String())
+	}
+	if rcClean != 0 || !resClean.OK || resClean.Retained != 0 {
+		t.Fatalf("expected rc=0, ok=true on clean journal-less sweep, got rc=%d res=%+v", rcClean, resClean)
+	}
+}
