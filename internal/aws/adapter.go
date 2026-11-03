@@ -22,6 +22,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -160,6 +161,25 @@ func (a *Adapter) Close() error {
 		return nil
 	}
 	return a.live.Close()
+}
+
+// FinishAndSweep executes an active LIFO recovery sweep on the current live
+// session (if open), compacts its journal, and closes the session.
+func (a *Adapter) FinishAndSweep(ctx context.Context) (safety.SweepReport, error) {
+	if a == nil || a.live == nil {
+		return safety.SweepReport{}, nil
+	}
+	return a.live.FinishAndSweep(ctx)
+}
+
+// SweepCLI executes the `lmaws --sweep` command (dry-run by default unless
+// --apply or --delete is passed).
+func (a *Adapter) SweepCLI(ctx context.Context, args []string, out io.Writer) int {
+	if a == nil || a.live == nil {
+		_, _ = fmt.Fprintln(out, `{"ok":true,"swept":0,"mode":"sim-or-live-readonly-stage1"}`)
+		return 0
+	}
+	return a.live.SweepCLI(ctx, args, out)
 }
 
 // LiveSession returns the active live safety.Session if live mode has been

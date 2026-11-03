@@ -4,6 +4,7 @@ package aws
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -92,6 +93,7 @@ func setValidLiveEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("LMCLOUD_LIVE", "1")
 	t.Setenv("LMAWS_LIVE", "1")
+	t.Setenv("LMAWS_LIVE_MUTATE", "")
 	t.Setenv("LMAWS_LIVE_ACCOUNT", RequiredLiveAccount)
 	t.Setenv("LMAWS_LIVE_REGION", RequiredLiveRegion)
 	t.Setenv("AWS_REGION", RequiredLiveRegion)
@@ -1025,4 +1027,688 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
+}
+
+// --- Stage 2 Live Mutation & Sweeper Tests ---
+
+type mockS3TaggingXML struct {
+	XMLName xml.Name `xml:"Tagging"`
+	TagSet  struct {
+		Tags []struct {
+			Key   string `xml:"Key"`
+			Value string `xml:"Value"`
+		} `xml:"Tag"`
+	} `xml:"TagSet"`
+}
+
+func formatS3TaggingXML(tags map[string]string) string {
+	var b strings.Builder
+	b.WriteString(`<Tagging xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><TagSet>`)
+	for k, v := range tags {
+		fmt.Fprintf(&b, "<Tag><Key>%s</Key><Value>%s</Value></Tag>", k, v)
+	}
+	b.WriteString(`</TagSet></Tagging>`)
+	return b.String()
+}
+
+func TestLiveStage2_TripleOptInAndWebIdentityOIDC(t *testing.T) {
+	setValidLiveEnv(t)
+	t.Setenv("LMAWS_LIVE_MUTATE", "invalid")
+
+	h, _, _, _ := newLiveTestHost(t, nil, nil)
+	t.Setenv("LMAWS_LIVE_MUTATE", "invalid")
+	_, _ = h.BucketCreate(false, "lmcloud-conf-abcdef012345-bkt")
+	if h.LastError().Code != hostkit.InvalidArgument || h.LastError().ProviderCode != "InvalidLiveOptIn" {
+		t.Fatalf("expected InvalidArgument / InvalidLiveOptIn, got %+v", h.LastError())
+	}
+
+	// Test WebIdentity OIDC credential chain (AWS_WEB_IDENTITY_TOKEN_FILE + AWS_ROLE_ARN).
+	setValidLiveEnv(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("AWS_SESSION_TOKEN", "")
+	tokenFile := filepath.Join(t.TempDir(), "oidc-token.jwt")
+	secretJWT := "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.SUPER_SECRET_GITHUB_OIDC_JWT"
+	if err := os.WriteFile(tokenFile, []byte(secretJWT), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	roleARN := "arn:aws:iam::254332045686:role/lmcloud-conformance-ci"
+	assumedARN := "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/lmaws-live"
+	t.Setenv("AWS_WEB_IDENTITY_TOKEN_FILE", tokenFile)
+	t.Setenv("AWS_ROLE_ARN", roleARN)
+
+	var sawAssumeRoleWithWebIdentity bool
+	srv := httpguard.New(t)
+	srv.Script(func(w http.ResponseWriter, r *http.Request) {
+		body := r.Header.Get("X-Orig-Body")
+		if strings.Contains(body, "Action=AssumeRoleWithWebIdentity") {
+			sawAssumeRoleWithWebIdentity = true
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, fmt.Sprintf(`<AssumeRoleWithWebIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <AssumeRoleWithWebIdentityResult>
+    <Credentials>
+      <AccessKeyId>ASIAOIDCTESTKEY12345</AccessKeyId>
+      <SecretAccessKey>OIDC_TEMP_SECRET_KEY_VALUE_9999</SecretAccessKey>
+      <SessionToken>OIDC_TEMP_SESSION_TOKEN_VALUE_9999</SessionToken>
+      <Expiration>2099-01-01T00:00:00Z</Expiration>
+    </Credentials>
+    <AssumedRoleUser>
+      <AssumedRoleId>AROAEXAMPLE:lmaws-live</AssumedRoleId>
+      <Arn>%s</Arn>
+    </AssumedRoleUser>
+  </AssumeRoleWithWebIdentityResult>
+</AssumeRoleWithWebIdentityResponse>`, assumedARN))
+			return
+		}
+		if strings.Contains(body, "Action=GetCallerIdentity") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, assumedARN))
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = io.WriteString(w, `<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Buckets></Buckets></ListAllMyBucketsResult>`)
+	})
+
+	fwd := &liveGuardForwardTransport{srvURL: srv.URL}
+	rp := fastRetry()
+	a := New(&Options{
+		Retry:          &rp,
+		HTTPClient:     &http.Client{Transport: fwd},
+		LiveJournalDir: filepath.Join(t.TempDir(), "journal"),
+	})
+	defer a.Close()
+	host := cloudhost.New(cloudhost.Config{Provider: "aws", Store: a, Queue: a, Endpoints: Endpoints()})
+	host.SetAbortOnError(false)
+
+	names, err := host.BucketList(false)
+	if err != nil || host.LastError().Code != hostkit.OK {
+		t.Fatalf("BucketList via WebIdentity OIDC failed: err=%v last=%+v", err, host.LastError())
+	}
+	if !sawAssumeRoleWithWebIdentity {
+		t.Fatalf("expected STS AssumeRoleWithWebIdentity call")
+	}
+	if len(names) != 0 {
+		t.Fatalf("expected 0 buckets, got %v", names)
+	}
+}
+
+func TestLiveStage2_S3FullLifecycleAndOwnershipTags(t *testing.T) {
+	runID := "run-1700000000-abcdef012345"
+	bucket := "lmcloud-conf-abcdef012345-lifecycle"
+
+	var (
+		mu         sync.Mutex
+		bktExists  bool
+		bktTags    = map[string]string{}
+		objExists  bool
+		objBody    []byte
+		objCT      string
+		objMeta    = map[string]string{}
+		objTags    = map[string]string{}
+		objETag    = "etag-stage2-obj1"
+	)
+
+	h, _, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test"))
+			return
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		q := r.URL.Query()
+		isObjPath := r.URL.Path != "" && r.URL.Path != "/"
+
+		switch r.Method {
+		case http.MethodHead:
+			if !isObjPath {
+				if !bktExists {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if !bktExists || !objExists {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			for k, v := range objMeta {
+				w.Header().Set("X-Amz-Meta-"+k, v)
+			}
+			w.Header().Set("Content-Type", objCT)
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(objBody)))
+			w.Header().Set("ETag", `"`+objETag+`"`)
+			w.WriteHeader(http.StatusOK)
+
+		case http.MethodPut:
+			if !isObjPath {
+				if q.Has("tagging") {
+					var parsed mockS3TaggingXML
+					if err := xml.Unmarshal([]byte(r.Header.Get("X-Orig-Body")), &parsed); err != nil {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					bktTags = make(map[string]string, len(parsed.TagSet.Tags))
+					for _, tg := range parsed.TagSet.Tags {
+						bktTags[tg.Key] = tg.Value
+					}
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				bktExists = true
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			// PutObject
+			objExists = true
+			objBody = []byte(r.Header.Get("X-Orig-Body"))
+			objCT = r.Header.Get("Content-Type")
+			objMeta = make(map[string]string)
+			for hk, hvals := range r.Header {
+				lhk := strings.ToLower(hk)
+				if strings.HasPrefix(lhk, "x-amz-meta-") && len(hvals) > 0 {
+					objMeta[strings.TrimPrefix(lhk, "x-amz-meta-")] = hvals[0]
+				}
+			}
+			tagHdr := r.Header.Get("X-Amz-Tagging")
+			parsedTags, _ := url.ParseQuery(tagHdr)
+			objTags = make(map[string]string)
+			for tk, tvals := range parsedTags {
+				if len(tvals) > 0 {
+					objTags[tk] = tvals[0]
+				}
+			}
+			w.Header().Set("ETag", `"`+objETag+`"`)
+			w.WriteHeader(http.StatusOK)
+
+		case http.MethodGet:
+			if !isObjPath {
+				if q.Has("tagging") {
+					if len(bktTags) == 0 {
+						w.WriteHeader(http.StatusNotFound)
+						_, _ = io.WriteString(w, `<Error><Code>NoSuchTagSet</Code><Message>The TagSet does not exist</Message></Error>`)
+						return
+					}
+					w.Header().Set("Content-Type", "application/xml")
+					_, _ = io.WriteString(w, formatS3TaggingXML(bktTags))
+					return
+				}
+				// ListObjectsV2
+				w.Header().Set("Content-Type", "application/xml")
+				if objExists {
+					_, _ = io.WriteString(w, fmt.Sprintf(`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated><Contents><Key>hello.txt</Key><Size>%d</Size><ETag>"%s"</ETag></Contents></ListBucketResult>`, len(objBody), objETag))
+				} else {
+					_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+				}
+				return
+			}
+			if q.Has("tagging") {
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, formatS3TaggingXML(objTags))
+				return
+			}
+			// GetObject
+			if !objExists {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = io.WriteString(w, `<Error><Code>NoSuchKey</Code><Message>No such key</Message></Error>`)
+				return
+			}
+			w.Header().Set("Content-Type", objCT)
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(objBody)))
+			w.Header().Set("ETag", `"`+objETag+`"`)
+			_, _ = w.Write(objBody)
+
+		case http.MethodDelete:
+			if !isObjPath {
+				bktExists = false
+				bktTags = nil
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			objExists = false
+			objBody = nil
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+
+	t.Setenv("LMAWS_LIVE_MUTATE", "1")
+	t.Setenv("LMAWS_RUN_ID", runID)
+
+	// 1. Wrong prefix is rejected before any S3 call.
+	if created, _ := h.BucketCreate(false, "wrong-prefix-bucket"); created || h.LastError().Code != hostkit.PermissionDenied {
+		t.Fatalf("expected wrong prefix BucketCreate to fail with PermissionDenied, got %+v", h.LastError())
+	}
+
+	// 2. BucketCreate with valid run prefix succeeds and attaches conformance + safety tags.
+	created, err := h.BucketCreate(false, bucket)
+	if err != nil || !created || h.LastError().Code != hostkit.OK {
+		t.Fatalf("BucketCreate failed: created=%v err=%v last=%+v", created, err, h.LastError())
+	}
+	mu.Lock()
+	if bktTags["lmcloud-owner"] != "conformance" || bktTags["lmcloud-run"] != runID || bktTags[safety.TagKeyRunID] != runID || bktTags[safety.TagKeyOwnerNonce] == "" {
+		t.Fatalf("unexpected bucket tags: %+v", bktTags)
+	}
+	mu.Unlock()
+
+	// 3. Duplicate BucketCreate is idempotent (created=false, OK).
+	created2, err := h.BucketCreate(false, bucket)
+	if err != nil || created2 || h.LastError().Code != hostkit.OK {
+		t.Fatalf("duplicate BucketCreate failed: created=%v err=%v last=%+v", created2, err, h.LastError())
+	}
+
+	// 4. ObjectPut attaches object tags via X-Amz-Tagging and preserves clean user metadata.
+	putMeta, err := h.ObjectPut(false, bucket, "hello.txt", "world-payload", "text/plain", map[string]string{"env": "stage2", "team": "core"})
+	if err != nil || h.LastError().Code != hostkit.OK {
+		t.Fatalf("ObjectPut failed: err=%v last=%+v", err, h.LastError())
+	}
+	if len(putMeta.Metadata) != 2 || putMeta.Metadata["env"] != "stage2" || putMeta.Metadata["team"] != "core" {
+		t.Fatalf("ObjectPut metadata leaked internal keys: %+v", putMeta.Metadata)
+	}
+	mu.Lock()
+	if objTags["lmcloud-owner"] != "conformance" || objTags["lmcloud-run"] != runID || objTags[safety.TagKeyOwnerNonce] == "" {
+		t.Fatalf("unexpected object tags: %+v", objTags)
+	}
+	mu.Unlock()
+
+	// 5. ObjectHead returns only the 2 user metadata keys.
+	headMeta, err := h.ObjectHead(false, bucket, "hello.txt")
+	if err != nil || !headMeta.Exists || len(headMeta.Metadata) != 2 {
+		t.Fatalf("ObjectHead unexpected: meta=%+v err=%v last=%+v", headMeta, err, h.LastError())
+	}
+
+	// 6. ObjectGet returns the body.
+	gotBody, err := h.ObjectGet(false, bucket, "hello.txt")
+	if err != nil || gotBody != "world-payload" {
+		t.Fatalf("ObjectGet unexpected: body=%q err=%v last=%+v", gotBody, err, h.LastError())
+	}
+
+	// 7. ObjectDelete + BucketDelete succeed.
+	if err := h.ObjectDelete(false, bucket, "hello.txt"); err != nil || h.LastError().Code != hostkit.OK {
+		t.Fatalf("ObjectDelete failed: err=%v last=%+v", err, h.LastError())
+	}
+	delBkt, err := h.BucketDelete(false, bucket)
+	if err != nil || !delBkt || h.LastError().Code != hostkit.OK {
+		t.Fatalf("BucketDelete failed: del=%v err=%v last=%+v", delBkt, err, h.LastError())
+	}
+}
+
+func TestLiveStage2_S3NonAtomicTaggingGapRetainsBucket(t *testing.T) {
+	runID := "run-1700000000-abcdef012345"
+	preExistingBucket := "lmcloud-conf-abcdef012345-preexisting"
+	untaggedAfterCreateBucket := "lmcloud-conf-abcdef012345-tagfail"
+
+	var (
+		mu              sync.Mutex
+		createPutCalled bool
+		deleteCalled    bool
+	)
+
+	h, a, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test"))
+			return
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		q := r.URL.Query()
+
+		if strings.HasPrefix(origHost, preExistingBucket+".") {
+			switch r.Method {
+			case http.MethodHead:
+				w.WriteHeader(http.StatusOK)
+			case http.MethodGet:
+				if q.Has("tagging") {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = io.WriteString(w, `<Error><Code>NoSuchTagSet</Code><Message>No tags</Message></Error>`)
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+			case http.MethodPut:
+				createPutCalled = true
+				w.WriteHeader(http.StatusOK)
+			case http.MethodDelete:
+				deleteCalled = true
+				w.WriteHeader(http.StatusNoContent)
+			}
+			return
+		}
+
+		if strings.HasPrefix(origHost, untaggedAfterCreateBucket+".") {
+			// Simulate CreateBucket succeeding, then PutBucketTagging failing with 403/500,
+			// leaving an untagged bucket on S3.
+			switch r.Method {
+			case http.MethodHead:
+				if !createPutCalled {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			case http.MethodPut:
+				if q.Has("tagging") {
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = io.WriteString(w, `<Error><Code>AccessDenied</Code><Message>PutBucketTagging denied</Message></Error>`)
+					return
+				}
+				createPutCalled = true
+				w.WriteHeader(http.StatusOK)
+			case http.MethodGet:
+				if q.Has("tagging") {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = io.WriteString(w, `<Error><Code>NoSuchTagSet</Code><Message>No tags</Message></Error>`)
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+			}
+		}
+	})
+
+	t.Setenv("LMAWS_LIVE_MUTATE", "1")
+	t.Setenv("LMAWS_RUN_ID", runID)
+
+	// Case A: Pre-existing untagged bucket is rejected before CreateBucket/PutBucketTagging and marked Retained.
+	_, _ = h.BucketCreate(false, preExistingBucket)
+	if h.LastError().Code != hostkit.Conflict || h.LastError().ProviderCode != "ForeignResourceCollision" {
+		t.Fatalf("expected Conflict / ForeignResourceCollision on pre-existing untagged bucket, got %+v", h.LastError())
+	}
+	mu.Lock()
+	if createPutCalled {
+		t.Fatalf("CreateBucket/PutBucketTagging must NEVER be called on a pre-existing untagged bucket")
+	}
+	mu.Unlock()
+
+	// Attempting to delete the retained bucket is refused without touching S3.
+	_, _ = h.BucketDelete(false, preExistingBucket)
+	if h.LastError().Code != hostkit.PermissionDenied {
+		t.Fatalf("expected PermissionDenied when deleting retained bucket, got %+v", h.LastError())
+	}
+	mu.Lock()
+	if deleteCalled {
+		t.Fatalf("DeleteBucket must NEVER be dispatched for a retained bucket")
+	}
+	mu.Unlock()
+
+	// Case B: CreateBucket succeeds but PutBucketTagging fails -> bucket is marked StateRetained in journal.
+	_, _ = h.BucketCreate(false, untaggedAfterCreateBucket)
+	if h.LastError().Code != hostkit.Conflict || h.LastError().ProviderCode != "ForeignResourceCollision" {
+		t.Fatalf("expected Conflict / ForeignResourceCollision when post-create tagging fails, got %+v", h.LastError())
+	}
+	entry, ok := a.LiveSession().Journal().Lookup(safety.KindBucket, "", untaggedAfterCreateBucket)
+	if !ok || (!entry.Retain && entry.State != safety.StateRetained) {
+		t.Fatalf("expected untagged bucket after PutBucketTagging failure to be marked StateRetained in journal, got %+v (ok=%v)", entry, ok)
+	}
+}
+
+func TestLiveStage2_SQSLifecycleAndSweeperLIFO(t *testing.T) {
+	runID := "run-1700000000-abcdef012345"
+	bucket := "lmcloud-conf-abcdef012345-sweepbkt"
+	queue := "lmcloud-conf-abcdef012345-sweepq"
+	qURL := "https://sqs.us-east-1.amazonaws.com/254332045686/" + queue
+
+	var (
+		mu          sync.Mutex
+		bktExists   bool
+		bktTags     = map[string]string{}
+		objExists   bool
+		objTags     = map[string]string{}
+		qExists     bool
+		qTags       = map[string]string{}
+		msgBody     string
+		msgInFlight bool
+		deleteOrder []string
+	)
+
+	journalDir := filepath.Join(t.TempDir(), "journal")
+	h, a, _, _ := newLiveTestHost(t, &Options{LiveJournalDir: journalDir}, func(w http.ResponseWriter, r *http.Request) {
+		origHost := r.Header.Get("X-Orig-Host")
+		if strings.HasPrefix(origHost, "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/lmcloud-conformance-ci/test"))
+			return
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		if strings.HasPrefix(origHost, "sqs.") {
+			target := r.Header.Get("X-Amz-Target")
+			body := r.Header.Get("X-Orig-Body")
+			w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+			switch target {
+			case "AmazonSQS.GetQueueUrl":
+				if !qExists {
+					w.Header().Set("X-Amzn-Errortype", "AWS.SimpleQueueService.NonExistentQueue")
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"__type":"com.amazonaws.sqs#QueueDoesNotExist","message":"The specified queue does not exist."}`)
+					return
+				}
+				_, _ = io.WriteString(w, fmt.Sprintf(`{"QueueUrl":%q}`, qURL))
+			case "AmazonSQS.CreateQueue":
+				var payload struct {
+					QueueName string            `json:"QueueName"`
+					Tags      map[string]string `json:"tags"`
+				}
+				_ = json.Unmarshal([]byte(body), &payload)
+				if !qExists {
+					qExists = true
+					qTags = payload.Tags
+				}
+				_, _ = io.WriteString(w, fmt.Sprintf(`{"QueueUrl":%q}`, qURL))
+			case "AmazonSQS.ListQueueTags":
+				out, _ := json.Marshal(map[string]any{"Tags": qTags})
+				_, _ = w.Write(out)
+			case "AmazonSQS.SendMessage":
+				var payload struct {
+					MessageBody string `json:"MessageBody"`
+				}
+				_ = json.Unmarshal([]byte(body), &payload)
+				msgBody = payload.MessageBody
+				msgInFlight = false
+				_, _ = io.WriteString(w, `{"MessageId":"msg-1"}`)
+			case "AmazonSQS.ReceiveMessage":
+				if msgBody == "" || msgInFlight {
+					_, _ = io.WriteString(w, `{"Messages":[]}`)
+					return
+				}
+				msgInFlight = true
+				out, _ := json.Marshal(map[string]any{
+					"Messages": []map[string]string{{
+						"MessageId":     "msg-1",
+						"ReceiptHandle": "rh-1",
+						"Body":          msgBody,
+					}},
+				})
+				_, _ = w.Write(out)
+			case "AmazonSQS.ChangeMessageVisibility":
+				msgInFlight = false
+				_, _ = io.WriteString(w, `{}`)
+			case "AmazonSQS.DeleteMessage":
+				msgBody = ""
+				msgInFlight = false
+				_, _ = io.WriteString(w, `{}`)
+			case "AmazonSQS.DeleteQueue":
+				deleteOrder = append(deleteOrder, "queue:"+queue)
+				qExists = false
+				_, _ = io.WriteString(w, `{}`)
+			case "AmazonSQS.ListQueues":
+				if qExists {
+					_, _ = io.WriteString(w, fmt.Sprintf(`{"QueueUrls":[%q]}`, qURL))
+				} else {
+					_, _ = io.WriteString(w, `{"QueueUrls":[]}`)
+				}
+			}
+			return
+		}
+
+		// S3 handlers for sweep test
+		q := r.URL.Query()
+		isObjPath := r.URL.Path != "" && r.URL.Path != "/"
+		if origHost == "s3.us-east-1.amazonaws.com" {
+			w.Header().Set("Content-Type", "application/xml")
+			if bktExists {
+				_, _ = io.WriteString(w, fmt.Sprintf(`<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Buckets><Bucket><Name>%s</Name></Bucket></Buckets></ListAllMyBucketsResult>`, bucket))
+			} else {
+				_, _ = io.WriteString(w, `<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Buckets></Buckets></ListAllMyBucketsResult>`)
+			}
+			return
+		}
+		switch r.Method {
+		case http.MethodHead:
+			if !isObjPath {
+				if !bktExists {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if !bktExists || !objExists {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("ETag", `"etag-1"`)
+			w.WriteHeader(http.StatusOK)
+		case http.MethodPut:
+			if !isObjPath {
+				if q.Has("tagging") {
+					var parsed mockS3TaggingXML
+					_ = xml.Unmarshal([]byte(r.Header.Get("X-Orig-Body")), &parsed)
+					bktTags = make(map[string]string)
+					for _, tg := range parsed.TagSet.Tags {
+						bktTags[tg.Key] = tg.Value
+					}
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				bktExists = true
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			objExists = true
+			parsedTags, _ := url.ParseQuery(r.Header.Get("X-Amz-Tagging"))
+			objTags = make(map[string]string)
+			for tk, tvals := range parsedTags {
+				if len(tvals) > 0 {
+					objTags[tk] = tvals[0]
+				}
+			}
+			w.Header().Set("ETag", `"etag-1"`)
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			if !isObjPath {
+				if q.Has("tagging") {
+					w.Header().Set("Content-Type", "application/xml")
+					_, _ = io.WriteString(w, formatS3TaggingXML(bktTags))
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				if objExists {
+					_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated><Contents><Key>item.txt</Key><Size>4</Size><ETag>"etag-1"</ETag></Contents></ListBucketResult>`)
+				} else {
+					_, _ = io.WriteString(w, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`)
+				}
+				return
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, formatS3TaggingXML(objTags))
+		case http.MethodDelete:
+			if !isObjPath {
+				deleteOrder = append(deleteOrder, "bucket:"+bucket)
+				bktExists = false
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			deleteOrder = append(deleteOrder, "object:"+bucket+"/item.txt")
+			objExists = false
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+
+	t.Setenv("LMAWS_LIVE_MUTATE", "1")
+	t.Setenv("LMAWS_RUN_ID", runID)
+	t.Setenv("LMAWS_LIVE_JOURNAL_DIR", journalDir)
+
+	// Create bucket, object, and queue.
+	if created, err := h.BucketCreate(false, bucket); err != nil || !created {
+		t.Fatalf("BucketCreate failed: %v (%+v)", err, h.LastError())
+	}
+	if _, err := h.ObjectPut(false, bucket, "item.txt", "data", "text/plain", nil); err != nil {
+		t.Fatalf("ObjectPut failed: %v (%+v)", err, h.LastError())
+	}
+	if created, err := h.QueueCreate(false, queue); err != nil || !created {
+		t.Fatalf("QueueCreate failed: %v (%+v)", err, h.LastError())
+	}
+	if created2, err := h.QueueCreate(false, queue); err != nil || created2 {
+		t.Fatalf("duplicate QueueCreate expected created=false, got %v err=%v", created2, err)
+	}
+
+	// Send, Receive, Nack, Receive, Ack on queue.
+	msgID, err := h.QueueSend(false, queue, "hello-sqs")
+	if err != nil || msgID != "msg-1" {
+		t.Fatalf("QueueSend failed: id=%q err=%v last=%+v", msgID, err, h.LastError())
+	}
+	msgs, err := h.QueueReceive(false, queue, 1, 0, 30)
+	if err != nil || len(msgs) != 1 || msgs[0].Body != "hello-sqs" {
+		t.Fatalf("QueueReceive failed: msgs=%+v err=%v last=%+v", msgs, err, h.LastError())
+	}
+	if _, err := h.QueueNack(false, queue, msgs[0].Receipt, 0); err != nil {
+		t.Fatalf("QueueNack failed: %v (%+v)", err, h.LastError())
+	}
+	msgs2, err := h.QueueReceive(false, queue, 1, 0, 30)
+	if err != nil || len(msgs2) != 1 {
+		t.Fatalf("second QueueReceive failed: %+v err=%v", msgs2, err)
+	}
+	if err := h.QueueAck(false, queue, msgs2[0].Receipt); err != nil {
+		t.Fatalf("QueueAck failed: %v (%+v)", err, h.LastError())
+	}
+
+	// Close session leaving bucket, object, and queue active in journal, then test SweepCLI.
+	if err := a.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// 1. Default SweepCLI (dry-run) must NOT delete anything on AWS.
+	var dryBuf strings.Builder
+	if rc := a.SweepCLI(t.Context(), []string{runID}, &dryBuf); rc != 0 {
+		t.Fatalf("SweepCLI dry-run failed (rc=%d): %s", rc, dryBuf.String())
+	}
+	var dryRes sweepCLIOutput
+	if err := json.Unmarshal([]byte(dryBuf.String()), &dryRes); err != nil {
+		t.Fatalf("unmarshal dry-run output: %v (%s)", err, dryBuf.String())
+	}
+	if !dryRes.OK || !dryRes.DryRun || dryRes.WouldDelete != 3 || dryRes.Deleted != 0 {
+		t.Fatalf("unexpected dry-run sweep output: %+v", dryRes)
+	}
+	mu.Lock()
+	if len(deleteOrder) != 0 {
+		t.Fatalf("dry-run sweep must not dispatch any deletes, got %v", deleteOrder)
+	}
+	mu.Unlock()
+
+	// 2. SweepCLI with --apply deletes child object before bucket and deletes queue in LIFO order.
+	var applyBuf strings.Builder
+	if rc := a.SweepCLI(t.Context(), []string{"--apply", runID}, &applyBuf); rc != 0 {
+		t.Fatalf("SweepCLI --apply failed (rc=%d): %s", rc, applyBuf.String())
+	}
+	var applyRes sweepCLIOutput
+	if err := json.Unmarshal([]byte(applyBuf.String()), &applyRes); err != nil {
+		t.Fatalf("unmarshal apply output: %v (%s)", err, applyBuf.String())
+	}
+	if !applyRes.OK || applyRes.DryRun || applyRes.Deleted != 3 {
+		t.Fatalf("unexpected apply sweep output: %+v", applyRes)
+	}
+	mu.Lock()
+	wantOrder := []string{"object:" + bucket + "/item.txt", "queue:" + queue, "bucket:" + bucket}
+	if strings.Join(deleteOrder, ",") != strings.Join(wantOrder, ",") {
+		t.Fatalf("expected LIFO delete order %v, got %v", wantOrder, deleteOrder)
+	}
+	mu.Unlock()
 }

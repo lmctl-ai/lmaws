@@ -7,6 +7,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -38,9 +39,10 @@ func run(args []string, out io.Writer) int {
 		Help:    helpText(),
 		Notices: noticesText,
 		Commands: map[string]func(args []string, out io.Writer) int{
-			"--sweep": func(_ []string, w io.Writer) int {
-				fmt.Fprintln(w, `{"ok":true,"swept":0,"mode":"sim-or-live-readonly-stage1"}`)
-				return 0
+			"--sweep": func(cmdArgs []string, w io.Writer) int {
+				a := aws.New(nil)
+				defer a.Close()
+				return a.SweepCLI(context.Background(), cmdArgs, w)
 			},
 		},
 		Init: func() error {
@@ -72,7 +74,7 @@ Usage:
   lmaws [cloud] [--lmcode|--first|--last] FILE ...
   lmaws [cloud] --lmcode-schema [--json]
   lmaws [cloud] --lmcode-signatures [--without-std]
-  lmaws --sweep [RUN_ID]
+  lmaws --sweep [--apply|--dry-run] [RUN_ID]
   lmaws --notices | --version | -V | --help | -h
 
 Dry runs come from the caller's invocation manifest (lmscript --dry-run).
@@ -83,11 +85,12 @@ Endpoints (validated; plain http only for loopback; see lmcloud design 02 §3.3)
   No endpoint + no live opt-in: offline in-process fake.
   Loopback endpoint + no live opt-in: awssim simulator.
 
-Live Mode Stage 1 (read-only only; endpoint overrides forbidden):
-  LMCLOUD_LIVE=1 and LMAWS_LIVE=1   Required double opt-in
+Live Mode (endpoint overrides forbidden):
+  LMCLOUD_LIVE=1 and LMAWS_LIVE=1   Required double opt-in (Stage 1 read-only default)
+  LMAWS_LIVE_MUTATE=1               Required third opt-in for Stage 2 create/delete mutations
   LMAWS_LIVE_ACCOUNT=254332045686   Required account policy value (verified via STS GetCallerIdentity)
   LMAWS_LIVE_REGION=us-east-1       Required region policy value
-  LMAWS_LIVE_COST_CAP_USD           Optional cap <= 0.05 USD (default: 0.05)
+  LMAWS_LIVE_COST_CAP_USD           Optional cap (default: 0.05; Stage 2 ceiling: 0.25)
 
 Simulator credentials and scope (loopback endpoints only):
   LMAWS_SIM_ACCESS_KEY_ID      SigV4 access key ID (default: test)

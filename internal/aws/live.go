@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +31,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/lmctl-ai/lmcloud/hostkit"
@@ -37,10 +39,12 @@ import (
 )
 
 const (
-	// RequiredLiveAccount is the operator-approved AWS account ID for Stage 1 live mode.
+	// RequiredLiveAccount is the operator-approved AWS account ID for Stage 1/2 live mode.
 	RequiredLiveAccount = "254332045686"
-	// RequiredLiveRegion is the operator-approved AWS region for Stage 1 live mode.
+	// RequiredLiveRegion is the operator-approved AWS region for Stage 1/2 live mode.
 	RequiredLiveRegion = "us-east-1"
+	// liveConformancePrefix is the mandatory prefix for Stage 2 live conformance resources.
+	liveConformancePrefix = "lmcloud-conf-"
 
 	// Conservative internet egress rate ($0.09 / GiB = 90,000,000 nano-USD / GiB).
 	liveEgressGiBNanoUSD int64 = 90_000_000
@@ -53,13 +57,14 @@ const (
 	liveWorstCaseItemXMLBytes     int64 = 6656
 	liveWorstCaseEnvelopeXMLBytes int64 = 32 * 1024
 
-	// Hard response body and page bounds for Stage 1 read-only operations.
-	maxLiveObjectListPageSize int   = 100
-	maxLiveBucketListPageSize int32 = 100
-	maxLiveQueueListPageSize  int32 = 100
-	maxLiveSmallRespBodyBytes int64 = 64 * 1024  // 64 KiB bound for GetBucketLocation / GetQueueUrl
-	maxLiveListRespBodyBytes  int64 = 512 * 1024 // 512 KiB bound for ListBuckets / ListQueues
-	maxLiveResponseBodyBytes  int64 = int64(maxLiveObjectListPageSize)*liveWorstCaseItemXMLBytes + liveWorstCaseEnvelopeXMLBytes
+	// Hard response body and page bounds for live operations.
+	maxLiveObjectListPageSize   int   = 100
+	maxLiveBucketListPageSize   int32 = 100
+	maxLiveQueueListPageSize    int32 = 100
+	maxLiveSmallRespBodyBytes   int64 = 64 * 1024   // 64 KiB bound for GetBucketLocation / GetQueueUrl / Tagging
+	maxLiveListRespBodyBytes    int64 = 512 * 1024  // 512 KiB bound for ListBuckets / ListQueues
+	maxLiveReceiveRespBodyBytes int64 = 1024 * 1024 // 1 MiB bound for SQS ReceiveMessage
+	maxLiveResponseBodyBytes    int64 = int64(maxLiveObjectListPageSize)*liveWorstCaseItemXMLBytes + liveWorstCaseEnvelopeXMLBytes
 )
 
 // ErrLiveResponseTooLarge is returned when an HTTP response body exceeds the reserved byte bound.
@@ -99,6 +104,9 @@ type liveEnvConfig struct {
 	policyHash string
 	principal  string
 	costCapUSD float64
+	mutate     bool
+	maxBuckets int
+	maxQueues  int
 }
 
 func isForbiddenLiveEndpointEnvKey(k string) bool {
@@ -261,6 +269,17 @@ func validateLiveGates(ctx context.Context, getenv func(string) string, opts *Op
 		}
 	}
 
+	rawMutate := strings.TrimSpace(getenv("LMAWS_LIVE_MUTATE"))
+	if rawMutate != "" && rawMutate != "0" && rawMutate != "1" {
+		return liveEnvConfig{}, hostkit.ProviderError(
+			hostkit.InvalidArgument,
+			0,
+			"InvalidLiveOptIn",
+			fmt.Sprintf("LMAWS_LIVE_MUTATE must be '1', '0', or unset (got %q)", rawMutate),
+		)
+	}
+	mutate := rawMutate == "1"
+
 	var costCap float64
 	if opts != nil && opts.LiveCostCapUSD > 0 {
 		costCap = opts.LiveCostCapUSD
@@ -276,17 +295,53 @@ func validateLiveGates(ctx context.Context, getenv func(string) string, opts *Op
 					fmt.Sprintf("invalid %s=%q: must be a positive USD number", capVar, raw),
 				)
 			}
-			if parsed > safety.DefaultCostCapUSD {
+			maxAllowedCap := safety.DefaultCostCapUSD
+			if mutate {
+				maxAllowedCap = safety.HardCostCeilingUSD
+			}
+			if parsed > maxAllowedCap {
+				pcode := "LiveCostCapExceedsDefault"
+				if mutate {
+					pcode = "LiveCostCapExceedsCeiling"
+				}
 				return liveEnvConfig{}, hostkit.ProviderError(
 					hostkit.PermissionDenied,
 					0,
-					"LiveCostCapExceedsDefault",
-					fmt.Sprintf("%s=%.6f cannot raise the stage 1 default cap ($%.2f)", capVar, parsed, safety.DefaultCostCapUSD),
+					pcode,
+					fmt.Sprintf("%s=%.6f exceeds maximum allowed live cap ($%.2f)", capVar, parsed, maxAllowedCap),
 				)
 			}
 			if costCap == 0 || parsed < costCap {
 				costCap = parsed
 			}
+		}
+	}
+
+	var maxBuckets, maxQueues int
+	if mutate {
+		if raw := strings.TrimSpace(getenv("LMAWS_LIVE_MAX_BUCKETS")); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 1 || n > 32 {
+				return liveEnvConfig{}, hostkit.ProviderError(
+					hostkit.InvalidArgument,
+					0,
+					"InvalidLiveResourceLimit",
+					fmt.Sprintf("invalid LMAWS_LIVE_MAX_BUCKETS=%q (must be 1..32)", raw),
+				)
+			}
+			maxBuckets = n
+		}
+		if raw := strings.TrimSpace(getenv("LMAWS_LIVE_MAX_QUEUES")); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 1 || n > 32 {
+				return liveEnvConfig{}, hostkit.ProviderError(
+					hostkit.InvalidArgument,
+					0,
+					"InvalidLiveResourceLimit",
+					fmt.Sprintf("invalid LMAWS_LIVE_MAX_QUEUES=%q (must be 1..32)", raw),
+				)
+			}
+			maxQueues = n
 		}
 	}
 
@@ -326,6 +381,9 @@ func validateLiveGates(ctx context.Context, getenv func(string) string, opts *Op
 		policyHash: strings.TrimSpace(getenv("LMCLOUD_POLICY_SHA256")),
 		principal:  strings.TrimSpace(getenv("LMAWS_LIVE_PRINCIPAL")),
 		costCapUSD: costCap,
+		mutate:     mutate,
+		maxBuckets: maxBuckets,
+		maxQueues:  maxQueues,
 	}, nil
 }
 
@@ -628,32 +686,97 @@ func (b *boundedResponseBody) Close() error {
 //  5. Requires X-Amz-Expected-Bucket-Owner=<account> on all bucket-scoped S3 calls.
 //  6. Bounds response body size to the exact pre-dispatch reservation and tracks response egress bytes.
 type liveEndpointGuardTransport struct {
-	region  string
-	account string
-	base    http.RoundTripper
+	region         string
+	account        string
+	allowMutations bool
+	base           http.RoundTripper
 }
 
-func isAllowedLiveS3Host(host, region string) bool {
+func extractLiveS3BucketFromHost(host, region string) (string, bool) {
 	s3Regional := "s3." + region + ".amazonaws.com"
 	if host == s3Regional || host == "s3.amazonaws.com" {
-		return true
+		return "", true
 	}
 	for _, suffix := range []string{"." + s3Regional, ".s3.amazonaws.com"} {
 		if strings.HasSuffix(host, suffix) {
 			prefix := strings.TrimSuffix(host, suffix)
 			if prefix != "" && !strings.Contains(prefix, ".") {
-				return true
+				return prefix, false
 			}
 		}
 	}
-	return false
+	return "", false
+}
+
+func isAllowedLiveS3Host(host, region string) bool {
+	bkt, isRoot := extractLiveS3BucketFromHost(host, region)
+	return isRoot || bkt != ""
+}
+
+func parseFlatJSONStringMap(dec *json.Decoder) (map[string]string, error) {
+	seen := make(map[string]bool)
+	out := make(map[string]string)
+	for dec.More() {
+		kTok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		k, ok := kTok.(string)
+		if !ok || k == "" {
+			return nil, errors.New("map key must be a non-empty string")
+		}
+		if seen[k] {
+			return nil, fmt.Errorf("duplicate map key %q", k)
+		}
+		seen[k] = true
+		vTok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		v, ok := vTok.(string)
+		if !ok {
+			return nil, fmt.Errorf("map value for %q must be a string", k)
+		}
+		out[k] = v
+	}
+	endTok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := endTok.(json.Delim); !ok || delim != '}' {
+		return nil, errors.New("expected closing brace for string map")
+	}
+	return out, nil
+}
+
+func parseFlatJSONStringSlice(dec *json.Decoder) ([]string, error) {
+	var out []string
+	for dec.More() {
+		vTok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		s, ok := vTok.(string)
+		if !ok {
+			return nil, errors.New("array element must be a string")
+		}
+		out = append(out, s)
+	}
+	endTok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := endTok.(json.Delim); !ok || delim != ']' {
+		return nil, errors.New("expected closing bracket for string array")
+	}
+	return out, nil
 }
 
 // validateSQSJSONBody strictly validates an SQS JSON protocol request body:
 //   - Must be valid JSON (json.Valid).
 //   - Top-level value must be a JSON object `{ ... }` (not null, array, or primitive).
 //   - No duplicate keys are allowed.
-//   - Only flat scalar fields allowed for the target operation are permitted.
+//   - Only fields allowed for the target operation are permitted.
 //   - No trailing tokens or closing delimiters after the top-level object are allowed.
 func validateSQSJSONBody(target string, body []byte) error {
 	trimmed := bytes.TrimSpace(body)
@@ -695,8 +818,28 @@ func validateSQSJSONBody(target string, body []byte) error {
 		if err != nil {
 			return fmt.Errorf("invalid SQS JSON value for %q: %w", key, err)
 		}
-		if _, isDelim := vTok.(json.Delim); isDelim || vTok == nil {
-			return fmt.Errorf("non-scalar or null value for %q in SQS payload", key)
+		if delim, isDelim := vTok.(json.Delim); isDelim {
+			if delim == '{' && (target == "AmazonSQS.CreateQueue" || target == "AmazonSQS.TagQueue") && (key == "tags" || key == "Tags" || key == "Attributes") {
+				m, merr := parseFlatJSONStringMap(dec)
+				if merr != nil {
+					return fmt.Errorf("invalid %s map in %s: %w", key, target, merr)
+				}
+				fields[key] = m
+				continue
+			}
+			if delim == '[' && (target == "AmazonSQS.ReceiveMessage" || target == "AmazonSQS.GetQueueAttributes") &&
+				(key == "AttributeNames" || key == "MessageSystemAttributeNames" || key == "MessageAttributeNames") {
+				arr, aerr := parseFlatJSONStringSlice(dec)
+				if aerr != nil {
+					return fmt.Errorf("invalid %s array in %s: %w", key, target, aerr)
+				}
+				fields[key] = arr
+				continue
+			}
+			return fmt.Errorf("non-scalar value for %q in SQS payload", key)
+		}
+		if vTok == nil {
+			return fmt.Errorf("null value for %q in SQS payload", key)
 		}
 		fields[key] = vTok
 	}
@@ -747,6 +890,95 @@ func validateSQSJSONBody(target string, body []byte) error {
 			default:
 				return fmt.Errorf("unexpected field %q in GetQueueUrl payload", k)
 			}
+		}
+	case "AmazonSQS.CreateQueue":
+		qName, ok := fields["QueueName"].(string)
+		if !ok || !strings.HasPrefix(strings.TrimSpace(qName), liveConformancePrefix) {
+			return fmt.Errorf("CreateQueue QueueName %q must start with %q", qName, liveConformancePrefix)
+		}
+		for k := range fields {
+			if k != "QueueName" && k != "tags" && k != "Tags" && k != "Attributes" {
+				return fmt.Errorf("unexpected field %q in CreateQueue payload", k)
+			}
+		}
+	case "AmazonSQS.DeleteQueue", "AmazonSQS.ListQueueTags":
+		qURL, ok := fields["QueueUrl"].(string)
+		if !ok || strings.TrimSpace(qURL) == "" {
+			return fmt.Errorf("missing QueueUrl in %s payload", target)
+		}
+		if len(fields) != 1 {
+			return fmt.Errorf("unexpected extra fields in %s payload", target)
+		}
+	case "AmazonSQS.TagQueue":
+		qURL, ok := fields["QueueUrl"].(string)
+		if !ok || strings.TrimSpace(qURL) == "" {
+			return errors.New("missing QueueUrl in TagQueue payload")
+		}
+		for k := range fields {
+			if k != "QueueUrl" && k != "Tags" && k != "tags" {
+				return fmt.Errorf("unexpected field %q in TagQueue payload", k)
+			}
+		}
+	case "AmazonSQS.GetQueueAttributes":
+		qURL, ok := fields["QueueUrl"].(string)
+		if !ok || strings.TrimSpace(qURL) == "" {
+			return errors.New("missing QueueUrl in GetQueueAttributes payload")
+		}
+		for k := range fields {
+			if k != "QueueUrl" && k != "AttributeNames" {
+				return fmt.Errorf("unexpected field %q in GetQueueAttributes payload", k)
+			}
+		}
+	case "AmazonSQS.SendMessage":
+		qURL, ok := fields["QueueUrl"].(string)
+		if !ok || strings.TrimSpace(qURL) == "" {
+			return errors.New("missing QueueUrl in SendMessage payload")
+		}
+		if _, ok := fields["MessageBody"].(string); !ok {
+			return errors.New("missing or non-string MessageBody in SendMessage payload")
+		}
+		for k := range fields {
+			if k != "QueueUrl" && k != "MessageBody" && k != "DelaySeconds" {
+				return fmt.Errorf("unexpected field %q in SendMessage payload", k)
+			}
+		}
+	case "AmazonSQS.ReceiveMessage":
+		qURL, ok := fields["QueueUrl"].(string)
+		if !ok || strings.TrimSpace(qURL) == "" {
+			return errors.New("missing QueueUrl in ReceiveMessage payload")
+		}
+		for k := range fields {
+			switch k {
+			case "QueueUrl", "MaxNumberOfMessages", "VisibilityTimeout", "WaitTimeSeconds",
+				"AttributeNames", "MessageSystemAttributeNames", "MessageAttributeNames":
+			default:
+				return fmt.Errorf("unexpected field %q in ReceiveMessage payload", k)
+			}
+		}
+	case "AmazonSQS.DeleteMessage":
+		qURL, ok := fields["QueueUrl"].(string)
+		if !ok || strings.TrimSpace(qURL) == "" {
+			return errors.New("missing QueueUrl in DeleteMessage payload")
+		}
+		if rh, ok := fields["ReceiptHandle"].(string); !ok || strings.TrimSpace(rh) == "" {
+			return errors.New("missing ReceiptHandle in DeleteMessage payload")
+		}
+		if len(fields) != 2 {
+			return errors.New("unexpected extra fields in DeleteMessage payload")
+		}
+	case "AmazonSQS.ChangeMessageVisibility":
+		qURL, ok := fields["QueueUrl"].(string)
+		if !ok || strings.TrimSpace(qURL) == "" {
+			return errors.New("missing QueueUrl in ChangeMessageVisibility payload")
+		}
+		if rh, ok := fields["ReceiptHandle"].(string); !ok || strings.TrimSpace(rh) == "" {
+			return errors.New("missing ReceiptHandle in ChangeMessageVisibility payload")
+		}
+		if _, ok := fields["VisibilityTimeout"].(json.Number); !ok {
+			return errors.New("missing VisibilityTimeout in ChangeMessageVisibility payload")
+		}
+		if len(fields) != 3 {
+			return errors.New("unexpected extra fields in ChangeMessageVisibility payload")
 		}
 	default:
 		return fmt.Errorf("unapproved SQS target %q", target)
@@ -819,7 +1051,7 @@ func (t *liveEndpointGuardTransport) RoundTrip(req *http.Request) (*http.Respons
 		maxRespBytes = maxLiveSmallRespBodyBytes
 
 	case isAllowedLiveS3Host(host, t.region):
-		isRootServiceHost := host == "s3."+t.region+".amazonaws.com" || host == "s3.amazonaws.com"
+		bucketName, isRootServiceHost := extractLiveS3BucketFromHost(host, t.region)
 		if strings.Contains(req.URL.Path, "..") || strings.Contains(req.URL.RawPath, "..") || strings.Contains(req.URL.Path, "\\") {
 			return nil, errors.New("live transport refused S3 path traversal segment")
 		}
@@ -827,12 +1059,17 @@ func (t *liveEndpointGuardTransport) RoundTrip(req *http.Request) (*http.Respons
 		if perr != nil {
 			return nil, fmt.Errorf("live transport refused malformed S3 query: %w", perr)
 		}
-		if !isRootServiceHost && t.account != "" {
+		xid := vals.Get("x-id")
+		isCreateBucket := req.Method == http.MethodPut && !isRootServiceHost &&
+			(req.URL.Path == "" || req.URL.Path == "/") && !vals.Has("tagging") &&
+			(xid == "" || xid == "CreateBucket")
+		if !isRootServiceHost && !isCreateBucket && t.account != "" {
 			ownerHdr := strings.TrimSpace(req.Header.Get("X-Amz-Expected-Bucket-Owner"))
 			if ownerHdr != t.account {
 				return nil, fmt.Errorf("live transport refused S3 bucket request without X-Amz-Expected-Bucket-Owner=%s", t.account)
 			}
 		}
+		isBucketRootPath := (req.URL.Path == "" || req.URL.Path == "/") && (req.URL.RawPath == "" || req.URL.RawPath == "/")
 
 		switch req.Method {
 		case http.MethodHead:
@@ -842,39 +1079,59 @@ func (t *liveEndpointGuardTransport) RoundTrip(req *http.Request) (*http.Respons
 			if !hasOnlyAllowedKeys(vals, "x-id") {
 				return nil, errors.New("live transport refused unexpected query parameters on S3 HEAD")
 			}
-			if xid := vals.Get("x-id"); xid != "" && xid != "HeadBucket" && xid != "HeadObject" {
+			if xid != "" && xid != "HeadBucket" && xid != "HeadObject" {
 				return nil, fmt.Errorf("live transport refused S3 HEAD x-id=%q", xid)
 			}
 			maxRespBytes = 0
 
 		case http.MethodGet:
-			// Every allowed Stage 1 S3 GET (ListBuckets, ListObjectsV2, GetBucketLocation)
-			// operates on "/" (never an object key path).
-			if (req.URL.Path != "" && req.URL.Path != "/") || (req.URL.RawPath != "" && req.URL.RawPath != "/") {
-				return nil, fmt.Errorf("live transport refused S3 object-path GET %q in stage 1 read-only mode", req.URL.Path)
-			}
-			if isRootServiceHost {
+			if !isBucketRootPath {
+				if !t.allowMutations || isRootServiceHost {
+					return nil, fmt.Errorf("live transport refused S3 object-path GET %q in stage 1 read-only mode", req.URL.Path)
+				}
+				if !strings.HasPrefix(bucketName, liveConformancePrefix) {
+					return nil, fmt.Errorf("live transport refused S3 object-path GET on non-conformance bucket %q", bucketName)
+				}
+				isGetObjectTagging := vals.Has("tagging") && vals.Get("tagging") == "" &&
+					hasOnlyAllowedKeys(vals, "tagging", "x-id") &&
+					(xid == "" || xid == "GetObjectTagging")
+				isGetObject := !vals.Has("tagging") && hasOnlyAllowedKeys(vals, "x-id") &&
+					(xid == "" || xid == "GetObject")
+				if !isGetObjectTagging && !isGetObject {
+					return nil, fmt.Errorf("live transport refused S3 object GET query %q", req.URL.RawQuery)
+				}
+				if isGetObjectTagging {
+					maxRespBytes = maxLiveSmallRespBodyBytes
+				} else {
+					maxRespBytes = safety.DefaultMaxObjectBytes + 4096
+				}
+			} else if isRootServiceHost {
 				// ListBuckets only
 				if !hasOnlyAllowedKeys(vals, "x-id", "continuation-token", "max-buckets", "bucket-region", "prefix") {
 					return nil, errors.New("live transport refused unapproved query parameters on S3 ListBuckets")
 				}
-				if xid := vals.Get("x-id"); xid != "" && xid != "ListBuckets" {
+				if xid != "" && xid != "ListBuckets" {
 					return nil, fmt.Errorf("live transport refused S3 root GET with x-id=%q", xid)
 				}
 				maxRespBytes = maxLiveListRespBodyBytes
 			} else {
 				isListObjects := vals.Get("list-type") == "2" &&
-					!vals.Has("location") &&
+					!vals.Has("location") && !vals.Has("tagging") &&
 					hasOnlyAllowedKeys(vals, "list-type", "x-id", "prefix", "max-keys", "continuation-token", "delimiter", "encoding-type", "fetch-owner", "start-after") &&
-					(vals.Get("x-id") == "" || vals.Get("x-id") == "ListObjectsV2")
+					(xid == "" || xid == "ListObjectsV2")
 				isGetLocation := vals.Has("location") &&
 					vals.Get("location") == "" &&
 					hasOnlyAllowedKeys(vals, "location", "x-id") &&
-					(vals.Get("x-id") == "" || vals.Get("x-id") == "GetBucketLocation")
-				if !isListObjects && !isGetLocation {
+					(xid == "" || xid == "GetBucketLocation")
+				isGetBucketTagging := t.allowMutations &&
+					strings.HasPrefix(bucketName, liveConformancePrefix) &&
+					vals.Has("tagging") && vals.Get("tagging") == "" &&
+					hasOnlyAllowedKeys(vals, "tagging", "x-id") &&
+					(xid == "" || xid == "GetBucketTagging")
+				if !isListObjects && !isGetLocation && !isGetBucketTagging {
 					return nil, errors.New("live transport refused S3 GET in stage 1 read-only mode")
 				}
-				if isGetLocation {
+				if isGetLocation || isGetBucketTagging {
 					maxRespBytes = maxLiveSmallRespBodyBytes
 				} else {
 					maxKeys := maxLiveObjectListPageSize
@@ -886,6 +1143,46 @@ func (t *liveEndpointGuardTransport) RoundTrip(req *http.Request) (*http.Respons
 					maxRespBytes = objectListWorstCaseBytes(maxKeys)
 				}
 			}
+
+		case http.MethodPut:
+			if !t.allowMutations {
+				return nil, fmt.Errorf("live transport refused S3 mutating method %s in stage 1 read-only mode", req.Method)
+			}
+			if isRootServiceHost || !strings.HasPrefix(bucketName, liveConformancePrefix) {
+				return nil, fmt.Errorf("live transport refused S3 PUT on non-conformance bucket %q", bucketName)
+			}
+			if isBucketRootPath {
+				isCreate := !vals.Has("tagging") && hasOnlyAllowedKeys(vals, "x-id") && (xid == "" || xid == "CreateBucket")
+				isPutTag := vals.Has("tagging") && vals.Get("tagging") == "" && hasOnlyAllowedKeys(vals, "tagging", "x-id") && (xid == "" || xid == "PutBucketTagging")
+				if !isCreate && !isPutTag {
+					return nil, fmt.Errorf("live transport refused S3 bucket PUT query %q", req.URL.RawQuery)
+				}
+			} else {
+				isPutObj := !vals.Has("tagging") && hasOnlyAllowedKeys(vals, "x-id") && (xid == "" || xid == "PutObject")
+				isPutObjTag := vals.Has("tagging") && vals.Get("tagging") == "" && hasOnlyAllowedKeys(vals, "tagging", "x-id") && (xid == "" || xid == "PutObjectTagging")
+				if !isPutObj && !isPutObjTag {
+					return nil, fmt.Errorf("live transport refused S3 object PUT query %q", req.URL.RawQuery)
+				}
+			}
+			maxRespBytes = maxLiveSmallRespBodyBytes
+
+		case http.MethodDelete:
+			if !t.allowMutations {
+				return nil, fmt.Errorf("live transport refused S3 mutating method %s in stage 1 read-only mode", req.Method)
+			}
+			if isRootServiceHost || !strings.HasPrefix(bucketName, liveConformancePrefix) {
+				return nil, fmt.Errorf("live transport refused S3 DELETE on non-conformance bucket %q", bucketName)
+			}
+			if isBucketRootPath {
+				if !hasOnlyAllowedKeys(vals, "x-id") || (xid != "" && xid != "DeleteBucket") {
+					return nil, fmt.Errorf("live transport refused S3 bucket DELETE query %q", req.URL.RawQuery)
+				}
+			} else {
+				if !hasOnlyAllowedKeys(vals, "x-id") || (xid != "" && xid != "DeleteObject") {
+					return nil, fmt.Errorf("live transport refused S3 object DELETE query %q", req.URL.RawQuery)
+				}
+			}
+			maxRespBytes = maxLiveSmallRespBodyBytes
 
 		default:
 			return nil, fmt.Errorf("live transport refused S3 mutating method %s in stage 1 read-only mode", req.Method)
@@ -908,11 +1205,15 @@ func (t *liveEndpointGuardTransport) RoundTrip(req *http.Request) (*http.Respons
 		if req.Body == nil {
 			return nil, errors.New("live transport refused empty SQS request body")
 		}
-		b, err := io.ReadAll(io.LimitReader(req.Body, 64*1024+1))
+		maxReqBody := int64(64 * 1024)
+		if t.allowMutations {
+			maxReqBody = 256 * 1024
+		}
+		b, err := io.ReadAll(io.LimitReader(req.Body, maxReqBody+1))
 		if err != nil {
 			return nil, err
 		}
-		if len(b) > 64*1024 {
+		if int64(len(b)) > maxReqBody {
 			return nil, errors.New("live transport refused oversized SQS request body")
 		}
 		req.Body = io.NopCloser(bytes.NewReader(b))
@@ -922,16 +1223,21 @@ func (t *liveEndpointGuardTransport) RoundTrip(req *http.Request) (*http.Respons
 			target = strings.TrimSpace(targets[0])
 		}
 		if target != "" {
-			if target != "AmazonSQS.ListQueues" && target != "AmazonSQS.GetQueueUrl" {
-				return nil, fmt.Errorf("live transport refused SQS target %q in stage 1 read-only mode", target)
+			if !t.allowMutations {
+				if target != "AmazonSQS.ListQueues" && target != "AmazonSQS.GetQueueUrl" {
+					return nil, fmt.Errorf("live transport refused SQS target %q in stage 1 read-only mode", target)
+				}
 			}
 			if err := validateSQSJSONBody(target, b); err != nil {
 				return nil, fmt.Errorf("live transport refused SQS body: %w", err)
 			}
-			if target == "AmazonSQS.GetQueueUrl" {
-				maxRespBytes = maxLiveSmallRespBodyBytes
-			} else {
+			switch target {
+			case "AmazonSQS.ListQueues":
 				maxRespBytes = maxLiveListRespBodyBytes
+			case "AmazonSQS.ReceiveMessage":
+				maxRespBytes = maxLiveReceiveRespBodyBytes
+			default:
+				maxRespBytes = maxLiveSmallRespBodyBytes
 			}
 		} else {
 			vals, perr := parseStrictQuery(string(b))
@@ -1038,12 +1344,90 @@ func (l *liveAdapter) session() *safety.Session {
 	return l.sess
 }
 
+func (l *liveAdapter) buildLivePolicy(envCfg liveEnvConfig, absJDir string) (safety.Policy, error) {
+	var pol safety.Policy
+	if envCfg.policyPath != "" {
+		loaded, lerr := safety.LoadPolicy(envCfg.policyPath, envCfg.policyHash)
+		if lerr != nil {
+			return safety.Policy{}, hostkit.ProviderError(hostkit.InvalidArgument, 0, "InvalidLivePolicy", lerr.Error())
+		}
+		if !slices.Contains(loaded.AllowedAccounts, envCfg.account) {
+			return safety.Policy{}, hostkit.ProviderError(
+				hostkit.PermissionDenied,
+				0,
+				"LiveAccountNotAllowed",
+				fmt.Sprintf("LMAWS_LIVE_ACCOUNT %q is not in policy allowed_accounts", envCfg.account),
+			)
+		}
+		if !slices.Contains(loaded.AllowedRegions, envCfg.region) {
+			return safety.Policy{}, hostkit.ProviderError(
+				hostkit.PermissionDenied,
+				0,
+				"LiveRegionNotAllowed",
+				fmt.Sprintf("LMAWS_LIVE_REGION %q is not in policy allowed_regions", envCfg.region),
+			)
+		}
+		loaded.AllowMutations = loaded.AllowMutations && envCfg.mutate
+		pol = loaded
+	} else {
+		pol = safety.DefaultAWSLivePolicy(absJDir, envCfg.mutate)
+		pol.AllowedAccounts = []string{envCfg.account}
+		pol.AllowedRegions = []string{envCfg.region}
+		if envCfg.principal != "" {
+			pol.AllowedScopes = []string{envCfg.principal}
+		} else {
+			pol.AllowedScopes = []string{
+				"arn:aws:iam::" + envCfg.account + ":role/lmcloud-conformance-ci",
+				"arn:aws:sts::" + envCfg.account + ":assumed-role/lmcloud-conformance-ci/",
+				"arn:aws:iam::" + envCfg.account + ":role/awsspot-admin",
+				"arn:aws:sts::" + envCfg.account + ":assumed-role/awsspot-admin/",
+				"arn:aws:iam::" + envCfg.account + ":role/",
+				"arn:aws:sts::" + envCfg.account + ":assumed-role/",
+				"arn:aws:iam::" + envCfg.account + ":user/",
+				"arn:aws:sts::" + envCfg.account + ":federated-user/",
+				"arn:aws:iam::" + envCfg.account + ":root",
+			}
+		}
+	}
+
+	if envCfg.maxBuckets > 0 {
+		pol.Limits.MaxBuckets = envCfg.maxBuckets
+	}
+	if envCfg.maxQueues > 0 {
+		pol.Limits.MaxQueues = envCfg.maxQueues
+	}
+
+	if envCfg.costCapUSD > 0 {
+		maxPolicyCap := pol.Cost.CapUSD
+		if envCfg.mutate && envCfg.policyPath == "" {
+			maxPolicyCap = safety.HardCostCeilingUSD
+		}
+		if envCfg.costCapUSD > maxPolicyCap {
+			return safety.Policy{}, hostkit.ProviderError(
+				hostkit.PermissionDenied,
+				0,
+				"LiveCostCapExceedsPolicy",
+				fmt.Sprintf("requested cost cap $%.6f exceeds policy cap $%.6f", envCfg.costCapUSD, maxPolicyCap),
+			)
+		}
+		pol.Cost.CapUSD = envCfg.costCapUSD
+		if pol.Cost.CleanupReserveUSD >= pol.Cost.CapUSD {
+			pol.Cost.CleanupReserveUSD = pol.Cost.CapUSD * 0.2
+		}
+	}
+	if err := pol.Validate(); err != nil {
+		return safety.Policy{}, hostkit.ProviderError(hostkit.InvalidArgument, 0, "InvalidLivePolicy", err.Error())
+	}
+	return pol, nil
+}
+
 func (l *liveAdapter) ensureSession(ctx context.Context, envCfg liveEnvConfig) (*safety.Session, *safety.GuardStore, *safety.GuardQueue, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	key := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%.9f",
-		envCfg.account, envCfg.region, envCfg.runID, envCfg.journalDir, envCfg.policyPath, envCfg.principal, envCfg.costCapUSD)
+	key := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%.9f|%t|%d|%d",
+		envCfg.account, envCfg.region, envCfg.runID, envCfg.journalDir, envCfg.policyPath, envCfg.principal,
+		envCfg.costCapUSD, envCfg.mutate, envCfg.maxBuckets, envCfg.maxQueues)
 	if l.sess != nil && l.sessKey == key {
 		return l.sess, l.store, l.queue, nil
 	}
@@ -1065,66 +1449,9 @@ func (l *liveAdapter) ensureSession(ctx context.Context, envCfg liveEnvConfig) (
 		return nil, nil, nil, hostkit.ProviderError(hostkit.Internal, 0, "LiveJournalDirInvalid", err.Error())
 	}
 
-	var pol safety.Policy
-	if envCfg.policyPath != "" {
-		loaded, lerr := safety.LoadPolicy(envCfg.policyPath, envCfg.policyHash)
-		if lerr != nil {
-			return nil, nil, nil, hostkit.ProviderError(hostkit.InvalidArgument, 0, "InvalidLivePolicy", lerr.Error())
-		}
-		if !slices.Contains(loaded.AllowedAccounts, envCfg.account) {
-			return nil, nil, nil, hostkit.ProviderError(
-				hostkit.PermissionDenied,
-				0,
-				"LiveAccountNotAllowed",
-				fmt.Sprintf("LMAWS_LIVE_ACCOUNT %q is not in policy allowed_accounts", envCfg.account),
-			)
-		}
-		if !slices.Contains(loaded.AllowedRegions, envCfg.region) {
-			return nil, nil, nil, hostkit.ProviderError(
-				hostkit.PermissionDenied,
-				0,
-				"LiveRegionNotAllowed",
-				fmt.Sprintf("LMAWS_LIVE_REGION %q is not in policy allowed_regions", envCfg.region),
-			)
-		}
-		// Stage 1 is strictly read-only even if a custom policy file had allow_mutations: true.
-		loaded.AllowMutations = false
-		pol = loaded
-	} else {
-		pol = safety.DefaultAWSLivePolicy(absJDir, false)
-		pol.AllowedAccounts = []string{envCfg.account}
-		pol.AllowedRegions = []string{envCfg.region}
-		if envCfg.principal != "" {
-			pol.AllowedScopes = []string{envCfg.principal}
-		} else {
-			pol.AllowedScopes = []string{
-				"arn:aws:iam::" + envCfg.account + ":role/awsspot-admin",
-				"arn:aws:sts::" + envCfg.account + ":assumed-role/awsspot-admin/",
-				"arn:aws:iam::" + envCfg.account + ":role/",
-				"arn:aws:sts::" + envCfg.account + ":assumed-role/",
-				"arn:aws:iam::" + envCfg.account + ":user/",
-				"arn:aws:sts::" + envCfg.account + ":federated-user/",
-				"arn:aws:iam::" + envCfg.account + ":root",
-			}
-		}
-	}
-
-	if envCfg.costCapUSD > 0 {
-		if envCfg.costCapUSD > pol.Cost.CapUSD {
-			return nil, nil, nil, hostkit.ProviderError(
-				hostkit.PermissionDenied,
-				0,
-				"LiveCostCapExceedsPolicy",
-				fmt.Sprintf("requested cost cap $%.6f exceeds policy cap $%.6f", envCfg.costCapUSD, pol.Cost.CapUSD),
-			)
-		}
-		pol.Cost.CapUSD = envCfg.costCapUSD
-		if pol.Cost.CleanupReserveUSD >= pol.Cost.CapUSD {
-			pol.Cost.CleanupReserveUSD = pol.Cost.CapUSD * 0.2
-		}
-	}
-	if err := pol.Validate(); err != nil {
-		return nil, nil, nil, hostkit.ProviderError(hostkit.InvalidArgument, 0, "InvalidLivePolicy", err.Error())
+	pol, err := l.buildLivePolicy(envCfg, absJDir)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	raw, err := newLiveRawBackend(ctx, envCfg, l.opts, l.retry, l.baseCli, l.getenv)
@@ -1162,81 +1489,198 @@ func (l *liveAdapter) ensureSession(ctx context.Context, envCfg liveEnvConfig) (
 
 // --- hostkit.ObjectStore & hostkit.Queue on liveAdapter ---
 
-func (l *liveAdapter) CreateBucket(ctx context.Context, _ string) (bool, error) {
-	if _, cerr := validateLiveGates(ctx, l.getenv, l.opts); cerr != nil {
+func (l *liveAdapter) CreateBucket(ctx context.Context, name string) (bool, error) {
+	envCfg, cerr := validateLiveGates(ctx, l.getenv, l.opts)
+	if cerr != nil {
 		return false, cerr
 	}
-	return false, stage1MutationDisabledErr("bucket_create")
+	if !envCfg.mutate {
+		return false, stage1MutationDisabledErr("bucket_create")
+	}
+	_, store, _, err := l.ensureSession(ctx, envCfg)
+	if err != nil {
+		return false, err
+	}
+	return store.CreateBucket(ctx, name)
 }
 
-func (l *liveAdapter) DeleteBucket(ctx context.Context, _ string) error {
-	if _, cerr := validateLiveGates(ctx, l.getenv, l.opts); cerr != nil {
+func (l *liveAdapter) DeleteBucket(ctx context.Context, name string) error {
+	envCfg, cerr := validateLiveGates(ctx, l.getenv, l.opts)
+	if cerr != nil {
 		return cerr
 	}
-	return stage1MutationDisabledErr("bucket_delete")
+	if !envCfg.mutate {
+		return stage1MutationDisabledErr("bucket_delete")
+	}
+	_, store, _, err := l.ensureSession(ctx, envCfg)
+	if err != nil {
+		return err
+	}
+	return store.DeleteBucket(ctx, name)
 }
 
-func (l *liveAdapter) PutObject(ctx context.Context, _, _ string, _ []byte, _ string, _ map[string]string) (hostkit.ObjectMeta, error) {
-	if _, cerr := validateLiveGates(ctx, l.getenv, l.opts); cerr != nil {
+func (l *liveAdapter) PutObject(ctx context.Context, bucket, key string, body []byte, contentType string, metadata map[string]string) (hostkit.ObjectMeta, error) {
+	envCfg, cerr := validateLiveGates(ctx, l.getenv, l.opts)
+	if cerr != nil {
 		return hostkit.ObjectMeta{}, cerr
 	}
-	return hostkit.ObjectMeta{}, stage1MutationDisabledErr("object_put")
+	if !envCfg.mutate {
+		return hostkit.ObjectMeta{}, stage1MutationDisabledErr("object_put")
+	}
+	_, store, _, err := l.ensureSession(ctx, envCfg)
+	if err != nil {
+		return hostkit.ObjectMeta{}, err
+	}
+	return store.PutObject(ctx, bucket, key, body, contentType, metadata)
 }
 
-func (l *liveAdapter) DeleteObject(ctx context.Context, _, _ string) error {
-	if _, cerr := validateLiveGates(ctx, l.getenv, l.opts); cerr != nil {
+func (l *liveAdapter) DeleteObject(ctx context.Context, bucket, key string) error {
+	envCfg, cerr := validateLiveGates(ctx, l.getenv, l.opts)
+	if cerr != nil {
 		return cerr
 	}
-	return stage1MutationDisabledErr("object_delete")
+	if !envCfg.mutate {
+		return stage1MutationDisabledErr("object_delete")
+	}
+	_, store, _, err := l.ensureSession(ctx, envCfg)
+	if err != nil {
+		return err
+	}
+	return store.DeleteObject(ctx, bucket, key)
 }
 
-func (l *liveAdapter) GetObject(ctx context.Context, _, _ string, _ int64) ([]byte, error) {
-	if _, cerr := validateLiveGates(ctx, l.getenv, l.opts); cerr != nil {
+func (l *liveAdapter) GetObject(ctx context.Context, bucket, key string, limit int64) ([]byte, error) {
+	envCfg, cerr := validateLiveGates(ctx, l.getenv, l.opts)
+	if cerr != nil {
 		return nil, cerr
 	}
-	return nil, stage1MutationDisabledErr("object_get")
+	if !envCfg.mutate {
+		return nil, stage1MutationDisabledErr("object_get")
+	}
+	sess, store, _, err := l.ensureSession(ctx, envCfg)
+	if err != nil {
+		return nil, err
+	}
+	if nerr := safety.ValidateLiveResourceName(sess.RunID(), bucket); nerr != nil {
+		return nil, hostkit.ProviderError(
+			hostkit.PermissionDenied,
+			http.StatusForbidden,
+			"UnownedParentResource",
+			fmt.Sprintf("refusing object_get on unowned bucket %q: %v", bucket, nerr),
+		)
+	}
+	if entry, ok := sess.Journal().Lookup(safety.KindBucket, "", bucket); ok && (entry.Retain || entry.State == safety.StateRetained) {
+		return nil, hostkit.ProviderError(hostkit.PermissionDenied, http.StatusForbidden, "ForeignResourceCollision", entry.Reason)
+	}
+	if entry, ok := sess.Journal().Lookup(safety.KindObject, bucket, key); ok && (entry.Retain || entry.State == safety.StateRetained) {
+		return nil, hostkit.ProviderError(hostkit.PermissionDenied, http.StatusForbidden, "ForeignResourceCollision", entry.Reason)
+	}
+	return store.GetObject(ctx, bucket, key, limit)
 }
 
-func (l *liveAdapter) CreateQueue(ctx context.Context, _ string) (bool, error) {
-	if _, cerr := validateLiveGates(ctx, l.getenv, l.opts); cerr != nil {
+func (l *liveAdapter) CreateQueue(ctx context.Context, name string) (bool, error) {
+	envCfg, cerr := validateLiveGates(ctx, l.getenv, l.opts)
+	if cerr != nil {
 		return false, cerr
 	}
-	return false, stage1MutationDisabledErr("queue_create")
+	if !envCfg.mutate {
+		return false, stage1MutationDisabledErr("queue_create")
+	}
+	_, _, queue, err := l.ensureSession(ctx, envCfg)
+	if err != nil {
+		return false, err
+	}
+	return queue.CreateQueue(ctx, name)
 }
 
-func (l *liveAdapter) DeleteQueue(ctx context.Context, _ string) error {
-	if _, cerr := validateLiveGates(ctx, l.getenv, l.opts); cerr != nil {
+func (l *liveAdapter) DeleteQueue(ctx context.Context, name string) error {
+	envCfg, cerr := validateLiveGates(ctx, l.getenv, l.opts)
+	if cerr != nil {
 		return cerr
 	}
-	return stage1MutationDisabledErr("queue_delete")
+	if !envCfg.mutate {
+		return stage1MutationDisabledErr("queue_delete")
+	}
+	_, _, queue, err := l.ensureSession(ctx, envCfg)
+	if err != nil {
+		return err
+	}
+	return queue.DeleteQueue(ctx, name)
 }
 
-func (l *liveAdapter) Send(ctx context.Context, _, _ string) (string, error) {
-	if _, cerr := validateLiveGates(ctx, l.getenv, l.opts); cerr != nil {
+func (l *liveAdapter) Send(ctx context.Context, qName, wire string) (string, error) {
+	envCfg, cerr := validateLiveGates(ctx, l.getenv, l.opts)
+	if cerr != nil {
 		return "", cerr
 	}
-	return "", stage1MutationDisabledErr("queue_send")
+	if !envCfg.mutate {
+		return "", stage1MutationDisabledErr("queue_send")
+	}
+	_, _, queue, err := l.ensureSession(ctx, envCfg)
+	if err != nil {
+		return "", err
+	}
+	return queue.Send(ctx, qName, wire)
 }
 
-func (l *liveAdapter) Receive(ctx context.Context, _ string, _, _, _ int) ([]hostkit.RawMessage, error) {
-	if _, cerr := validateLiveGates(ctx, l.getenv, l.opts); cerr != nil {
+func (l *liveAdapter) Receive(ctx context.Context, qName string, max, waitSeconds, visibility int) ([]hostkit.RawMessage, error) {
+	envCfg, cerr := validateLiveGates(ctx, l.getenv, l.opts)
+	if cerr != nil {
 		return nil, cerr
 	}
-	return nil, stage1MutationDisabledErr("queue_receive")
+	if !envCfg.mutate {
+		return nil, stage1MutationDisabledErr("queue_receive")
+	}
+	_, _, queue, err := l.ensureSession(ctx, envCfg)
+	if err != nil {
+		return nil, err
+	}
+	return queue.Receive(ctx, qName, max, waitSeconds, visibility)
 }
 
-func (l *liveAdapter) Ack(ctx context.Context, _, _ string) error {
-	if _, cerr := validateLiveGates(ctx, l.getenv, l.opts); cerr != nil {
+func (l *liveAdapter) Ack(ctx context.Context, qName, receipt string) error {
+	envCfg, cerr := validateLiveGates(ctx, l.getenv, l.opts)
+	if cerr != nil {
 		return cerr
 	}
-	return stage1MutationDisabledErr("queue_ack")
+	if !envCfg.mutate {
+		return stage1MutationDisabledErr("queue_ack")
+	}
+	_, _, queue, err := l.ensureSession(ctx, envCfg)
+	if err != nil {
+		return err
+	}
+	return queue.Ack(ctx, qName, receipt)
 }
 
-func (l *liveAdapter) Nack(ctx context.Context, _, _ string, _ int) (string, error) {
-	if _, cerr := validateLiveGates(ctx, l.getenv, l.opts); cerr != nil {
+func (l *liveAdapter) Nack(ctx context.Context, qName, receipt string, visibility int) (string, error) {
+	envCfg, cerr := validateLiveGates(ctx, l.getenv, l.opts)
+	if cerr != nil {
 		return "", cerr
 	}
-	return "", stage1MutationDisabledErr("queue_nack")
+	if !envCfg.mutate {
+		return "", stage1MutationDisabledErr("queue_nack")
+	}
+	_, _, queue, err := l.ensureSession(ctx, envCfg)
+	if err != nil {
+		return "", err
+	}
+	return queue.Nack(ctx, qName, receipt, visibility)
+}
+
+func (l *liveAdapter) QueueCreateToken(ctx context.Context, qName string) (string, error) {
+	envCfg, cerr := validateLiveGates(ctx, l.getenv, l.opts)
+	if cerr != nil {
+		return "", cerr
+	}
+	if !envCfg.mutate {
+		return "", stage1MutationDisabledErr("queue_create_token")
+	}
+	_, _, queue, err := l.ensureSession(ctx, envCfg)
+	if err != nil {
+		return "", err
+	}
+	return queue.QueueCreateToken(ctx, qName)
 }
 
 func (l *liveAdapter) HeadBucket(ctx context.Context, name string) error {
@@ -1244,9 +1688,14 @@ func (l *liveAdapter) HeadBucket(ctx context.Context, name string) error {
 	if cerr != nil {
 		return cerr
 	}
-	_, store, _, err := l.ensureSession(ctx, envCfg)
+	sess, store, _, err := l.ensureSession(ctx, envCfg)
 	if err != nil {
 		return err
+	}
+	if envCfg.mutate {
+		if entry, ok := sess.Journal().Lookup(safety.KindBucket, "", name); ok && (entry.Retain || entry.State == safety.StateRetained) {
+			return hostkit.ProviderError(hostkit.PermissionDenied, http.StatusForbidden, "ForeignResourceCollision", entry.Reason)
+		}
 	}
 	return store.HeadBucket(ctx, name)
 }
@@ -1268,9 +1717,14 @@ func (l *liveAdapter) HeadObject(ctx context.Context, bucket, key string) (hostk
 	if cerr != nil {
 		return hostkit.ObjectMeta{}, cerr
 	}
-	_, store, _, err := l.ensureSession(ctx, envCfg)
+	sess, store, _, err := l.ensureSession(ctx, envCfg)
 	if err != nil {
 		return hostkit.ObjectMeta{}, err
+	}
+	if envCfg.mutate {
+		if entry, ok := sess.Journal().Lookup(safety.KindBucket, "", bucket); ok && (entry.Retain || entry.State == safety.StateRetained) {
+			return hostkit.ObjectMeta{}, hostkit.ProviderError(hostkit.PermissionDenied, http.StatusForbidden, "ForeignResourceCollision", entry.Reason)
+		}
 	}
 	return store.HeadObject(ctx, bucket, key)
 }
@@ -1280,9 +1734,14 @@ func (l *liveAdapter) ListObjects(ctx context.Context, bucket, prefix string, ma
 	if cerr != nil {
 		return hostkit.ObjectPage{}, cerr
 	}
-	_, store, _, err := l.ensureSession(ctx, envCfg)
+	sess, store, _, err := l.ensureSession(ctx, envCfg)
 	if err != nil {
 		return hostkit.ObjectPage{}, err
+	}
+	if envCfg.mutate {
+		if entry, ok := sess.Journal().Lookup(safety.KindBucket, "", bucket); ok && (entry.Retain || entry.State == safety.StateRetained) {
+			return hostkit.ObjectPage{}, hostkit.ProviderError(hostkit.PermissionDenied, http.StatusForbidden, "ForeignResourceCollision", entry.Reason)
+		}
 	}
 	return store.ListObjects(ctx, bucket, prefix, max, token)
 }
@@ -1296,9 +1755,14 @@ func (l *liveAdapter) LookupQueue(ctx context.Context, name string) error {
 	if cerr != nil {
 		return cerr
 	}
-	_, _, queue, err := l.ensureSession(ctx, envCfg)
+	sess, _, queue, err := l.ensureSession(ctx, envCfg)
 	if err != nil {
 		return err
+	}
+	if envCfg.mutate {
+		if entry, ok := sess.Journal().Lookup(safety.KindQueue, "", name); ok && (entry.Retain || entry.State == safety.StateRetained) {
+			return hostkit.ProviderError(hostkit.PermissionDenied, http.StatusForbidden, "ForeignResourceCollision", entry.Reason)
+		}
 	}
 	return queue.LookupQueue(ctx, name)
 }
@@ -1521,9 +1985,10 @@ func newLiveRawBackend(ctx context.Context, envCfg liveEnvConfig, opts *Options,
 		Timeout:       enforcedBase.Timeout,
 		CheckRedirect: enforcedBase.CheckRedirect,
 		Transport: &liveEndpointGuardTransport{
-			region:  envCfg.region,
-			account: envCfg.account,
-			base:    enforcedBase.Transport,
+			region:         envCfg.region,
+			account:        envCfg.account,
+			allowMutations: envCfg.mutate,
+			base:           enforcedBase.Transport,
 		},
 	}
 	credHTTPCli := &http.Client{
@@ -1769,7 +2234,7 @@ func (r *liveRawBackend) doLiveAWS(ctx context.Context, opName, kind, parent, na
 		callCtx := context.WithValue(ctx, respBytesTrackerKey{}, tracker)
 		lastCallErr = op(callCtx)
 		actualBytes, completedEOF, tooLarge, readErr := tracker.snapshot()
-		if maxRespBytes >= 0 && actualBytes > maxRespBytes {
+		if maxRespBytes > 0 && actualBytes > maxRespBytes {
 			tooLarge = true
 		}
 		if tooLarge {
@@ -1978,20 +2443,515 @@ func (r *liveRawBackend) ResolveScope(_ context.Context, service string) (safety
 	}, nil
 }
 
-func (r *liveRawBackend) ReadOwnership(_ context.Context, _ safety.ResourceRef) (safety.RemoteOwnership, error) {
-	return safety.RemoteOwnership{}, stage1MutationDisabledErr("read_ownership")
+func (r *liveRawBackend) attestedARNValue() string {
+	r.mu.Lock()
+	arn := r.attestedARN
+	r.mu.Unlock()
+	return arn
 }
 
-func (r *liveRawBackend) FindOwned(_ context.Context, _ string) ([]safety.ResourceRef, error) {
-	return nil, nil
+func (r *liveRawBackend) doRecoveryAWS(ctx context.Context, idempotent bool, op func(ctx context.Context) error) error {
+	var lastCallErr error
+	r.retry.Do(ctx, idempotent, func(ctx context.Context, _ int) hostkit.Attempt {
+		lastCallErr = op(ctx)
+		if lastCallErr == nil {
+			return hostkit.Attempt{Status: http.StatusOK}
+		}
+		if errors.Is(lastCallErr, ErrLiveResponseTooLarge) {
+			return hostkit.Attempt{Status: http.StatusForbidden}
+		}
+		status, hdr := extractHTTPResponse(lastCallErr)
+		if status == 0 {
+			return hostkit.Attempt{Err: lastCallErr, NotSent: hostkit.RequestNotSent(lastCallErr)}
+		}
+		var retryAfter string
+		if hdr != nil {
+			retryAfter = hdr.Get("Retry-After")
+		}
+		return hostkit.Attempt{Status: status, RetryAfter: retryAfter}
+	})
+	return lastCallErr
 }
 
-func (r *liveRawBackend) DeleteOwned(_ context.Context, _ safety.ResourceRef, _ safety.RemoteOwnership) error {
-	return stage1MutationDisabledErr("delete_owned")
+const (
+	liveOwnerTagKey   = "lmcloud-owner"
+	liveOwnerTagValue = "conformance"
+	liveRunTagKey     = "lmcloud-run"
+)
+
+func isInternalOwnershipMetaKey(k string) bool {
+	switch strings.ToLower(strings.TrimSpace(k)) {
+	case safety.TagKeyRunID, safety.TagKeyOwnerNonce, safety.TagKeyCreateToken, safety.TagKeyCreatedAt,
+		liveOwnerTagKey, liveRunTagKey, createTokenTagKey:
+		return true
+	default:
+		return false
+	}
 }
 
-func (r *liveRawBackend) PollDelete(_ context.Context, _ safety.ResourceRef) (bool, error) {
-	return false, stage1MutationDisabledErr("poll_delete")
+func liveOwnershipTagMap(ctx context.Context) (safety.OwnershipTags, map[string]string, error) {
+	tags, ok := safety.OwnershipTagsFrom(ctx)
+	if !ok || strings.TrimSpace(tags.RunID) == "" || strings.TrimSpace(tags.OwnerNonce) == "" || strings.TrimSpace(tags.CreateToken) == "" {
+		return safety.OwnershipTags{}, nil, hostkit.ProviderError(
+			hostkit.Internal,
+			0,
+			"MissingOwnershipTags",
+			"live create requires safety.OwnershipTags in context",
+		)
+	}
+	m := tags.Map()
+	m[liveOwnerTagKey] = liveOwnerTagValue
+	m[liveRunTagKey] = tags.RunID
+	return tags, m, nil
+}
+
+func buildS3TagSet(tags map[string]string) []s3types.Tag {
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]s3types.Tag, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, s3types.Tag{
+			Key:   aws.String(k),
+			Value: aws.String(tags[k]),
+		})
+	}
+	return out
+}
+
+func encodeS3TaggingHeader(tags map[string]string) string {
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	vals := url.Values{}
+	for _, k := range keys {
+		vals.Set(k, tags[k])
+	}
+	return vals.Encode()
+}
+
+func s3TagSetToMap(tags []s3types.Tag) map[string]string {
+	m := make(map[string]string, len(tags))
+	for _, t := range tags {
+		k := strings.TrimSpace(aws.ToString(t.Key))
+		if k != "" {
+			m[k] = strings.TrimSpace(aws.ToString(t.Value))
+		}
+	}
+	return m
+}
+
+func applyRemoteOwnershipTags(tagMap map[string]string, ro *safety.RemoteOwnership) {
+	if len(tagMap) == 0 || ro == nil {
+		return
+	}
+	ownerVal := strings.TrimSpace(tagMap[liveOwnerTagKey])
+	runVal := strings.TrimSpace(tagMap[liveRunTagKey])
+	safetyRunVal := strings.TrimSpace(tagMap[safety.TagKeyRunID])
+	if safetyRunVal == "" {
+		safetyRunVal = runVal
+	}
+	// Require both lmcloud-owner=conformance and matching lmcloud-run / lmcloud_run_id.
+	if ownerVal != liveOwnerTagValue || runVal == "" || safetyRunVal != runVal {
+		return
+	}
+	ro.RunID = safetyRunVal
+	ro.OwnerNonce = strings.TrimSpace(tagMap[safety.TagKeyOwnerNonce])
+	ro.CreateToken = strings.TrimSpace(tagMap[safety.TagKeyCreateToken])
+	if ro.CreateToken == "" {
+		ro.CreateToken = strings.TrimSpace(tagMap[createTokenTagKey])
+	}
+	if tsStr := strings.TrimSpace(tagMap[safety.TagKeyCreatedAt]); tsStr != "" {
+		if ts, err := strconv.ParseInt(tsStr, 10, 64); err == nil {
+			ro.CreatedAtUnix = ts
+		}
+	}
+}
+
+func (r *liveRawBackend) ReadOwnership(ctx context.Context, ref safety.ResourceRef) (safety.RemoteOwnership, error) {
+	owner := r.ownerAccount()
+	scopeARN := r.attestedARNValue()
+
+	switch ref.Kind {
+	case safety.KindBucket:
+		cli := r.s3Client()
+		headErr := r.doRecoveryAWS(ctx, true, func(ctx context.Context) error {
+			_, err := cli.HeadBucket(ctx, &s3.HeadBucketInput{
+				Bucket:              aws.String(ref.Name),
+				ExpectedBucketOwner: aws.String(owner),
+			})
+			return err
+		})
+		if headErr != nil {
+			status, _ := extractHTTPResponse(headErr)
+			if status == http.StatusForbidden && !hasExplicitHeadAuthHeader(headErr) {
+				probeErr := r.doRecoveryAWS(ctx, true, func(ctx context.Context) error {
+					_, pErr := cli.GetBucketLocation(ctx, &s3.GetBucketLocationInput{
+						Bucket:              aws.String(ref.Name),
+						ExpectedBucketOwner: aws.String(owner),
+					})
+					return pErr
+				})
+				if probeErr != nil {
+					if classified := r.classifyLive(probeErr, scopeBucket); classified.Code == hostkit.Unauthenticated || classified.Code == hostkit.PermissionDenied {
+						return safety.RemoteOwnership{}, classified
+					}
+				}
+			}
+			ce := r.classifyLive(headErr, scopeBucket)
+			if ce.Code == hostkit.NotFound {
+				return safety.RemoteOwnership{Exists: false}, nil
+			}
+			return safety.RemoteOwnership{}, ce
+		}
+
+		ro := safety.RemoteOwnership{
+			Exists:     true,
+			ProviderID: "arn:aws:s3:::" + ref.Name,
+			Account:    owner,
+			Scope:      scopeARN,
+			Location:   r.region,
+		}
+
+		var tagOut *s3.GetBucketTaggingOutput
+		tagErr := r.doRecoveryAWS(ctx, true, func(ctx context.Context) error {
+			var tErr error
+			tagOut, tErr = cli.GetBucketTagging(ctx, &s3.GetBucketTaggingInput{
+				Bucket:              aws.String(ref.Name),
+				ExpectedBucketOwner: aws.String(owner),
+			})
+			return tErr
+		})
+		if tagErr == nil && tagOut != nil {
+			applyRemoteOwnershipTags(s3TagSetToMap(tagOut.TagSet), &ro)
+		} else if tagErr != nil {
+			ce := r.classifyLive(tagErr, scopeBucket)
+			if ce.ProviderCode != "NoSuchTagSet" {
+				if ce.Code == hostkit.NotFound && ce.Absent == hostkit.AbsentBucket {
+					return safety.RemoteOwnership{Exists: false}, nil
+				}
+				return safety.RemoteOwnership{}, ce
+			}
+		}
+
+		var childKeys []string
+		var token string
+		for page := 0; page < 32; page++ {
+			in := &s3.ListObjectsV2Input{
+				Bucket:              aws.String(ref.Name),
+				MaxKeys:             aws.Int32(int32(maxLiveObjectListPageSize)),
+				ExpectedBucketOwner: aws.String(owner),
+			}
+			if token != "" {
+				in.ContinuationToken = aws.String(token)
+			}
+			var listOut *s3.ListObjectsV2Output
+			lErr := r.doRecoveryAWS(ctx, true, func(ctx context.Context) error {
+				var err error
+				listOut, err = cli.ListObjectsV2(ctx, in)
+				return err
+			})
+			if lErr != nil {
+				return safety.RemoteOwnership{}, r.classifyLive(lErr, scopeBucket)
+			}
+			for _, obj := range listOut.Contents {
+				if obj.Key != nil {
+					childKeys = append(childKeys, *obj.Key)
+				}
+			}
+			next := strings.TrimSpace(aws.ToString(listOut.NextContinuationToken))
+			if !aws.ToBool(listOut.IsTruncated) || next == "" || next == token {
+				ro.ChildrenVerified = !aws.ToBool(listOut.IsTruncated)
+				break
+			}
+			token = next
+		}
+		ro.ChildKeys = childKeys
+		return ro, nil
+
+	case safety.KindObject:
+		cli := r.s3Client()
+		var headOut *s3.HeadObjectOutput
+		headErr := r.doRecoveryAWS(ctx, true, func(ctx context.Context) error {
+			var err error
+			headOut, err = cli.HeadObject(ctx, &s3.HeadObjectInput{
+				Bucket:              aws.String(ref.Parent),
+				Key:                 aws.String(ref.Name),
+				ExpectedBucketOwner: aws.String(owner),
+			})
+			return err
+		})
+		if headErr != nil {
+			ce := r.classifyLive(headErr, scopeObject)
+			if ce.Code == hostkit.NotFound {
+				return safety.RemoteOwnership{Exists: false}, nil
+			}
+			return safety.RemoteOwnership{}, ce
+		}
+
+		ro := safety.RemoteOwnership{
+			Exists:     true,
+			ProviderID: "arn:aws:s3:::" + ref.Parent + "/" + ref.Name,
+			Account:    owner,
+			Scope:      scopeARN,
+			Location:   r.region,
+			ETag:       cleanETag(aws.ToString(headOut.ETag)),
+		}
+		var tagOut *s3.GetObjectTaggingOutput
+		tagErr := r.doRecoveryAWS(ctx, true, func(ctx context.Context) error {
+			var tErr error
+			tagOut, tErr = cli.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{
+				Bucket:              aws.String(ref.Parent),
+				Key:                 aws.String(ref.Name),
+				ExpectedBucketOwner: aws.String(owner),
+			})
+			return tErr
+		})
+		if tagErr == nil && tagOut != nil {
+			applyRemoteOwnershipTags(s3TagSetToMap(tagOut.TagSet), &ro)
+		} else if tagErr != nil {
+			ce := r.classifyLive(tagErr, scopeObject)
+			if ce.ProviderCode != "NoSuchTagSet" {
+				if ce.Code == hostkit.NotFound {
+					return safety.RemoteOwnership{Exists: false}, nil
+				}
+				return safety.RemoteOwnership{}, ce
+			}
+		}
+		return ro, nil
+
+	case safety.KindQueue:
+		cli := r.sqsClient()
+		var urlOut *sqs.GetQueueUrlOutput
+		urlErr := r.doRecoveryAWS(ctx, true, func(ctx context.Context) error {
+			var gErr error
+			urlOut, gErr = cli.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{
+				QueueName:              aws.String(ref.Name),
+				QueueOwnerAWSAccountId: aws.String(owner),
+			})
+			return gErr
+		})
+		if urlErr != nil {
+			ce := r.classifyLive(urlErr, scopeQueue)
+			if ce.Code == hostkit.NotFound {
+				return safety.RemoteOwnership{Exists: false}, nil
+			}
+			return safety.RemoteOwnership{}, ce
+		}
+		rawURL := strings.TrimSpace(aws.ToString(urlOut.QueueUrl))
+		qName, verr := validateLiveQueueURL(rawURL, r.region, owner)
+		if verr != nil {
+			return safety.RemoteOwnership{}, hostkit.ProviderError(hostkit.Internal, 0, "InvalidLiveQueueURL", r.sanitizeString(verr.Error()))
+		}
+		if qName != ref.Name {
+			return safety.RemoteOwnership{}, hostkit.ProviderError(hostkit.Internal, 0, "InvalidLiveQueueURL", fmt.Sprintf("sqs GetQueueUrl returned queue %q, wanted %q", qName, ref.Name))
+		}
+
+		ro := safety.RemoteOwnership{
+			Exists:     true,
+			ProviderID: rawURL,
+			Account:    owner,
+			Scope:      scopeARN,
+			Location:   r.region,
+		}
+		var tagOut *sqs.ListQueueTagsOutput
+		tagErr := r.doRecoveryAWS(ctx, true, func(ctx context.Context) error {
+			var tErr error
+			tagOut, tErr = cli.ListQueueTags(ctx, &sqs.ListQueueTagsInput{
+				QueueUrl: aws.String(rawURL),
+			})
+			return tErr
+		})
+		if tagErr != nil {
+			ce := r.classifyLive(tagErr, scopeQueue)
+			if ce.Code == hostkit.NotFound {
+				return safety.RemoteOwnership{Exists: false}, nil
+			}
+			return safety.RemoteOwnership{}, ce
+		}
+		if tagOut != nil {
+			applyRemoteOwnershipTags(tagOut.Tags, &ro)
+		}
+		return ro, nil
+
+	case safety.KindQueueMessage:
+		return safety.RemoteOwnership{Exists: false}, nil
+
+	default:
+		return safety.RemoteOwnership{}, fmt.Errorf("unsupported resource kind %q for ReadOwnership", ref.Kind)
+	}
+}
+
+func (r *liveRawBackend) FindOwned(ctx context.Context, prefix string) ([]safety.ResourceRef, error) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return nil, nil
+	}
+	var refs []safety.ResourceRef
+
+	// 1. Enumerate S3 buckets matching prefix.
+	s3Cli := r.s3Client()
+	var bToken string
+	for page := 0; page < 16; page++ {
+		in := &s3.ListBucketsInput{
+			MaxBuckets:   aws.Int32(maxLiveBucketListPageSize),
+			BucketRegion: aws.String(r.region),
+		}
+		if bToken != "" {
+			in.ContinuationToken = aws.String(bToken)
+		}
+		var out *s3.ListBucketsOutput
+		err := r.doRecoveryAWS(ctx, true, func(ctx context.Context) error {
+			var lErr error
+			out, lErr = s3Cli.ListBuckets(ctx, in)
+			return lErr
+		})
+		if err != nil {
+			return nil, r.classifyLive(err, scopeNone)
+		}
+		for _, b := range out.Buckets {
+			name := strings.TrimSpace(aws.ToString(b.Name))
+			if strings.HasPrefix(name, prefix) {
+				refs = append(refs, safety.ResourceRef{
+					Kind:       safety.KindBucket,
+					Location:   r.region,
+					Name:       name,
+					ProviderID: "arn:aws:s3:::" + name,
+				})
+			}
+		}
+		next := strings.TrimSpace(aws.ToString(out.ContinuationToken))
+		if next == "" || next == bToken {
+			break
+		}
+		bToken = next
+	}
+
+	// 2. Enumerate SQS queues matching prefix.
+	sqsCli := r.sqsClient()
+	owner := r.ownerAccount()
+	var qToken string
+	for page := 0; page < 16; page++ {
+		in := &sqs.ListQueuesInput{
+			MaxResults:      aws.Int32(maxLiveQueueListPageSize),
+			QueueNamePrefix: aws.String(prefix),
+		}
+		if qToken != "" {
+			in.NextToken = aws.String(qToken)
+		}
+		var out *sqs.ListQueuesOutput
+		err := r.doRecoveryAWS(ctx, true, func(ctx context.Context) error {
+			var lErr error
+			out, lErr = sqsCli.ListQueues(ctx, in)
+			return lErr
+		})
+		if err != nil {
+			return nil, r.classifyLive(err, scopeQueue)
+		}
+		for _, u := range out.QueueUrls {
+			qName, verr := validateLiveQueueURL(u, r.region, owner)
+			if verr != nil {
+				return nil, hostkit.ProviderError(hostkit.Internal, 0, "InvalidLiveQueueURL", r.sanitizeString(verr.Error()))
+			}
+			if strings.HasPrefix(qName, prefix) {
+				refs = append(refs, safety.ResourceRef{
+					Kind:       safety.KindQueue,
+					Location:   r.region,
+					Name:       qName,
+					ProviderID: strings.TrimSpace(u),
+				})
+			}
+		}
+		next := strings.TrimSpace(aws.ToString(out.NextToken))
+		if next == "" || next == qToken {
+			break
+		}
+		qToken = next
+	}
+
+	return refs, nil
+}
+
+func (r *liveRawBackend) DeleteOwned(ctx context.Context, ref safety.ResourceRef, _ safety.RemoteOwnership) error {
+	switch ref.Kind {
+	case safety.KindObject:
+		return r.DeleteObject(ctx, ref.Parent, ref.Name)
+	case safety.KindBucket:
+		return r.DeleteBucket(ctx, ref.Name)
+	case safety.KindQueue:
+		return r.DeleteQueue(ctx, ref.Name)
+	case safety.KindQueueMessage:
+		return nil
+	default:
+		return fmt.Errorf("unsupported resource kind %q for DeleteOwned", ref.Kind)
+	}
+}
+
+func (r *liveRawBackend) PollDelete(ctx context.Context, ref safety.ResourceRef) (bool, error) {
+	owner := r.ownerAccount()
+	switch ref.Kind {
+	case safety.KindObject:
+		cli := r.s3Client()
+		err := r.doRecoveryAWS(ctx, true, func(ctx context.Context) error {
+			_, hErr := cli.HeadObject(ctx, &s3.HeadObjectInput{
+				Bucket:              aws.String(ref.Parent),
+				Key:                 aws.String(ref.Name),
+				ExpectedBucketOwner: aws.String(owner),
+			})
+			return hErr
+		})
+		if err == nil {
+			return false, nil
+		}
+		if r.ClassifyAbsent(err) == safety.AbsenceDefinitive {
+			return true, nil
+		}
+		return false, r.classifyLive(err, scopeObject)
+
+	case safety.KindBucket:
+		cli := r.s3Client()
+		err := r.doRecoveryAWS(ctx, true, func(ctx context.Context) error {
+			_, hErr := cli.HeadBucket(ctx, &s3.HeadBucketInput{
+				Bucket:              aws.String(ref.Name),
+				ExpectedBucketOwner: aws.String(owner),
+			})
+			return hErr
+		})
+		if err == nil {
+			return false, nil
+		}
+		if r.ClassifyAbsent(err) == safety.AbsenceDefinitive {
+			return true, nil
+		}
+		return false, r.classifyLive(err, scopeBucket)
+
+	case safety.KindQueue:
+		cli := r.sqsClient()
+		err := r.doRecoveryAWS(ctx, true, func(ctx context.Context) error {
+			_, gErr := cli.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{
+				QueueName:              aws.String(ref.Name),
+				QueueOwnerAWSAccountId: aws.String(owner),
+			})
+			return gErr
+		})
+		if err == nil {
+			return false, nil
+		}
+		if r.ClassifyAbsent(err) == safety.AbsenceDefinitive {
+			return true, nil
+		}
+		return false, r.classifyLive(err, scopeQueue)
+
+	case safety.KindQueueMessage:
+		return true, nil
+
+	default:
+		return false, fmt.Errorf("unsupported resource kind %q for PollDelete", ref.Kind)
+	}
 }
 
 func (r *liveRawBackend) ClassifyAbsent(err error) safety.AbsenceClass {
@@ -2017,26 +2977,178 @@ func (r *liveRawBackend) QuoteAttempt(in safety.AttemptPricingInput, base safety
 	return q, nil
 }
 
-// --- Stage 1 Read-Only S3 & SQS Implementations on liveRawBackend ---
+// --- S3 & SQS Implementations on liveRawBackend ---
 
-func (r *liveRawBackend) CreateBucket(_ context.Context, _ string) (bool, error) {
-	return false, stage1MutationDisabledErr("bucket_create")
+func (r *liveRawBackend) CreateBucket(ctx context.Context, name string) (bool, error) {
+	_, tagMap, terr := liveOwnershipTagMap(ctx)
+	if terr != nil {
+		return false, terr
+	}
+	cli := r.s3Client()
+	owner := r.ownerAccount()
+
+	in := &s3.CreateBucketInput{Bucket: aws.String(name)}
+	if r.region != "" && r.region != defaultSimRegion {
+		in.CreateBucketConfiguration = &s3types.CreateBucketConfiguration{
+			LocationConstraint: s3types.BucketLocationConstraint(r.region),
+		}
+	}
+	err := r.doLiveAWS(ctx, "bucket_create", safety.KindBucket, "", name, 0, true, func(ctx context.Context) error {
+		_, cErr := cli.CreateBucket(ctx, in)
+		return cErr
+	})
+	if err != nil {
+		ce := r.classifyLive(err, scopeBucket)
+		if ce.ProviderCode != "BucketAlreadyOwnedByYou" {
+			return false, ce
+		}
+	}
+
+	// S3 CreateBucket has no atomic tagging parameter; immediately attach the
+	// mandatory conformance + safety ownership tags via PutBucketTagging.
+	// GuardStore.CreateBucket always calls ReadOwnership afterwards and marks
+	// the bucket StateRetained if tagging failed or mismatched.
+	tagSet := buildS3TagSet(tagMap)
+	tagErr := r.doLiveAWS(ctx, "bucket_create", safety.KindBucket, "", name, 0, true, func(ctx context.Context) error {
+		_, pErr := cli.PutBucketTagging(ctx, &s3.PutBucketTaggingInput{
+			Bucket:              aws.String(name),
+			ExpectedBucketOwner: aws.String(owner),
+			Tagging:             &s3types.Tagging{TagSet: tagSet},
+		})
+		return pErr
+	})
+	if tagErr != nil {
+		return false, r.classifyLive(tagErr, scopeBucket)
+	}
+	return true, nil
 }
 
-func (r *liveRawBackend) DeleteBucket(_ context.Context, _ string) error {
-	return stage1MutationDisabledErr("bucket_delete")
+func (r *liveRawBackend) DeleteBucket(ctx context.Context, name string) error {
+	cli := r.s3Client()
+	owner := r.ownerAccount()
+	err := r.doLiveAWS(ctx, "bucket_delete", safety.KindBucket, "", name, 0, true, func(ctx context.Context) error {
+		_, dErr := cli.DeleteBucket(ctx, &s3.DeleteBucketInput{
+			Bucket:              aws.String(name),
+			ExpectedBucketOwner: aws.String(owner),
+		})
+		return dErr
+	})
+	if err == nil {
+		return nil
+	}
+	ce := r.classifyLive(err, scopeBucket)
+	if ce.Code == hostkit.NotFound {
+		return ce.WithAbsent(hostkit.AbsentBucket)
+	}
+	return ce
 }
 
-func (r *liveRawBackend) PutObject(_ context.Context, _, _ string, _ []byte, _ string, _ map[string]string) (hostkit.ObjectMeta, error) {
-	return hostkit.ObjectMeta{}, stage1MutationDisabledErr("object_put")
+func (r *liveRawBackend) PutObject(ctx context.Context, bucket, key string, body []byte, contentType string, metadata map[string]string) (hostkit.ObjectMeta, error) {
+	_, tagMap, terr := liveOwnershipTagMap(ctx)
+	if terr != nil {
+		return hostkit.ObjectMeta{}, terr
+	}
+	cli := r.s3Client()
+	owner := r.ownerAccount()
+	taggingHeader := encodeS3TaggingHeader(tagMap)
+
+	userMeta := make(map[string]string, len(metadata))
+	for k, v := range metadata {
+		if !isInternalOwnershipMetaKey(k) {
+			userMeta[k] = v
+		}
+	}
+
+	var out *s3.PutObjectOutput
+	err := r.doLiveAWS(ctx, "object_put", safety.KindObject, bucket, key, 0, true, func(ctx context.Context) error {
+		var pErr error
+		out, pErr = cli.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:              aws.String(bucket),
+			Key:                 aws.String(key),
+			Body:                bytes.NewReader(body),
+			ContentType:         aws.String(contentType),
+			Metadata:            userMeta,
+			Tagging:             aws.String(taggingHeader),
+			ExpectedBucketOwner: aws.String(owner),
+		})
+		return pErr
+	})
+	if err != nil {
+		return hostkit.ObjectMeta{}, r.classifyLive(err, scopeObject)
+	}
+	etag := cleanETag(aws.ToString(out.ETag))
+	metaCopy := make(map[string]string, len(userMeta))
+	for k, v := range userMeta {
+		metaCopy[k] = v
+	}
+	return hostkit.ObjectMeta{
+		Exists:      true,
+		Bucket:      bucket,
+		Key:         key,
+		Size:        int64(len(body)),
+		ETag:        etag,
+		ContentType: contentType,
+		Metadata:    metaCopy,
+	}, nil
 }
 
-func (r *liveRawBackend) DeleteObject(_ context.Context, _, _ string) error {
-	return stage1MutationDisabledErr("object_delete")
+func (r *liveRawBackend) DeleteObject(ctx context.Context, bucket, key string) error {
+	cli := r.s3Client()
+	owner := r.ownerAccount()
+	err := r.doLiveAWS(ctx, "object_delete", safety.KindObject, bucket, key, 0, true, func(ctx context.Context) error {
+		_, dErr := cli.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket:              aws.String(bucket),
+			Key:                 aws.String(key),
+			ExpectedBucketOwner: aws.String(owner),
+		})
+		return dErr
+	})
+	if err != nil {
+		return r.classifyLive(err, scopeObject)
+	}
+	return nil
 }
 
-func (r *liveRawBackend) GetObject(_ context.Context, _, _ string, _ int64) ([]byte, error) {
-	return nil, stage1MutationDisabledErr("object_get")
+func (r *liveRawBackend) GetObject(ctx context.Context, bucket, key string, limit int64) ([]byte, error) {
+	if limit <= 0 || limit > safety.DefaultMaxObjectBytes {
+		limit = safety.DefaultMaxObjectBytes
+	}
+	cli := r.s3Client()
+	owner := r.ownerAccount()
+	var data []byte
+	var sizeErr error
+	err := r.doLiveAWS(ctx, "object_get", safety.KindObject, bucket, key, 0, true, func(ctx context.Context) error {
+		out, gErr := cli.GetObject(ctx, &s3.GetObjectInput{
+			Bucket:              aws.String(bucket),
+			Key:                 aws.String(key),
+			ExpectedBucketOwner: aws.String(owner),
+		})
+		if gErr != nil {
+			return gErr
+		}
+		defer out.Body.Close()
+		if limit > 0 && out.ContentLength != nil && *out.ContentLength > limit {
+			sizeErr = &hostkit.CloudError{
+				Code:    hostkit.Internal,
+				Message: fmt.Sprintf("object %q (%d bytes) exceeds maximum size (%d bytes)", key, *out.ContentLength, limit),
+			}
+			return nil
+		}
+		var rErr error
+		data, rErr = hostkit.ReadBoundedErr(out.Body, limit)
+		if rErr != nil {
+			sizeErr = rErr
+			return nil
+		}
+		return nil
+	})
+	if sizeErr != nil {
+		return nil, r.classifyLive(sizeErr, scopeObject)
+	}
+	if err != nil {
+		return nil, r.classifyLive(err, scopeObject)
+	}
+	return data, nil
 }
 
 func (r *liveRawBackend) HeadBucket(ctx context.Context, name string) error {
@@ -2164,7 +3276,10 @@ func (r *liveRawBackend) HeadObject(ctx context.Context, bucket, key string) (ho
 	}
 	meta := make(map[string]string, len(out.Metadata))
 	for k, v := range out.Metadata {
-		meta[strings.ToLower(strings.TrimSpace(k))] = v
+		lk := strings.ToLower(strings.TrimSpace(k))
+		if !isInternalOwnershipMetaKey(lk) {
+			meta[lk] = v
+		}
 	}
 	return hostkit.ObjectMeta{
 		Exists:      true,
@@ -2242,28 +3357,267 @@ func (r *liveRawBackend) QueueCaps() hostkit.QueueCaps {
 	return hostkit.QueueCaps{LongPoll: true, TextOnlyWire: true}
 }
 
-func (r *liveRawBackend) CreateQueue(_ context.Context, _ string) (bool, error) {
-	return false, stage1MutationDisabledErr("queue_create")
+func (r *liveRawBackend) resolveLiveQueueURL(ctx context.Context, name string) (string, error) {
+	cli := r.sqsClient()
+	owner := r.ownerAccount()
+	var out *sqs.GetQueueUrlOutput
+	err := r.doLiveAWS(ctx, "queue_exists", safety.KindQueue, "", name, 0, true, func(ctx context.Context) error {
+		var gErr error
+		out, gErr = cli.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{
+			QueueName:              aws.String(name),
+			QueueOwnerAWSAccountId: aws.String(owner),
+		})
+		return gErr
+	})
+	if err != nil {
+		ce := r.classifyLive(err, scopeQueue)
+		if ce.Code == hostkit.NotFound {
+			return "", ce.WithAbsent(hostkit.AbsentQueue)
+		}
+		return "", ce
+	}
+	rawURL := strings.TrimSpace(aws.ToString(out.QueueUrl))
+	qName, verr := validateLiveQueueURL(rawURL, r.region, owner)
+	if verr != nil {
+		return "", hostkit.ProviderError(hostkit.Internal, 0, "InvalidLiveQueueURL", r.sanitizeString(verr.Error()))
+	}
+	if qName != name {
+		return "", hostkit.ProviderError(hostkit.Internal, 0, "InvalidLiveQueueURL", fmt.Sprintf("sqs GetQueueUrl returned queue %q, wanted %q", qName, name))
+	}
+	return rawURL, nil
 }
 
-func (r *liveRawBackend) DeleteQueue(_ context.Context, _ string) error {
-	return stage1MutationDisabledErr("queue_delete")
+func (r *liveRawBackend) CreateQueue(ctx context.Context, name string) (bool, error) {
+	_, tagMap, terr := liveOwnershipTagMap(ctx)
+	if terr != nil {
+		return false, terr
+	}
+	cli := r.sqsClient()
+	in := &sqs.CreateQueueInput{
+		QueueName: aws.String(name),
+		Tags:      tagMap,
+	}
+	var out *sqs.CreateQueueOutput
+	err := r.doLiveAWS(ctx, "queue_create", safety.KindQueue, "", name, 0, true, func(ctx context.Context) error {
+		var cErr error
+		out, cErr = cli.CreateQueue(ctx, in)
+		return cErr
+	})
+	if err != nil {
+		return false, r.classifyLive(err, scopeQueue)
+	}
+	rawURL := strings.TrimSpace(aws.ToString(out.QueueUrl))
+	qName, verr := validateLiveQueueURL(rawURL, r.region, r.ownerAccount())
+	if verr != nil {
+		return false, hostkit.ProviderError(hostkit.Internal, 0, "InvalidLiveQueueURL", r.sanitizeString(verr.Error()))
+	}
+	if qName != name {
+		return false, hostkit.ProviderError(hostkit.Internal, 0, "InvalidLiveQueueURL", fmt.Sprintf("sqs CreateQueue returned queue %q, wanted %q", qName, name))
+	}
+	return true, nil
 }
 
-func (r *liveRawBackend) Send(_ context.Context, _, _ string) (string, error) {
-	return "", stage1MutationDisabledErr("queue_send")
+func (r *liveRawBackend) QueueCreateToken(ctx context.Context, name string) (string, error) {
+	qURL, err := r.resolveLiveQueueURL(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	cli := r.sqsClient()
+	var out *sqs.ListQueueTagsOutput
+	tErr := r.doLiveAWS(ctx, "queue_exists", safety.KindQueue, "", name, 0, true, func(ctx context.Context) error {
+		var callErr error
+		out, callErr = cli.ListQueueTags(ctx, &sqs.ListQueueTagsInput{
+			QueueUrl: aws.String(qURL),
+		})
+		return callErr
+	})
+	if tErr != nil {
+		return "", r.classifyLive(tErr, scopeQueue)
+	}
+	if out == nil || len(out.Tags) == 0 {
+		return "", nil
+	}
+	if tok := strings.TrimSpace(out.Tags[safety.TagKeyCreateToken]); tok != "" {
+		return tok, nil
+	}
+	return strings.TrimSpace(out.Tags[createTokenTagKey]), nil
 }
 
-func (r *liveRawBackend) Receive(_ context.Context, _ string, _, _, _ int) ([]hostkit.RawMessage, error) {
-	return nil, stage1MutationDisabledErr("queue_receive")
+func (r *liveRawBackend) DeleteQueue(ctx context.Context, name string) error {
+	qURL, err := r.resolveLiveQueueURL(ctx, name)
+	if err != nil {
+		return err
+	}
+	cli := r.sqsClient()
+	dErr := r.doLiveAWS(ctx, "queue_delete", safety.KindQueue, "", name, 0, true, func(ctx context.Context) error {
+		_, callErr := cli.DeleteQueue(ctx, &sqs.DeleteQueueInput{
+			QueueUrl: aws.String(qURL),
+		})
+		return callErr
+	})
+	if dErr != nil {
+		ce := r.classifyLive(dErr, scopeQueue)
+		if ce.Code == hostkit.NotFound {
+			return ce.WithAbsent(hostkit.AbsentQueue)
+		}
+		return ce
+	}
+	return nil
 }
 
-func (r *liveRawBackend) Ack(_ context.Context, _, _ string) error {
-	return stage1MutationDisabledErr("queue_ack")
+func (r *liveRawBackend) Send(ctx context.Context, queue, wire string) (string, error) {
+	qURL, err := r.resolveLiveQueueURL(ctx, queue)
+	if err != nil {
+		return "", err
+	}
+	cli := r.sqsClient()
+	var out *sqs.SendMessageOutput
+	sErr := r.doLiveAWS(ctx, "queue_send", safety.KindQueueMessage, queue, "", 0, false, func(ctx context.Context) error {
+		var callErr error
+		out, callErr = cli.SendMessage(ctx, &sqs.SendMessageInput{
+			QueueUrl:    aws.String(qURL),
+			MessageBody: aws.String(wire),
+		})
+		return callErr
+	})
+	if sErr != nil {
+		return "", r.classifyLive(sErr, scopeQueue)
+	}
+	id := strings.TrimSpace(aws.ToString(out.MessageId))
+	if id == "" {
+		return "", &hostkit.CloudError{
+			Code:    hostkit.Internal,
+			Message: "sqs SendMessage returned an empty MessageId",
+		}
+	}
+	return id, nil
 }
 
-func (r *liveRawBackend) Nack(_ context.Context, _, _ string, _ int) (string, error) {
-	return "", stage1MutationDisabledErr("queue_nack")
+func (r *liveRawBackend) Receive(ctx context.Context, queue string, max, waitSeconds, visibility int) ([]hostkit.RawMessage, error) {
+	qURL, err := r.resolveLiveQueueURL(ctx, queue)
+	if err != nil {
+		return nil, err
+	}
+	if max <= 0 {
+		max = 1
+	}
+	if max > 10 {
+		max = 10
+	}
+	if waitSeconds < 0 {
+		waitSeconds = 0
+	}
+	if waitSeconds > 8 {
+		waitSeconds = 8
+	}
+	cli := r.sqsClient()
+
+	deadline := time.Now().Add(time.Duration(waitSeconds) * time.Second)
+	for {
+		waitParam := int32(0)
+		if waitSeconds > 0 {
+			rem := time.Until(deadline)
+			if rem > 0 {
+				sec := int32((rem + 999*time.Millisecond) / time.Second)
+				if sec > int32(waitSeconds) {
+					sec = int32(waitSeconds)
+				}
+				if sec < 1 {
+					sec = 1
+				}
+				waitParam = sec
+			}
+		}
+
+		var out *sqs.ReceiveMessageOutput
+		rErr := r.doLiveAWS(ctx, "queue_receive", safety.KindQueue, "", queue, 0, false, func(ctx context.Context) error {
+			var callErr error
+			out, callErr = cli.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+				QueueUrl:            aws.String(qURL),
+				MaxNumberOfMessages: int32(max),
+				VisibilityTimeout:   int32(visibility),
+				WaitTimeSeconds:     waitParam,
+			})
+			return callErr
+		})
+		if rErr != nil {
+			return nil, r.classifyLive(rErr, scopeQueue)
+		}
+
+		if len(out.Messages) > 0 {
+			msgs := make([]hostkit.RawMessage, 0, len(out.Messages))
+			for _, m := range out.Messages {
+				id := aws.ToString(m.MessageId)
+				rh := aws.ToString(m.ReceiptHandle)
+				if id == "" || rh == "" {
+					return nil, &hostkit.CloudError{
+						Code:    hostkit.Internal,
+						Message: "sqs ReceiveMessage entry missing MessageId or ReceiptHandle",
+					}
+				}
+				msgs = append(msgs, hostkit.RawMessage{
+					ID:      id,
+					Wire:    aws.ToString(m.Body),
+					Receipt: rh,
+				})
+			}
+			return msgs, nil
+		}
+
+		if waitSeconds <= 0 || !time.Now().Before(deadline) {
+			return []hostkit.RawMessage{}, nil
+		}
+		sleepDur := 50 * time.Millisecond
+		if rem := time.Until(deadline); rem < sleepDur {
+			sleepDur = rem
+		}
+		if sleepDur > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, r.classifyLive(ctx.Err(), scopeQueue)
+			case <-time.After(sleepDur):
+			}
+		}
+	}
+}
+
+func (r *liveRawBackend) Ack(ctx context.Context, queue, receipt string) error {
+	qURL, err := r.resolveLiveQueueURL(ctx, queue)
+	if err != nil {
+		return err
+	}
+	cli := r.sqsClient()
+	dErr := r.doLiveAWS(ctx, "queue_ack", safety.KindQueueMessage, queue, "", 0, true, func(ctx context.Context) error {
+		_, callErr := cli.DeleteMessage(ctx, &sqs.DeleteMessageInput{
+			QueueUrl:      aws.String(qURL),
+			ReceiptHandle: aws.String(receipt),
+		})
+		return callErr
+	})
+	if dErr != nil {
+		return r.classifyLive(dErr, scopeMessage)
+	}
+	return nil
+}
+
+func (r *liveRawBackend) Nack(ctx context.Context, queue, receipt string, visibility int) (string, error) {
+	qURL, err := r.resolveLiveQueueURL(ctx, queue)
+	if err != nil {
+		return "", err
+	}
+	cli := r.sqsClient()
+	cErr := r.doLiveAWS(ctx, "queue_nack", safety.KindQueueMessage, queue, "", 0, true, func(ctx context.Context) error {
+		_, callErr := cli.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
+			QueueUrl:          aws.String(qURL),
+			ReceiptHandle:     aws.String(receipt),
+			VisibilityTimeout: int32(visibility),
+		})
+		return callErr
+	})
+	if cErr != nil {
+		return "", r.classifyLive(cErr, scopeMessage)
+	}
+	return receipt, nil
 }
 
 func validateLiveQueueURL(rawURL, region, account string) (string, error) {
@@ -2359,4 +3713,181 @@ func (r *liveRawBackend) ListQueues(ctx context.Context, token string) ([]string
 		return nil, "", hostkit.ProviderError(hostkit.Internal, 0, "StalledPagination", "pagination stalled: next token repeated")
 	}
 	return names, next, nil
+}
+
+// FinishAndSweep executes an active LIFO recovery sweep on the current live
+// session (if open), compacts its journal, and closes the session.
+func (l *liveAdapter) FinishAndSweep(ctx context.Context) (safety.SweepReport, error) {
+	l.mu.Lock()
+	sess := l.sess
+	l.sess = nil
+	l.store = nil
+	l.queue = nil
+	l.raw = nil
+	l.sessKey = ""
+	l.mu.Unlock()
+	if sess == nil {
+		return safety.SweepReport{}, nil
+	}
+	return sess.FinishAndSweep(ctx)
+}
+
+type sweepCLIOutput struct {
+	OK             bool                `json:"ok"`
+	DryRun         bool                `json:"dry_run"`
+	Swept          int                 `json:"swept"`
+	Deleted        int                 `json:"deleted"`
+	WouldDelete    int                 `json:"would_delete"`
+	Absent         int                 `json:"absent"`
+	Retained       int                 `json:"retained"`
+	Failed         int                 `json:"failed"`
+	Pending        int                 `json:"pending"`
+	UnownedSkipped int                 `json:"unowned_skipped"`
+	Reports        []safety.SweepReport `json:"reports,omitempty"`
+	Error          string              `json:"error,omitempty"`
+}
+
+// SweepCLI implements `lmaws --sweep [--apply|--delete|--dry-run] [--journal-dir DIR] [RUN_ID...]`.
+// By default (without --apply or --delete), SweepCLI runs in dry-run mode.
+func (l *liveAdapter) SweepCLI(ctx context.Context, args []string, out io.Writer) int {
+	getenv := l.getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if strings.TrimSpace(getenv("LMCLOUD_LIVE")) != "1" || strings.TrimSpace(getenv("LMAWS_LIVE")) != "1" {
+		_, _ = fmt.Fprintln(out, `{"ok":true,"swept":0,"mode":"sim-or-live-readonly-stage1"}`)
+		return 0
+	}
+
+	apply := false
+	var flagJournalDir string
+	var runIDs []string
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		switch {
+		case arg == "--apply" || arg == "--delete":
+			apply = true
+		case arg == "--dry-run":
+			apply = false
+		case arg == "--journal-dir" && i+1 < len(args):
+			i++
+			flagJournalDir = strings.TrimSpace(args[i])
+		case strings.HasPrefix(arg, "--journal-dir="):
+			flagJournalDir = strings.TrimSpace(strings.TrimPrefix(arg, "--journal-dir="))
+		case strings.HasPrefix(arg, "-"):
+			res := sweepCLIOutput{OK: false, DryRun: !apply, Error: fmt.Sprintf("unknown --sweep flag %q", arg)}
+			_ = json.NewEncoder(out).Encode(res)
+			return 1
+		case arg != "":
+			runIDs = append(runIDs, arg)
+		}
+	}
+
+	envCfg, cerr := validateLiveGates(ctx, getenv, l.opts)
+	if cerr != nil {
+		res := sweepCLIOutput{OK: false, DryRun: !apply, Error: sanitizeStaticSecrets(cerr.Error())}
+		_ = json.NewEncoder(out).Encode(res)
+		return 1
+	}
+	if apply {
+		envCfg.mutate = true
+	}
+
+	jDir := flagJournalDir
+	if jDir == "" {
+		jDir = envCfg.journalDir
+	}
+	if jDir == "" {
+		jDir = filepath.Join(os.TempDir(), fmt.Sprintf("lmaws-live-%d", os.Getuid()))
+	}
+	absJDir, err := safety.EnsureStateDir(jDir)
+	if err != nil {
+		res := sweepCLIOutput{OK: false, DryRun: !apply, Error: sanitizeStaticSecrets(err.Error())}
+		_ = json.NewEncoder(out).Encode(res)
+		return 1
+	}
+
+	if len(runIDs) == 0 && envCfg.runID != "" {
+		if p, perr := safety.JournalPath(absJDir, envCfg.runID); perr == nil {
+			if _, serr := os.Stat(p); serr == nil {
+				runIDs = append(runIDs, envCfg.runID)
+			}
+		}
+	}
+	if len(runIDs) == 0 {
+		entries, derr := os.ReadDir(absJDir)
+		if derr == nil {
+			for _, e := range entries {
+				name := e.Name()
+				if !e.IsDir() && strings.HasSuffix(name, ".jsonl") {
+					rid := strings.TrimSuffix(name, ".jsonl")
+					if safety.ValidateRunID(rid) == nil {
+						runIDs = append(runIDs, rid)
+					}
+				}
+			}
+			sort.Strings(runIDs)
+		}
+	}
+
+	if len(runIDs) == 0 {
+		res := sweepCLIOutput{OK: true, DryRun: !apply, Swept: 0}
+		_ = json.NewEncoder(out).Encode(res)
+		return 0
+	}
+
+	pol, perr := l.buildLivePolicy(envCfg, absJDir)
+	if perr != nil {
+		res := sweepCLIOutput{OK: false, DryRun: !apply, Error: sanitizeStaticSecrets(perr.Error())}
+		_ = json.NewEncoder(out).Encode(res)
+		return 1
+	}
+	raw, rerr := newLiveRawBackend(ctx, envCfg, l.opts, l.retry, l.baseCli, getenv)
+	if rerr != nil {
+		res := sweepCLIOutput{OK: false, DryRun: !apply, Error: sanitizeStaticSecrets(rerr.Error())}
+		_ = json.NewEncoder(out).Encode(res)
+		return 1
+	}
+
+	outSummary := sweepCLIOutput{
+		OK:     true,
+		DryRun: !apply,
+	}
+	var errMsgs []string
+	for _, rid := range runIDs {
+		rep, serr := safety.Sweep(ctx, raw, safety.SweepOptions{
+			JournalDir: absJDir,
+			RunID:      rid,
+			Policy:     &pol,
+			Apply:      apply,
+			ScanPrefix: true,
+		})
+		outSummary.Reports = append(outSummary.Reports, rep)
+		outSummary.Deleted += len(rep.Deleted)
+		outSummary.WouldDelete += len(rep.WouldDelete)
+		outSummary.Absent += len(rep.Absent)
+		outSummary.Retained += len(rep.Retained)
+		outSummary.Failed += len(rep.Failed)
+		outSummary.Pending += len(rep.Pending)
+		outSummary.UnownedSkipped += len(rep.UnownedSkipped)
+		if apply {
+			outSummary.Swept += len(rep.Deleted)
+		} else {
+			outSummary.Swept += len(rep.WouldDelete)
+		}
+		if serr != nil {
+			outSummary.OK = false
+			errMsgs = append(errMsgs, raw.sanitizeString(serr.Error()))
+		} else if !rep.Clean() {
+			outSummary.OK = false
+		}
+	}
+	if len(errMsgs) > 0 {
+		outSummary.Error = strings.Join(errMsgs, "; ")
+	}
+	_ = json.NewEncoder(out).Encode(outSummary)
+	if !outSummary.OK {
+		return 1
+	}
+	return 0
 }
