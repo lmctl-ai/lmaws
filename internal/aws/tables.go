@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,8 +31,9 @@ const (
 	floatTypeTag     = "number"
 	metaTableName    = "lmcloudmeta"
 
-	tableWaitTimeout  = 60 * time.Second
-	tableWaitInterval = 50 * time.Millisecond
+	tableWaitTimeout     = 60 * time.Second
+	tableWaitInterval    = 50 * time.Millisecond
+	maxUpdateCASAttempts = 8
 )
 
 func newVersionToken() string {
@@ -80,13 +82,85 @@ type ddbTableMeta struct {
 	incarnationToken string
 }
 
-func isTableSorted(ks []types.KeySchemaElement) bool {
+// validateDDBTableSchema verifies that a DynamoDB table's KeySchema and
+// AttributeDefinitions match the portable lmcloud key schema contract:
+//   - HASH key named "pk" of type S
+//   - optional RANGE key named "sk" of type S (and no other key elements).
+func validateDDBTableSchema(name string, ks []types.KeySchemaElement, attrs []types.AttributeDefinition) (bool, *hostkit.CloudError) {
+	if len(ks) < 1 || len(ks) > 2 {
+		return false, hostkit.ProviderError(
+			hostkit.Conflict,
+			http.StatusBadRequest,
+			"IncompatibleTableKeySchema",
+			fmt.Sprintf("table %q has %d key schema elements; expected 1 (pk) or 2 (pk, sk)", name, len(ks)),
+		)
+	}
+	var hasPK, hasSK bool
 	for _, k := range ks {
-		if k.KeyType == types.KeyTypeRange && aws.ToString(k.AttributeName) == attrSK {
-			return true
+		attrName := strings.TrimSpace(aws.ToString(k.AttributeName))
+		switch k.KeyType {
+		case types.KeyTypeHash:
+			if attrName != attrPK || hasPK {
+				return false, hostkit.ProviderError(
+					hostkit.Conflict,
+					http.StatusBadRequest,
+					"IncompatibleTableKeySchema",
+					fmt.Sprintf("table %q has unsupported HASH key %q (expected %q)", name, attrName, attrPK),
+				)
+			}
+			hasPK = true
+		case types.KeyTypeRange:
+			if attrName != attrSK || hasSK {
+				return false, hostkit.ProviderError(
+					hostkit.Conflict,
+					http.StatusBadRequest,
+					"IncompatibleTableKeySchema",
+					fmt.Sprintf("table %q has unsupported RANGE key %q (expected %q)", name, attrName, attrSK),
+				)
+			}
+			hasSK = true
+		default:
+			return false, hostkit.ProviderError(
+				hostkit.Conflict,
+				http.StatusBadRequest,
+				"IncompatibleTableKeySchema",
+				fmt.Sprintf("table %q has unsupported key type %q on attribute %q", name, k.KeyType, attrName),
+			)
 		}
 	}
-	return len(ks) > 1
+	if !hasPK || (len(ks) == 2 && !hasSK) {
+		return false, hostkit.ProviderError(
+			hostkit.Conflict,
+			http.StatusBadRequest,
+			"IncompatibleTableKeySchema",
+			fmt.Sprintf("table %q is missing required portable key schema", name),
+		)
+	}
+	if len(attrs) > 0 {
+		attrTypes := make(map[string]types.ScalarAttributeType, len(attrs))
+		for _, a := range attrs {
+			attrTypes[strings.TrimSpace(aws.ToString(a.AttributeName))] = a.AttributeType
+		}
+		if pkType, ok := attrTypes[attrPK]; !ok || pkType != types.ScalarAttributeTypeS {
+			return false, hostkit.ProviderError(
+				hostkit.Conflict,
+				http.StatusBadRequest,
+				"IncompatibleTableKeySchema",
+				fmt.Sprintf("table %q partition key %q must have attribute type S (got %q)", name, attrPK, pkType),
+			)
+		}
+		if hasSK {
+			if skType, ok := attrTypes[attrSK]; !ok || skType != types.ScalarAttributeTypeS {
+				return false, hostkit.ProviderError(
+					hostkit.Conflict,
+					http.StatusBadRequest,
+					"IncompatibleTableKeySchema",
+					fmt.Sprintf("table %q sort key %q must have attribute type S (got %q)", name, attrSK, skType),
+				)
+			}
+		}
+	}
+	return hasSK, nil
 }
 
 func (r *remote) describeTableRaw(ctx context.Context, name string) (ddbTableMeta, error) {
@@ -102,29 +176,30 @@ func (r *remote) describeTableRaw(ctx context.Context, name string) (ddbTableMet
 	if err != nil {
 		ce := classify(err, scopeTable)
 		if ce.Code == hostkit.NotFound {
+			r.deleteTableLayout(ctx, name)
 			return ddbTableMeta{}, ce.WithAbsent(hostkit.AbsentTable)
 		}
 		return ddbTableMeta{}, ce
 	}
 	if out == nil || out.Table == nil {
+		r.deleteTableLayout(ctx, name)
 		return ddbTableMeta{}, hostkit.ProviderError(hostkit.NotFound, 400, "ResourceNotFoundException", "table not found").WithAbsent(hostkit.AbsentTable)
 	}
 	td := out.Table
 	if td.TableStatus == types.TableStatusDeleting {
+		r.deleteTableLayout(ctx, name)
 		return ddbTableMeta{}, hostkit.ProviderError(hostkit.NotFound, 400, "ResourceNotFoundException", "table is deleting").WithAbsent(hostkit.AbsentTable)
 	}
-	sorted := isTableSorted(td.KeySchema)
+	sorted, cerr := validateDDBTableSchema(name, td.KeySchema, td.AttributeDefinitions)
+	if cerr != nil {
+		r.deleteTableLayout(ctx, name)
+		return ddbTableMeta{}, cerr
+	}
 	r.setTableLayout(ctx, name, sorted)
 
 	incTok := strings.TrimSpace(aws.ToString(td.TableId))
-	if incTok == "" {
-		incTok = strings.TrimSpace(aws.ToString(td.TableArn))
-	}
 	if incTok == "" && td.CreationDateTime != nil {
 		incTok = strconv.FormatInt(td.CreationDateTime.UnixNano(), 10)
-	}
-	if incTok == "" {
-		incTok = name
 	}
 	return ddbTableMeta{
 		sorted:           sorted,
@@ -135,20 +210,71 @@ func (r *remote) describeTableRaw(ctx context.Context, name string) (ddbTableMet
 }
 
 func (r *remote) waitTableActive(ctx context.Context, name string, initialStatus types.TableStatus) error {
+	return r.waitTableActiveWithTiming(ctx, name, initialStatus, tableWaitTimeout, tableWaitInterval)
+}
+
+func (r *remote) waitTableActiveWithTiming(ctx context.Context, name string, initialStatus types.TableStatus, timeout, interval time.Duration) error {
 	if initialStatus == types.TableStatusActive {
 		return nil
 	}
-	noHookCtx := hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{})
-	return hostkit.WaitLoop(noHookCtx, tableWaitTimeout, tableWaitInterval, time.Now, nil, func(ctx context.Context) (int, error) {
+	if initialStatus != "" && initialStatus != types.TableStatusCreating && initialStatus != types.TableStatusUpdating {
+		return hostkit.ProviderError(
+			hostkit.Conflict,
+			http.StatusBadRequest,
+			"ResourceInUseException",
+			fmt.Sprintf("table %q is in non-ready status %q", name, initialStatus),
+		)
+	}
+	if timeout <= 0 {
+		timeout = tableWaitTimeout
+	}
+	if interval <= 0 {
+		interval = tableWaitInterval
+	}
+	deadline := time.Now().Add(timeout)
+	for {
 		meta, err := r.describeTableRaw(ctx, name)
-		if err != nil {
-			return 0, err
+		if err == nil {
+			switch meta.status {
+			case types.TableStatusActive:
+				return nil
+			case types.TableStatusCreating, types.TableStatusUpdating:
+				// Documented transient states while table readiness converges.
+			default:
+				return hostkit.ProviderError(
+					hostkit.Conflict,
+					http.StatusBadRequest,
+					"ResourceInUseException",
+					fmt.Sprintf("table %q entered unexpected status %q while waiting for ACTIVE", name, meta.status),
+				)
+			}
+		} else {
+			ce := hostkit.AsCloudError(err)
+			isTransientPropagation404 := ce != nil &&
+				ce.Code == hostkit.NotFound &&
+				(ce.ProviderCode == "ResourceNotFoundException" || ce.ProviderCode == "TableNotFoundException")
+			if !isTransientPropagation404 {
+				return err
+			}
 		}
-		if meta.status == types.TableStatusActive {
-			return 1, nil
+
+		rem := time.Until(deadline)
+		if rem <= 0 {
+			return hostkit.ProviderError(
+				hostkit.Internal,
+				0,
+				"TableWaitTimeout",
+				fmt.Sprintf("timed out waiting for table %q to reach ACTIVE status", name),
+			)
 		}
-		return 0, nil
-	})
+		sleepDur := interval
+		if rem < sleepDur {
+			sleepDur = rem
+		}
+		if sErr := hostkit.SleepContext(ctx, sleepDur); sErr != nil {
+			return classify(sErr, scopeTable)
+		}
+	}
 }
 
 func (r *remote) DescribeTable(ctx context.Context, name string) (hostkit.TableInfo, error) {
@@ -156,6 +282,14 @@ func (r *remote) DescribeTable(ctx context.Context, name string) (hostkit.TableI
 	meta, err := r.describeTableRaw(ctx, name)
 	if err != nil {
 		return hostkit.TableInfo{}, err
+	}
+	if meta.incarnationToken == "" {
+		return hostkit.TableInfo{}, hostkit.ProviderError(
+			hostkit.Internal,
+			0,
+			"MissingTableIncarnationToken",
+			fmt.Sprintf("dynamodb DescribeTable for %q did not return a TableId or CreationDateTime incarnation token", name),
+		)
 	}
 	return hostkit.TableInfo{
 		Sorted:      meta.sorted,
@@ -165,17 +299,16 @@ func (r *remote) DescribeTable(ctx context.Context, name string) (hostkit.TableI
 
 func (r *remote) TableCreateToken(ctx context.Context, name string) (string, error) {
 	r.recordCall("TableCreateToken", false)
-	noHookCtx := hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{})
-	meta, err := r.describeTableRaw(noHookCtx, name)
+	meta, err := r.describeTableRaw(ctx, name)
 	if err != nil {
 		return "", err
 	}
 	if meta.arn == "" {
 		return "", nil
 	}
-	cli := r.ddbClient(noHookCtx)
+	cli := r.ddbClient(ctx)
 	var out *dynamodb.ListTagsOfResourceOutput
-	tErr := r.doAWS(noHookCtx, true, func(ctx context.Context) error {
+	tErr := r.doAWS(ctx, true, func(ctx context.Context) error {
 		var callErr error
 		out, callErr = cli.ListTagsOfResource(ctx, &dynamodb.ListTagsOfResourceInput{
 			ResourceArn: aws.String(meta.arn),
@@ -250,6 +383,12 @@ func (r *remote) CreateTable(ctx context.Context, name string, sorted bool) (boo
 		r.setTableLayout(ctx, name, sorted)
 		var status types.TableStatus
 		if out != nil && out.TableDescription != nil {
+			if len(out.TableDescription.KeySchema) > 0 {
+				if _, cerr := validateDDBTableSchema(name, out.TableDescription.KeySchema, out.TableDescription.AttributeDefinitions); cerr != nil {
+					r.deleteTableLayout(ctx, name)
+					return false, cerr
+				}
+			}
 			status = out.TableDescription.TableStatus
 		}
 		if wErr := r.waitTableActive(ctx, name, status); wErr != nil {
@@ -263,11 +402,10 @@ func (r *remote) CreateTable(ctx context.Context, name string, sorted bool) (boo
 		return false, ce
 	}
 
-	noHookCtx := hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{})
-	meta, descErr := r.describeTableRaw(noHookCtx, name)
+	meta, descErr := r.describeTableRaw(ctx, name)
 	if descErr != nil {
 		var dce *hostkit.CloudError
-		if errors.As(descErr, &dce) && (dce.Code == hostkit.PermissionDenied || dce.Code == hostkit.Unauthenticated) {
+		if errors.As(descErr, &dce) && (dce.Code == hostkit.PermissionDenied || dce.Code == hostkit.Unauthenticated || dce.Code == hostkit.Conflict || dce.Code == hostkit.CostCapExceeded) {
 			return false, dce
 		}
 		return false, ce
@@ -280,11 +418,11 @@ func (r *remote) CreateTable(ctx context.Context, name string, sorted bool) (boo
 			fmt.Sprintf("table %q already exists with a different key layout", name),
 		)
 	}
-	if wErr := r.waitTableActive(noHookCtx, name, meta.status); wErr != nil {
+	if wErr := r.waitTableActive(ctx, name, meta.status); wErr != nil {
 		return false, wErr
 	}
 	if tok != "" {
-		if gotTok, tErr := r.TableCreateToken(noHookCtx, name); tErr == nil && gotTok != "" && gotTok == tok {
+		if gotTok, tErr := r.TableCreateToken(ctx, name); tErr == nil && gotTok != "" && gotTok == tok {
 			return true, nil
 		}
 	}
@@ -548,19 +686,59 @@ func (r *remote) PutItem(ctx context.Context, table string, item hostkit.Item, m
 				msg = "The conditional request failed"
 			}
 			priorBytes, priorExists := billableBytesFromAV(ccf.Item)
-			hostkit.ReportTableOpMetrics(ctx, hostkit.TableOpMetrics{
-				PriorExists:   priorExists,
-				PriorBytes:    priorBytes,
-				NewBytes:      newBytes,
-				Authoritative: true,
-			})
 			switch mode {
 			case hostkit.PutIfAbsent:
+				hostkit.ReportTableOpMetrics(ctx, hostkit.TableOpMetrics{
+					PriorExists:   priorExists,
+					PriorBytes:    priorBytes,
+					NewBytes:      newBytes,
+					Authoritative: priorExists,
+				})
 				return hostkit.Item{}, hostkit.ProviderError(hostkit.Conflict, httpStatus, "ConditionalCheckFailedException", msg)
 			case hostkit.PutIfVersion:
 				if priorExists {
+					hostkit.ReportTableOpMetrics(ctx, hostkit.TableOpMetrics{
+						PriorExists:   true,
+						PriorBytes:    priorBytes,
+						NewBytes:      newBytes,
+						Authoritative: true,
+					})
 					return hostkit.Item{}, hostkit.ProviderError(hostkit.PreconditionFailed, httpStatus, "ConditionalCheckFailedException", msg)
 				}
+				// Disambiguate true item absence from a provider/simulator that omitted
+				// ReturnValuesOnConditionCheckFailure=ALL_OLD via a strongly consistent,
+				// admitted GetItem probe.
+				var getOut *dynamodb.GetItemOutput
+				gErr := r.doAWS(ctx, true, func(ctx context.Context) error {
+					var callErr error
+					getOut, callErr = cli.GetItem(ctx, &dynamodb.GetItemInput{
+						TableName:      aws.String(table),
+						Key:            buildKeyAV(item.PK, item.SK),
+						ConsistentRead: aws.Bool(true),
+					})
+					return callErr
+				})
+				if gErr != nil {
+					if gce := classify(gErr, scopeTable); gce.Code == hostkit.NotFound {
+						return hostkit.Item{}, gce.WithAbsent(hostkit.AbsentTable)
+					}
+					return hostkit.Item{}, hostkit.ProviderError(hostkit.PreconditionFailed, httpStatus, "ConditionalCheckFailedException", msg)
+				}
+				if getOut != nil && len(getOut.Item) > 0 {
+					pb, pe := billableBytesFromAV(getOut.Item)
+					hostkit.ReportTableOpMetrics(ctx, hostkit.TableOpMetrics{
+						PriorExists:   pe,
+						PriorBytes:    pb,
+						NewBytes:      newBytes,
+						Authoritative: pe,
+					})
+					return hostkit.Item{}, hostkit.ProviderError(hostkit.PreconditionFailed, httpStatus, "ConditionalCheckFailedException", msg)
+				}
+				hostkit.ReportTableOpMetrics(ctx, hostkit.TableOpMetrics{
+					PriorExists:   false,
+					NewBytes:      newBytes,
+					Authoritative: true,
+				})
 				return hostkit.Item{}, hostkit.ProviderError(hostkit.NotFound, httpStatus, "ConditionalCheckFailedException", msg).WithAbsent(hostkit.AbsentItem)
 			}
 		}
@@ -647,18 +825,9 @@ func (r *remote) UpdateItem(ctx context.Context, table, pk, sk string, changes h
 	if cerr := r.checkCachedKeyLayout(ctx, table, sk); cerr != nil {
 		return hostkit.Item{}, cerr
 	}
-
-	version := newVersionToken()
-	ean := map[string]string{
-		"#pk": attrPK,
-		"#v":  attrVersion,
+	if _, cerr := hostkit.CanonicalItemBytes(changes.Attrs); cerr != nil {
+		return hostkit.Item{}, cerr
 	}
-	eav := map[string]types.AttributeValue{
-		":v": &types.AttributeValueMemberS{Value: version},
-	}
-
-	setClauses := []string{"#v = :v"}
-	var removeClauses []string
 
 	keys := make([]string, 0, len(changes.Attrs))
 	for k := range changes.Attrs {
@@ -666,91 +835,159 @@ func (r *remote) UpdateItem(ctx context.Context, table, pk, sk string, changes h
 	}
 	sort.Strings(keys)
 
-	hasLmt := false
-	hasFloat := false
-	for i, k := range keys {
-		nameTok := fmt.Sprintf("#u_%d", i)
-		valTok := fmt.Sprintf(":u_%d", i)
-		av, isFloat, cerr := attrToDDB(changes.Attrs[k])
+	cli := r.ddbClient(ctx)
+	keyAV := buildKeyAV(pk, sk)
+
+	for casAttempt := 0; casAttempt < maxUpdateCASAttempts; casAttempt++ {
+		// 1. Strongly consistent, admitted GetItem to read the current item & version
+		// and validate the merged attribute map against portable item limits BEFORE writing.
+		var getOut *dynamodb.GetItemOutput
+		gErr := r.doAWS(ctx, true, func(ctx context.Context) error {
+			var callErr error
+			getOut, callErr = cli.GetItem(ctx, &dynamodb.GetItemInput{
+				TableName:      aws.String(table),
+				Key:            keyAV,
+				ConsistentRead: aws.Bool(true),
+			})
+			return callErr
+		})
+		if gErr != nil {
+			return hostkit.Item{}, classify(gErr, scopeItem)
+		}
+		if getOut == nil || len(getOut.Item) == 0 {
+			hostkit.ReportTableOpMetrics(ctx, hostkit.TableOpMetrics{
+				PriorExists:   false,
+				Authoritative: false,
+			})
+			return hostkit.Item{}, hostkit.ProviderError(hostkit.NotFound, http.StatusNotFound, "ItemNotFound", "item not found").WithAbsent(hostkit.AbsentItem)
+		}
+
+		priorItem, cerr := decodeDDBItem(getOut.Item)
 		if cerr != nil {
 			return hostkit.Item{}, cerr
 		}
-		ean[nameTok] = k
-		eav[valTok] = av
-		setClauses = append(setClauses, fmt.Sprintf("%s = %s", nameTok, valTok))
-		hasLmt = true
-		if isFloat {
-			hasFloat = true
-			setClauses = append(setClauses, fmt.Sprintf("#lmt.%s = :numtag", nameTok))
-		} else {
-			removeClauses = append(removeClauses, fmt.Sprintf("#lmt.%s", nameTok))
+		priorBytes := hostkit.NativeItemBillableBytes(priorItem)
+
+		merged := priorItem.Clone()
+		if merged.Attrs == nil {
+			merged.Attrs = make(map[string]hostkit.Attr, len(changes.Attrs))
 		}
-	}
-	if hasLmt {
-		ean["#lmt"] = attrTypeManifest
-	}
-	if hasFloat {
-		eav[":numtag"] = &types.AttributeValueMemberS{Value: floatTypeTag}
-	}
-
-	updateExpr := "SET " + strings.Join(setClauses, ", ")
-	if len(removeClauses) > 0 {
-		updateExpr += " REMOVE " + strings.Join(removeClauses, ", ")
-	}
-
-	in := &dynamodb.UpdateItemInput{
-		TableName:                           aws.String(table),
-		Key:                                 buildKeyAV(pk, sk),
-		ConditionExpression:                 aws.String("attribute_exists(#pk)"),
-		UpdateExpression:                    aws.String(updateExpr),
-		ExpressionAttributeNames:            ean,
-		ExpressionAttributeValues:           eav,
-		ReturnValues:                        types.ReturnValueAllNew,
-		ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
-	}
-
-	cli := r.ddbClient(ctx)
-	var out *dynamodb.UpdateItemOutput
-	err := r.doAWS(ctx, false, func(ctx context.Context) error {
-		var uErr error
-		out, uErr = cli.UpdateItem(ctx, in)
-		return uErr
-	})
-	if err != nil {
-		var ccf *types.ConditionalCheckFailedException
-		if errors.As(err, &ccf) && ccf != nil {
-			httpStatus, _ := extractHTTPResponse(err)
-			if httpStatus == 0 {
-				httpStatus = 400
-			}
-			msg := strings.TrimSpace(aws.ToString(ccf.Message))
-			if msg == "" {
-				msg = "The conditional request failed"
-			}
+		for k, v := range changes.Attrs {
+			merged.Attrs[k] = v.Clone()
+		}
+		// Validate merged item against portable limits (<= 240 user attributes,
+		// <= 262144 canonical bytes, UTF-16 name/value bounds) BEFORE mutating.
+		if _, cerr := hostkit.CanonicalItemBytes(merged.Attrs); cerr != nil {
 			hostkit.ReportTableOpMetrics(ctx, hostkit.TableOpMetrics{
-				PriorExists:   false,
-				Authoritative: true,
+				PriorExists:   true,
+				PriorBytes:    priorBytes,
+				Authoritative: false,
 			})
-			return hostkit.Item{}, hostkit.ProviderError(hostkit.NotFound, httpStatus, "ConditionalCheckFailedException", msg).WithAbsent(hostkit.AbsentItem)
+			return hostkit.Item{}, hostkit.ProviderError(hostkit.InvalidArgument, http.StatusBadRequest, "ValidationException", cerr.Message)
 		}
-		return hostkit.Item{}, classify(err, scopeItem)
+
+		version := newVersionToken()
+		ean := map[string]string{
+			"#pk": attrPK,
+			"#v":  attrVersion,
+		}
+		eav := map[string]types.AttributeValue{
+			":v": &types.AttributeValueMemberS{Value: version},
+		}
+
+		condExpr := "attribute_exists(#pk) AND attribute_not_exists(#v)"
+		if priorItem.Version != "" {
+			condExpr = "attribute_exists(#pk) AND #v = :expectv"
+			eav[":expectv"] = &types.AttributeValueMemberS{Value: priorItem.Version}
+		}
+
+		setClauses := []string{"#v = :v"}
+		var removeClauses []string
+
+		hasLmt := false
+		hasFloat := false
+		for i, k := range keys {
+			nameTok := fmt.Sprintf("#u_%d", i)
+			valTok := fmt.Sprintf(":u_%d", i)
+			av, isFloat, cerr := attrToDDB(changes.Attrs[k])
+			if cerr != nil {
+				return hostkit.Item{}, cerr
+			}
+			ean[nameTok] = k
+			eav[valTok] = av
+			setClauses = append(setClauses, fmt.Sprintf("%s = %s", nameTok, valTok))
+			hasLmt = true
+			if isFloat {
+				hasFloat = true
+				setClauses = append(setClauses, fmt.Sprintf("#lmt.%s = :numtag", nameTok))
+			} else {
+				removeClauses = append(removeClauses, fmt.Sprintf("#lmt.%s", nameTok))
+			}
+		}
+		if hasLmt {
+			ean["#lmt"] = attrTypeManifest
+		}
+		if hasFloat {
+			eav[":numtag"] = &types.AttributeValueMemberS{Value: floatTypeTag}
+		}
+
+		updateExpr := "SET " + strings.Join(setClauses, ", ")
+		if len(removeClauses) > 0 {
+			updateExpr += " REMOVE " + strings.Join(removeClauses, ", ")
+		}
+
+		in := &dynamodb.UpdateItemInput{
+			TableName:                           aws.String(table),
+			Key:                                 keyAV,
+			ConditionExpression:                 aws.String(condExpr),
+			UpdateExpression:                    aws.String(updateExpr),
+			ExpressionAttributeNames:            ean,
+			ExpressionAttributeValues:           eav,
+			ReturnValues:                        types.ReturnValueAllNew,
+			ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
+		}
+
+		var out *dynamodb.UpdateItemOutput
+		err := r.doAWS(ctx, false, func(ctx context.Context) error {
+			var uErr error
+			out, uErr = cli.UpdateItem(ctx, in)
+			return uErr
+		})
+		if err != nil {
+			var ccf *types.ConditionalCheckFailedException
+			if errors.As(err, &ccf) && ccf != nil {
+				// Concurrent writer modified or deleted the item between GetItem and UpdateItem;
+				// retry bounded CAS loop so GetItem re-reads and re-validates.
+				continue
+			}
+			return hostkit.Item{}, classify(err, scopeItem)
+		}
+
+		if out == nil || len(out.Attributes) == 0 {
+			return hostkit.Item{}, hostkit.ProviderError(hostkit.Internal, 0, "EmptyUpdateResponse", "dynamodb UpdateItem returned no attributes")
+		}
+		decoded, cerr := decodeDDBItem(out.Attributes)
+		if cerr != nil {
+			return hostkit.Item{}, cerr
+		}
+		newBytes := hostkit.NativeItemBillableBytes(decoded)
+		// Keep Authoritative: false on UpdateItem so cloudhost retains its conservative
+		// maximum reservation rather than refunding based on a non-atomic old-size read.
+		hostkit.ReportTableOpMetrics(ctx, hostkit.TableOpMetrics{
+			PriorExists:   true,
+			PriorBytes:    priorBytes,
+			NewBytes:      newBytes,
+			Authoritative: false,
+		})
+		return decoded, nil
 	}
 
-	if out == nil || len(out.Attributes) == 0 {
-		return hostkit.Item{}, hostkit.ProviderError(hostkit.Internal, 0, "EmptyUpdateResponse", "dynamodb UpdateItem returned no attributes")
-	}
-	decoded, cerr := decodeDDBItem(out.Attributes)
-	if cerr != nil {
-		return hostkit.Item{}, cerr
-	}
-	newBytes := hostkit.NativeItemBillableBytes(decoded)
-	hostkit.ReportTableOpMetrics(ctx, hostkit.TableOpMetrics{
-		PriorExists:   true,
-		PriorBytes:    newBytes,
-		NewBytes:      newBytes,
-		Authoritative: true,
-	})
-	return decoded, nil
+	return hostkit.Item{}, hostkit.ProviderError(
+		hostkit.Conflict,
+		http.StatusBadRequest,
+		"ConditionalCheckFailedException",
+		"concurrent item_update conflict retry limit exceeded",
+	)
 }
 
 type ddbCursorKey struct {

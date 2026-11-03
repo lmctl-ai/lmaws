@@ -79,6 +79,10 @@ func classify(err error, sc scope) *hostkit.CloudError {
 	if errors.As(err, &ce) {
 		return ce
 	}
+	if errors.Is(err, ErrLiveResponseTooLarge) {
+		httpStatus, _ := extractHTTPResponse(err)
+		return hostkit.ProviderError(hostkit.Internal, httpStatus, "ResponseTooLarge", "HTTP response body exceeded maximum allowed byte bound")
+	}
 
 	httpStatus, hdr := extractHTTPResponse(err)
 	var headerErrType string

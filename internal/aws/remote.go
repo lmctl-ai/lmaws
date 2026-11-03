@@ -4,6 +4,7 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -22,6 +23,12 @@ const (
 	defaultSimRegion    = "us-east-1"
 	defaultSimAccessKey = "test"
 	defaultSimSecretKey = "test"
+
+	// maxDDBResponseBodyBytes bounds DynamoDB HTTP response bodies (both 2xx and
+	// error envelopes) at the transport boundary before SDK JSON decoding.
+	// 8 MiB accommodates a 1 MiB native DynamoDB Query/Scan page with worst-case
+	// JSON/UTF-16 escaping while rejecting unbounded responses.
+	maxDDBResponseBodyBytes int64 = 8 * 1024 * 1024
 )
 
 type remote struct {
@@ -33,6 +40,7 @@ type remote struct {
 	calls        map[string]int
 	mutatorCalls int
 	tableLayouts map[string]bool
+	queueURLs    map[string]string
 }
 
 func (r *remote) recordCall(name string, mutator bool) {
@@ -174,9 +182,34 @@ func (r *remote) sqsClient(ctx context.Context) *sqs.Client {
 	})
 }
 
+type ddbBoundedHTTPClient struct {
+	base     *http.Client
+	maxBytes int64
+}
+
+func (c *ddbBoundedHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	cli := c.base
+	if cli == nil {
+		cli = http.DefaultClient
+	}
+	resp, err := cli.Do(req)
+	if err != nil || resp == nil || resp.Body == nil {
+		return resp, err
+	}
+	resp.Body = &boundedResponseBody{
+		rc:       resp.Body,
+		maxBytes: c.maxBytes,
+	}
+	return resp, nil
+}
+
 func (r *remote) ddbClient(ctx context.Context) *dynamodb.Client {
 	ep := hostkit.EndpointFrom(ctx)
 	cfg := r.newAWSConfig()
+	cfg.HTTPClient = &ddbBoundedHTTPClient{
+		base:     r.client,
+		maxBytes: maxDDBResponseBodyBytes,
+	}
 	return dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
 		o.BaseEndpoint = aws.String(ep)
 	})
@@ -185,9 +218,12 @@ func (r *remote) ddbClient(ctx context.Context) *dynamodb.Client {
 // doAWS executes op under hostkit's RetryPolicy (with AWS SDK retries disabled).
 func (r *remote) doAWS(ctx context.Context, idempotent bool, op func(ctx context.Context) error) error {
 	var lastCallErr error
-	r.retry.Do(ctx, idempotent, func(ctx context.Context, _ int) hostkit.Attempt {
+	last, _ := r.retry.Do(ctx, idempotent, func(ctx context.Context, _ int) hostkit.Attempt {
 		lastCallErr = op(ctx)
 		if lastCallErr == nil {
+			return hostkit.Attempt{Status: http.StatusOK}
+		}
+		if errors.Is(lastCallErr, ErrLiveResponseTooLarge) {
 			return hostkit.Attempt{Status: http.StatusOK}
 		}
 		status, hdr := extractHTTPResponse(lastCallErr)
@@ -201,5 +237,8 @@ func (r *remote) doAWS(ctx context.Context, idempotent bool, op func(ctx context
 		}
 		return hostkit.Attempt{Status: status, RetryAfter: retryAfter}
 	})
+	if last.Err != nil {
+		return last.Err
+	}
 	return lastCallErr
 }

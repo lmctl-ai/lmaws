@@ -25,7 +25,38 @@ func (r *remote) QueueCaps() hostkit.QueueCaps {
 	return hostkit.QueueCaps{LongPoll: true, TextOnlyWire: true}
 }
 
-func (r *remote) resolveQueueURL(ctx context.Context, cli *sqs.Client, name string) (string, error) {
+func (r *remote) queueURLCacheKey(ctx context.Context, name string) string {
+	return strings.TrimSpace(hostkit.EndpointFrom(ctx)) + "|" + name
+}
+
+func (r *remote) getCachedQueueURL(ctx context.Context, name string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.queueURLs == nil {
+		return "", false
+	}
+	u, ok := r.queueURLs[r.queueURLCacheKey(ctx, name)]
+	return u, ok
+}
+
+func (r *remote) setCachedQueueURL(ctx context.Context, name, qURL string) {
+	r.mu.Lock()
+	if r.queueURLs == nil {
+		r.queueURLs = make(map[string]string)
+	}
+	r.queueURLs[r.queueURLCacheKey(ctx, name)] = qURL
+	r.mu.Unlock()
+}
+
+func (r *remote) deleteCachedQueueURL(ctx context.Context, name string) {
+	r.mu.Lock()
+	if r.queueURLs != nil {
+		delete(r.queueURLs, r.queueURLCacheKey(ctx, name))
+	}
+	r.mu.Unlock()
+}
+
+func (r *remote) resolveQueueURLUncached(ctx context.Context, cli *sqs.Client, name string) (string, error) {
 	var out *sqs.GetQueueUrlOutput
 	err := r.doAWS(ctx, true, func(ctx context.Context) error {
 		var gErr error
@@ -35,7 +66,11 @@ func (r *remote) resolveQueueURL(ctx context.Context, cli *sqs.Client, name stri
 		return gErr
 	})
 	if err != nil {
-		return "", classify(err, scopeQueue)
+		ce := classify(err, scopeQueue)
+		if ce.Code == hostkit.NotFound {
+			r.deleteCachedQueueURL(ctx, name)
+		}
+		return "", ce
 	}
 	raw := strings.TrimSpace(aws.ToString(out.QueueUrl))
 	if raw == "" {
@@ -44,7 +79,16 @@ func (r *remote) resolveQueueURL(ctx context.Context, cli *sqs.Client, name stri
 			Message: "sqs GetQueueUrl returned an empty QueueUrl",
 		}
 	}
-	return normalizeQueueURLToEndpoint(raw, hostkit.EndpointFrom(ctx)), nil
+	qURL := normalizeQueueURLToEndpoint(raw, hostkit.EndpointFrom(ctx))
+	r.setCachedQueueURL(ctx, name, qURL)
+	return qURL, nil
+}
+
+func (r *remote) resolveQueueURL(ctx context.Context, cli *sqs.Client, name string) (string, error) {
+	if qURL, ok := r.getCachedQueueURL(ctx, name); ok {
+		return qURL, nil
+	}
+	return r.resolveQueueURLUncached(ctx, cli, name)
 }
 
 // normalizeQueueURLToEndpoint rewrites the scheme and host of a QueueUrl
@@ -117,7 +161,8 @@ func (r *remote) CreateQueue(ctx context.Context, name string) (bool, error) {
 	// token and report created=true only when it matches the token generated
 	// for THIS call.
 	qURL := normalizeQueueURLToEndpoint(rawURL, hostkit.EndpointFrom(ctx))
-	gotTok, err := r.queueCreateTokenByURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, qURL)
+	r.setCachedQueueURL(ctx, name, qURL)
+	gotTok, err := r.queueCreateTokenByURL(ctx, cli, qURL)
 	if err != nil {
 		return false, err
 	}
@@ -127,7 +172,7 @@ func (r *remote) CreateQueue(ctx context.Context, name string) (bool, error) {
 func (r *remote) QueueCreateToken(ctx context.Context, name string) (string, error) {
 	r.recordCall("QueueCreateToken", false)
 	cli := r.sqsClient(ctx)
-	qURL, err := r.resolveQueueURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, name)
+	qURL, err := r.resolveQueueURL(ctx, cli, name)
 	if err != nil {
 		return "", err
 	}
@@ -155,7 +200,8 @@ func (r *remote) queueCreateTokenByURL(ctx context.Context, cli *sqs.Client, qUR
 func (r *remote) DeleteQueue(ctx context.Context, name string) error {
 	r.recordCall("DeleteQueue", true)
 	cli := r.sqsClient(ctx)
-	qURL, err := r.resolveQueueURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, name)
+	qURL, err := r.resolveQueueURL(ctx, cli, name)
+	r.deleteCachedQueueURL(ctx, name)
 	if err != nil {
 		ce := classify(err, scopeQueue)
 		if ce.Code == hostkit.NotFound {
@@ -182,7 +228,7 @@ func (r *remote) DeleteQueue(ctx context.Context, name string) error {
 func (r *remote) LookupQueue(ctx context.Context, name string) error {
 	r.recordCall("LookupQueue", false)
 	cli := r.sqsClient(ctx)
-	_, err := r.resolveQueueURL(ctx, cli, name)
+	_, err := r.resolveQueueURLUncached(ctx, cli, name)
 	if err == nil {
 		return nil
 	}
@@ -221,7 +267,7 @@ func (r *remote) ListQueues(ctx context.Context, token string) ([]string, string
 func (r *remote) Send(ctx context.Context, queue, wire string) (string, error) {
 	r.recordCall("Send", true)
 	cli := r.sqsClient(ctx)
-	qURL, err := r.resolveQueueURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, queue)
+	qURL, err := r.resolveQueueURL(ctx, cli, queue)
 	if err != nil {
 		return "", err
 	}
@@ -235,7 +281,11 @@ func (r *remote) Send(ctx context.Context, queue, wire string) (string, error) {
 		return callErr
 	})
 	if sErr != nil {
-		return "", classify(sErr, scopeQueue)
+		ce := classify(sErr, scopeQueue)
+		if ce.Code == hostkit.NotFound {
+			r.deleteCachedQueueURL(ctx, queue)
+		}
+		return "", ce
 	}
 	id := strings.TrimSpace(aws.ToString(out.MessageId))
 	if id == "" {
@@ -250,7 +300,7 @@ func (r *remote) Send(ctx context.Context, queue, wire string) (string, error) {
 func (r *remote) Receive(ctx context.Context, queue string, max, waitSeconds, visibility int) ([]hostkit.RawMessage, error) {
 	r.recordCall("Receive", false)
 	cli := r.sqsClient(ctx)
-	qURL, err := r.resolveQueueURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, queue)
+	qURL, err := r.resolveQueueURL(ctx, cli, queue)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +377,7 @@ func (r *remote) Receive(ctx context.Context, queue string, max, waitSeconds, vi
 func (r *remote) Ack(ctx context.Context, queue, receipt string) error {
 	r.recordCall("Ack", true)
 	cli := r.sqsClient(ctx)
-	qURL, err := r.resolveQueueURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, queue)
+	qURL, err := r.resolveQueueURL(ctx, cli, queue)
 	if err != nil {
 		return err
 	}
@@ -339,7 +389,11 @@ func (r *remote) Ack(ctx context.Context, queue, receipt string) error {
 		return callErr
 	})
 	if dErr != nil {
-		return classify(dErr, scopeMessage)
+		ce := classify(dErr, scopeMessage)
+		if ce.Code == hostkit.NotFound && ce.Absent == hostkit.AbsentQueue {
+			r.deleteCachedQueueURL(ctx, queue)
+		}
+		return ce
 	}
 	return nil
 }
@@ -347,7 +401,7 @@ func (r *remote) Ack(ctx context.Context, queue, receipt string) error {
 func (r *remote) Nack(ctx context.Context, queue, receipt string, visibility int) (string, error) {
 	r.recordCall("Nack", true)
 	cli := r.sqsClient(ctx)
-	qURL, err := r.resolveQueueURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, queue)
+	qURL, err := r.resolveQueueURL(ctx, cli, queue)
 	if err != nil {
 		return "", err
 	}
