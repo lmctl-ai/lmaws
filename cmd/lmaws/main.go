@@ -74,7 +74,7 @@ Usage:
   lmaws [cloud] [--lmcode|--first|--last] FILE ...
   lmaws [cloud] --lmcode-schema [--json]
   lmaws [cloud] --lmcode-signatures [--without-std]
-  lmaws --sweep [--apply|--dry-run] [RUN_ID]
+  lmaws --sweep [--apply|--dry-run] [--all-stale] [RUN_ID]
   lmaws --notices | --version | -V | --help | -h
 
 Dry runs come from the caller's invocation manifest (lmscript --dry-run).
