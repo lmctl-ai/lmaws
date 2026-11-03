@@ -52,12 +52,10 @@ PYVERIFY
 then
   printf '%s\n' "$candidate"
 else
-  if [ -n "${LMAWS_DEBUG:-}" ]; then
-    echo "--- compiler probe diagnostics (candidate=$candidate)" >&2
-    cat "$WORK/probe.lms" >&2 || true
-    [ -n "$candidate" ] && run_candidate "$(native "$WORK/probe.lms")" 2>&1 | head -10 >&2
-    ls -la "$WORK" >&2
-  fi
+  echo "--- compiler probe diagnostics (candidate=$candidate)" >&2
+  cat "$WORK/probe.lms" >&2 || true
+  [ -n "$candidate" ] && run_candidate "$(native "$WORK/probe.lms")" 2>&1 >&2 || true
+  ls -la "$WORK" >&2
   echo "error: no implicit-std lmcode v6 compiler with current invocation support was found; build mono main or set LMSCRIPT_BIN" >&2
   exit 2
 fi
