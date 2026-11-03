@@ -3,8 +3,22 @@
 #
 # live-conformance.sh — Run the 23 non-auth lmcloud conformance scenarios
 # against real AWS S3 and SQS in us-east-1 (account 254332045686) under
-# hostkit/safety LiveGuard with unique lmcloud-conf-<run12>- names and
+# hostkit/safety LiveGuard with unique lmcloud-conf-<run12>-<rand8>- names and
 # mandatory LIFO sweeper teardown on exit.
+#
+# Runner-loss & sweeper recovery notes:
+#   - Even if the local journal directory ($LMAWS_LIVE_JOURNAL_DIR) is lost
+#     due to catastrophic runner termination, running:
+#       LMCLOUD_LIVE=1 LMAWS_LIVE=1 LMAWS_LIVE_MUTATE=1 lmaws --sweep --apply <RUN_ID>
+#     recovers and sweeps leftovers by scanning prefix `lmcloud-conf-<run12>-`
+#     and verifying remote ownership tags (`lmcloud-owner=conformance`,
+#     `lmcloud-run=<RUN_ID>`, `lmcloud_run_id=<RUN_ID>`, non-empty nonce &
+#     create token, and `lmcloud_created_at >= <run_start_epoch>`).
+#   - Residual risk: S3 `CreateBucket` does not support atomic creation-time
+#     tags. If a runner is killed in the narrow window after `CreateBucket`
+#     succeeds and before `PutBucketTagging` completes, the resulting untagged
+#     bucket is intentionally retained (`retained > 0`, exit code 1) rather than
+#     deleted without tag proof, and must be inspected/removed manually.
 #
 # Usage:
 #   ./scripts/live-conformance.sh --check
@@ -67,9 +81,10 @@ if [[ "${#RUN_NONCE}" -lt 6 ]]; then
   exit 2
 fi
 
+RAND_SUFFIX="$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
 export LMAWS_RUN_ID="$RUN_ID"
 export LMCLOUD_RUN_ID="$RUN_ID"
-export LMCLOUD_NAME_PREFIX="lmcloud-conf-${RUN_NONCE}-"
+export LMCLOUD_NAME_PREFIX="lmcloud-conf-${RUN_NONCE}-${RAND_SUFFIX}-"
 
 if [[ -z "${LMAWS_LIVE_JOURNAL_DIR:-}" ]]; then
   LMAWS_LIVE_JOURNAL_DIR="$(mktemp -d "${TMPDIR:-/tmp}/lmaws-live-journal.XXXXXX")"
