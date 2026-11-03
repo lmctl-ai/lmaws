@@ -1501,6 +1501,7 @@ func (r *liveRawBackend) buildExplicitLiveCredentialsProvider(envCfg liveEnvConf
 	imdsCli := imds.New(imds.Options{
 		Endpoint:          "http://169.254.169.254",
 		ClientEnableState: imds.ClientEnabled,
+		EnableFallback:    aws.FalseTernary, // IMDSv2 only; never fall back to tokenless v1
 		HTTPClient:        credHTTPCli,
 		Retryer:           aws.NopRetryer{},
 	})
