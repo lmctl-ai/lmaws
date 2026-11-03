@@ -28,6 +28,7 @@ if [[ -f /home/ubuntu/tools/env.sh ]]; then
 fi
 
 LMSCRIPT_BIN="${LMSCRIPT_BIN:-/home/ubuntu/lmctl-mono/lmscript/bin/lmscript}"
+EXPLICIT_BIN="${LMAWS_BIN:-}"
 BIN="${LMAWS_BIN:-$ROOT/bin/lmaws}"
 
 if [[ "$CHECK_ONLY" -eq 0 ]]; then
@@ -56,9 +57,13 @@ unset LMCLOUD_ENDPOINT LMCLOUD_STORAGE_ENDPOINT LMCLOUD_QUEUE_ENDPOINT \
   AWS_ENDPOINT_URL AWS_ENDPOINT_URL_S3 AWS_ENDPOINT_URL_SQS AWS_ENDPOINT_URL_STS \
   AWS_EC2_METADATA_SERVICE_ENDPOINT
 
-if [[ ! -x "$BIN" ]]; then
+# Always rebuild the default binary from current source so stale binaries are never silently reused.
+if [[ -z "$EXPLICIT_BIN" ]]; then
   mkdir -p "$ROOT/bin"
   CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$BIN" ./cmd/lmaws
+elif [[ ! -x "$BIN" ]]; then
+  echo "ERROR: LMAWS_BIN is not executable: $BIN" >&2
+  exit 2
 fi
 
 # Derive a single canonical run ID inside the script and export both variables
@@ -177,9 +182,18 @@ end _lmcode_
 
 if [[ "$CHECK_ONLY" -eq 1 ]]; then
   unset LMCLOUD_LIVE LMAWS_LIVE
-  "$LMSCRIPT_BIN" --dry-run -e "${LMCODE_SOURCE}
+  dry_out="$("$LMSCRIPT_BIN" --dry-run -e "${LMCODE_SOURCE}
 r = run_lmcode(p, {command:[\"${BIN}\", \"--lmcode\", \"\$DSLFILE\"]});
 assert(r.ok && r.dry && r.result.prov == \"aws\", \"live-readonly --check dry-run failed\");
+" 2>&1)"
+  printf '%s\n' "$dry_out"
+  if ! grep -q "^PLAN complete$" <<<"$dry_out" || grep -Eq "(needs-real-result|exited with code|frame is not terminal)" <<<"$dry_out"; then
+    echo "ERROR: live-readonly.sh --check: dry-run did not complete cleanly" >&2
+    exit 1
+  fi
+  "$LMSCRIPT_BIN" -e "${LMCODE_SOURCE}
+r = run_lmcode(p, {command:[\"${BIN}\", \"--lmcode\", \"\$DSLFILE\"]});
+assert(r.ok && r.result.prov == \"aws\" && r.result.bucket_list_ok && r.result.missing_bkt_ok && r.result.obj_list_ok && r.result.obj_list_all_ok && r.result.obj_head_ok && r.result.queue_list_ok && r.result.missing_q_ok, \"live-readonly --check offline fake run failed: \" + str(r));
 "
   echo "live-readonly.sh --check: _lmcode_ compiled and dry-run verified"
   exit 0

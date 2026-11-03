@@ -708,7 +708,7 @@ func TestSolRegression1_CredentialEndpointEscapeRejected(t *testing.T) {
 }
 
 func TestSolRegression2_CredentialProcessAndProviderCodeRedaction(t *testing.T) {
-	t.Run("credential_process_forbidden_by_default", func(t *testing.T) {
+	t.Run("shared_config_credential_process_never_loaded_or_executed", func(t *testing.T) {
 		setValidLiveEnv(t)
 		for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN"} {
 			t.Setenv(k, "")
@@ -733,22 +733,20 @@ func TestSolRegression2_CredentialProcessAndProviderCodeRedaction(t *testing.T) 
 		h.SetAbortOnError(false)
 
 		_, _ = h.BucketList(false)
-		if h.LastError().Code != hostkit.PermissionDenied || h.LastError().ProviderCode != "LiveCredentialProcessForbidden" {
-			t.Fatalf("expected LiveCredentialProcessForbidden, got %+v", h.LastError())
+		if h.LastError().Code != hostkit.Unauthenticated || h.LastError().ProviderCode != "LiveCredentialsUnavailable" {
+			t.Fatalf("expected Unauthenticated / LiveCredentialsUnavailable, got %+v", h.LastError())
 		}
 		if _, err := os.Stat(markerFile); !os.IsNotExist(err) {
-			t.Fatal("credential_process was executed despite LMAWS_LIVE_ALLOW_CREDENTIAL_PROCESS not being set")
+			t.Fatal("credential_process was executed despite shared config files being disabled in live mode")
 		}
 	})
 
-	t.Run("credential_process_malformed_output_never_leaks_secret", func(t *testing.T) {
+	t.Run("allow_credential_process_env_var_hard_refused", func(t *testing.T) {
 		setValidLiveEnv(t)
-		for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN"} {
-			t.Setenv(k, "")
-		}
 		t.Setenv("LMAWS_LIVE_ALLOW_CREDENTIAL_PROCESS", "1")
+		markerFile := filepath.Join(t.TempDir(), "ran")
 		process := filepath.Join(t.TempDir(), "creds.sh")
-		if err := os.WriteFile(process, []byte("#!/bin/sh\nprintf '%s' '{\"AccessKeyId\":\"synthetic-key\",\"SecretAccessKey\":\"synthetic-profile-secret\",}'\n"), 0o700); err != nil {
+		if err := os.WriteFile(process, []byte(fmt.Sprintf("#!/bin/sh\ntouch %q\nprintf '%%s' '{\"AccessKeyId\":\"synthetic-key\",\"SecretAccessKey\":\"synthetic-profile-secret\",}'\n", markerFile)), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		cfg := "[profile review]\ncredential_process = " + process + "\n"
@@ -765,8 +763,11 @@ func TestSolRegression2_CredentialProcessAndProviderCodeRedaction(t *testing.T) 
 		h.SetAbortOnError(false)
 
 		_, _ = h.BucketList(false)
-		if strings.Contains(h.LastError().Message, "synthetic-profile-secret") || strings.Contains(h.LastError().ProviderCode, "synthetic-profile-secret") {
-			t.Fatalf("malformed credential_process output leaked secret in LastError: %+v", h.LastError())
+		if h.LastError().Code != hostkit.PermissionDenied || h.LastError().ProviderCode != "LiveCredentialProcessForbidden" {
+			t.Fatalf("expected PermissionDenied / LiveCredentialProcessForbidden, got %+v", h.LastError())
+		}
+		if _, err := os.Stat(markerFile); !os.IsNotExist(err) {
+			t.Fatal("credential_process helper ran despite hard refusal")
 		}
 	})
 
@@ -785,7 +786,7 @@ func TestSolRegression5_LargeListCostsOwnerAndResponseBound(t *testing.T) {
 		var sawOwner string
 		var xml strings.Builder
 		xml.WriteString(`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated>`)
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < 100; i++ {
 			xml.WriteString("<Contents><Key>" + strings.Repeat("x", 1000) + "</Key><Size>1</Size></Contents>")
 		}
 		xml.WriteString("</ListBucketResult>")
@@ -802,8 +803,8 @@ func TestSolRegression5_LargeListCostsOwnerAndResponseBound(t *testing.T) {
 			_, _ = io.WriteString(w, bodyStr)
 		})
 
-		page, err := h.ObjectList(false, "owned-bucket", "", 1000, "")
-		if err != nil || h.LastError().Code != hostkit.OK || len(page.Items) != 1000 {
+		page, err := h.ObjectList(false, "owned-bucket", "", 100, "")
+		if err != nil || h.LastError().Code != hostkit.OK || len(page.Items) != 100 {
 			t.Fatalf("list failed: err=%v last=%+v", err, h.LastError())
 		}
 		if sawOwner != RequiredLiveAccount {
@@ -820,7 +821,8 @@ func TestSolRegression5_LargeListCostsOwnerAndResponseBound(t *testing.T) {
 	})
 
 	t.Run("oversized_response_rejected_and_full_reservation_settled", func(t *testing.T) {
-		oversized := `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` + strings.Repeat("A", int(maxLiveResponseBodyBytes)+4096)
+		worstBytes := objectListWorstCaseBytes(maxLiveObjectListPageSize)
+		oversized := `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` + strings.Repeat("A", int(worstBytes)+4096)
 		h, a, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(r.Header.Get("X-Orig-Host"), "sts.") {
 				w.Header().Set("Content-Type", "text/xml")
@@ -835,7 +837,7 @@ func TestSolRegression5_LargeListCostsOwnerAndResponseBound(t *testing.T) {
 		if h.LastError().Code != hostkit.PermissionDenied || h.LastError().ProviderCode != "LiveResponseTooLarge" {
 			t.Fatalf("expected PermissionDenied / LiveResponseTooLarge, got %+v", h.LastError())
 		}
-		wantSettled := int64(5000) + liveEgressNanoUSD(maxLiveResponseBodyBytes)
+		wantSettled := int64(5000) + liveEgressNanoUSD(worstBytes)
 		if got := a.LiveSession().Meter().Snapshot().ChargedNanoUSD; got != wantSettled {
 			t.Fatalf("ChargedNanoUSD on oversized response = %d, want full reserved %d", got, wantSettled)
 		}
@@ -892,6 +894,130 @@ func TestSolRegression7_ListQueuesSetsMaxResultsAndPaginates(t *testing.T) {
 	}
 	if gotTok, _ := seenPayloads[1]["NextToken"].(string); gotTok != "tok-2" {
 		t.Fatalf("page 2 NextToken = %q, want tok-2", gotTok)
+	}
+}
+
+// --- Regression tests for SolReviewer Round 2 Findings 1-6 ---
+
+func TestSolRound2_TrailingSpaceConfigFileCredentialProcessNeverExecutes(t *testing.T) {
+	setValidLiveEnv(t)
+	for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN"} {
+		t.Setenv(k, "")
+	}
+
+	marker := filepath.Join(t.TempDir(), "ran")
+	helper := filepath.Join(t.TempDir(), "helper.sh")
+	script := fmt.Sprintf("#!/bin/sh\necho executed > %q\necho 'STDERR-SECRET=synthetic-secret' >&2\nexit 1\n", marker)
+	if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// Trailing space in filename previously bypassed trimmed precheck while SDK read AWS_CONFIG_FILE verbatim.
+	cfg := filepath.Join(t.TempDir(), "config ")
+	if err := os.WriteFile(cfg, []byte("[profile review]\ncredential_process = "+helper+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_CONFIG_FILE", cfg)
+	t.Setenv("AWS_PROFILE", "review")
+
+	a := New(&Options{LiveJournalDir: filepath.Join(t.TempDir(), "journal")})
+	defer a.Close()
+	h := cloudhost.New(cloudhost.Config{Provider: "aws", Store: a, Queue: a, Endpoints: Endpoints()})
+	h.SetAbortOnError(false)
+
+	_, _ = h.BucketList(false)
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatalf("credential_process executed despite shared config files being disabled in live mode; LastError=%+v", h.LastError())
+	}
+}
+
+func TestSolRound2_EscapedXMLEgressReservationNeverOvershootsCap(t *testing.T) {
+	var body strings.Builder
+	body.WriteString(`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated>`)
+	for i := 0; i < 100; i++ {
+		body.WriteString("<Contents><Key>")
+		body.WriteString(strings.Repeat("&amp;", 1020))
+		body.WriteString("</Key><Size>1</Size></Contents>")
+	}
+	body.WriteString(`</ListBucketResult>`)
+	xml := body.String()
+
+	var s3Dispatched bool
+	h, a, _, _ := newLiveTestHost(t, &Options{
+		LiveCostCapUSD: 0.000022,
+	}, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.Header.Get("X-Orig-Host"), "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/awsspot-admin/test"))
+			return
+		}
+		s3Dispatched = true
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = io.WriteString(w, xml)
+	})
+
+	_, _ = h.ObjectList(false, "owned-bucket", "", 100, "")
+	snap := a.LiveSession().Meter().Snapshot()
+	if snap.ChargedNanoUSD > snap.CapNanoUSD {
+		t.Fatalf("charged %d > cap %d (last=%+v)", snap.ChargedNanoUSD, snap.CapNanoUSD, h.LastError())
+	}
+	if s3Dispatched {
+		t.Fatalf("expected worst-case escaped-XML reservation to reject before S3 dispatch under 22,000 nano-USD cap")
+	}
+	if h.LastError().Code != hostkit.PermissionDenied || h.LastError().ProviderCode != "LiveCostCapExceeded" {
+		t.Fatalf("expected PermissionDenied / LiveCostCapExceeded, got %+v", h.LastError())
+	}
+}
+
+func TestSolRound2_OversizeCompletedXMLDocumentFails(t *testing.T) {
+	xml := `<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Buckets></Buckets></ListAllMyBucketsResult>` +
+		strings.Repeat(" ", 600*1024)
+
+	h, _, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.Header.Get("X-Orig-Host"), "sts.") {
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = io.WriteString(w, stsCallerIdentityXML(RequiredLiveAccount, "arn:aws:sts::254332045686:assumed-role/awsspot-admin/test"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = io.WriteString(w, xml)
+	})
+
+	_, _ = h.BucketList(false)
+	if h.LastError().Code == hostkit.OK {
+		t.Fatalf("expected oversize completed XML response to fail, got OK")
+	}
+	if h.LastError().Code != hostkit.PermissionDenied || h.LastError().ProviderCode != "LiveResponseTooLarge" {
+		t.Fatalf("expected PermissionDenied / LiveResponseTooLarge, got %+v", h.LastError())
+	}
+}
+
+func TestSolRound2_StrictSQSJSONRejectsDuplicatesAndTrailingTokens(t *testing.T) {
+	for _, body := range []string{
+		`{"QueueName":"a","QueueName":"b"}`,
+		`{"QueueName":"a"}}`,
+		`null`,
+	} {
+		if err := validateSQSJSONBody("AmazonSQS.GetQueueUrl", []byte(body)); err == nil {
+			t.Fatalf("expected validateSQSJSONBody to reject %q", body)
+		}
+	}
+}
+
+func TestSolRound2_OperatorCheckFailsOnExit73StubHost(t *testing.T) {
+	scriptPath, err := filepath.Abs("../../scripts/live-readonly.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubBin := filepath.Join(t.TempDir(), "stub-lmaws")
+	if err := os.WriteFile(stubBin, []byte("#!/bin/sh\nexit 73\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", scriptPath, "--check")
+	cmd.Env = append(os.Environ(), "LMAWS_BIN="+stubBin)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected scripts/live-readonly.sh --check to fail when LMAWS_BIN exits 73 without a frame, but it succeeded:\n%s", string(out))
 	}
 }
 
