@@ -48,7 +48,7 @@ with tempfile.TemporaryDirectory(prefix='lmaws-cli-') as d:
   data={'version':1,'mode':'single','parts':[part]}
   if dry_marker is not ...: data['dry']=dry_marker
   manifest.write_text(json.dumps(data),encoding='utf-8')
-  result=run(['--lmcode',str(bytecode)],2 if dry_marker is ... or not isinstance(dry_marker,bool) else 0,{'LMCODE_INVOCATION_FILE':str(manifest.resolve())})
+  result=run(['--lmcode',str(bytecode.resolve())],2 if dry_marker is ... or not isinstance(dry_marker,bool) else 0,{'LMCODE_INVOCATION_FILE':str(manifest.resolve())})
   return result
  invocation(...);assert not sentinel.exists(),'missing dry marker dispatched an effect'
  invocation('true');assert not sentinel.exists(),'non-boolean dry marker dispatched an effect'
@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix='lmaws-cli-') as d:
  part_a=d/'part-a.dslb';part_b=d/'part-b.dslb';trace=d/'builder-trace'
  make_effect(part_a,trace,'A','file_append');make_effect(part_b,trace,'B','file_append')
  manifest.write_text(json.dumps({'version':1,'mode':'builder','dry':False,'parts':[{'index':0,'file':str(part_a.resolve())},{'index':1,'file':str(part_b.resolve())}]}),encoding='utf-8')
- built=run(['--lmcode',str(part_a),'--lmcode',str(part_b)],0,{'LMCODE_INVOCATION_FILE':str(manifest.resolve())})
+ built=run(['--lmcode',str(part_a.resolve()),'--lmcode',str(part_b.resolve())],0,{'LMCODE_INVOCATION_FILE':str(manifest.resolve())})
  assert trace.read_text(encoding='utf-8')=='AB','builder parts did not share one effect sequence'
  assert '"parts":2' in built.stdout and 'LMCODE_RETURN_BEGIN' in built.stdout
  deny=d/'ci-denied.lms'
