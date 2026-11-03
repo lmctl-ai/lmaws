@@ -74,12 +74,16 @@ var forbiddenLiveEndpointEnvs = []string{
 	"LMCLOUD_ENDPOINT",
 	"LMCLOUD_STORAGE_ENDPOINT",
 	"LMCLOUD_QUEUE_ENDPOINT",
+	"LMCLOUD_TABLES_ENDPOINT",
 	"LMAWS_ENDPOINT",
 	"LMAWS_STORAGE_ENDPOINT",
 	"LMAWS_QUEUE_ENDPOINT",
+	"LMAWS_TABLES_ENDPOINT",
 	"AWS_ENDPOINT_URL",
 	"AWS_ENDPOINT_URL_S3",
 	"AWS_ENDPOINT_URL_SQS",
+	"AWS_ENDPOINT_DYNAMODB",
+	"AWS_ENDPOINT_URL_DYNAMODB",
 	"AWS_ENDPOINT_URL_STS",
 	"AWS_ENDPOINT_URL_IAM",
 	"AWS_ENDPOINT_URL_SSO",
@@ -87,6 +91,7 @@ var forbiddenLiveEndpointEnvs = []string{
 	"AWS_EC2_METADATA_SERVICE_ENDPOINT",
 	"STORAGE_EMULATOR_HOST",
 	"PUBSUB_EMULATOR_HOST",
+	"FIRESTORE_EMULATOR_HOST",
 }
 
 var (
@@ -113,7 +118,7 @@ func isForbiddenLiveEndpointEnvKey(k string) bool {
 	if slices.Contains(forbiddenLiveEndpointEnvs, k) {
 		return true
 	}
-	if strings.HasPrefix(k, "AWS_ENDPOINT_URL") {
+	if strings.HasPrefix(k, "AWS_ENDPOINT_URL") || strings.HasPrefix(k, "AWS_ENDPOINT_") {
 		return true
 	}
 	if (strings.HasPrefix(k, "LMCLOUD_") || strings.HasPrefix(k, "LMAWS_")) && strings.Contains(k, "ENDPOINT") {
@@ -1299,6 +1304,21 @@ func (t *liveEndpointGuardTransport) RoundTrip(req *http.Request) (*http.Respons
 	return resp, nil
 }
 
+func isProcessLiveEnvActive(getenv func(string) string) bool {
+	for _, fn := range []func(string) string{os.Getenv, getenv} {
+		if fn == nil {
+			continue
+		}
+		for _, k := range []string{"LMCLOUD_LIVE", "LMAWS_LIVE", "LMAZURE_LIVE", "LMGCP_LIVE", "LMOCI_LIVE"} {
+			v := strings.TrimSpace(fn(k))
+			if v == "1" || strings.EqualFold(v, "true") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type liveAdapter struct {
 	mu      sync.Mutex
 	opts    *Options
@@ -1311,6 +1331,10 @@ type liveAdapter struct {
 	raw     *liveRawBackend
 	store   *safety.GuardStore
 	queue   *safety.GuardQueue
+
+	bootDir     string
+	bootJournal *safety.Journal
+	bootGuard   *safety.LiveGuard
 }
 
 func newLiveAdapter(opts *Options, getenv func(string) string, retry hostkit.RetryPolicy, baseCli *http.Client) *liveAdapter {
@@ -1325,6 +1349,15 @@ func newLiveAdapter(opts *Options, getenv func(string) string, retry hostkit.Ret
 func (l *liveAdapter) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.bootJournal != nil {
+		_ = l.bootJournal.Close()
+		l.bootJournal = nil
+	}
+	if l.bootDir != "" {
+		_ = os.RemoveAll(l.bootDir)
+		l.bootDir = ""
+	}
+	l.bootGuard = nil
 	if l.sess != nil {
 		err := l.sess.Close()
 		l.sess = nil
@@ -1341,6 +1374,65 @@ func (l *liveAdapter) session() *safety.Session {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.sess
+}
+
+func (l *liveAdapter) liveGuard() *safety.LiveGuard {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.sess != nil {
+		return l.sess.Guard()
+	}
+	if !isProcessLiveEnvActive(l.getenv) {
+		return nil
+	}
+	if l.bootGuard != nil {
+		return l.bootGuard
+	}
+	bDir, err := os.MkdirTemp("", "lmaws-boot-guard-*")
+	if err != nil {
+		return nil
+	}
+	_ = os.Chmod(bDir, 0o700)
+	pol := safety.DefaultAWSLivePolicy(bDir, false)
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	pt, err := safety.LoadEmbeddedPriceTable("aws", RequiredLiveRegion, now)
+	if err != nil {
+		_ = os.RemoveAll(bDir)
+		return nil
+	}
+	meter, err := safety.NewCostMeter(pol.Cost, pt, nil)
+	if err != nil {
+		_ = os.RemoveAll(bDir)
+		return nil
+	}
+	j, err := safety.OpenJournal(bDir, safety.JournalMeta{
+		RunID:      safety.NewRunID(now),
+		PolicyHash: pol.Hash(),
+		Provider:   "aws",
+		Account:    RequiredLiveAccount,
+		Scope:      RequiredLiveAccount,
+		Region:     RequiredLiveRegion,
+	})
+	if err != nil {
+		_ = os.RemoveAll(bDir)
+		return nil
+	}
+	g, err := safety.NewLiveGuard(safety.GuardConfig{
+		Policy:   pol,
+		Journal:  j,
+		Meter:    meter,
+		Recovery: &liveRawBackend{},
+		Now:      func() time.Time { return now },
+	})
+	if err != nil {
+		_ = j.Close()
+		_ = os.RemoveAll(bDir)
+		return nil
+	}
+	l.bootDir = bDir
+	l.bootJournal = j
+	l.bootGuard = g
+	return g
 }
 
 func (l *liveAdapter) buildLivePolicy(envCfg liveEnvConfig, absJDir string) (safety.Policy, error) {
@@ -2008,6 +2100,70 @@ func (l *liveAdapter) ListQueues(ctx context.Context, token string) ([]string, s
 	return queue.ListQueues(ctx, token)
 }
 
+func liveTablesUnsupportedErr(op string) *hostkit.CloudError {
+	return hostkit.ProviderError(
+		hostkit.PermissionDenied,
+		0,
+		"LiveTablesUnsupported",
+		fmt.Sprintf("tables operation %s is refused in live mode (tables live mode is disabled)", op),
+	)
+}
+
+func (l *liveAdapter) failClosedTables(ctx context.Context, op string) *hostkit.CloudError {
+	if _, cerr := validateLiveGates(ctx, l.getenv, l.opts); cerr != nil {
+		return cerr
+	}
+	return liveTablesUnsupportedErr(op)
+}
+
+func (l *liveAdapter) TableCreateToken(ctx context.Context, _ string) (string, error) {
+	return "", l.failClosedTables(ctx, "table_create_token")
+}
+
+func (l *liveAdapter) DescribeTable(ctx context.Context, _ string) (hostkit.TableInfo, error) {
+	return hostkit.TableInfo{}, l.failClosedTables(ctx, "table_describe")
+}
+
+func (l *liveAdapter) CreateTable(ctx context.Context, _ string, _ bool) (bool, error) {
+	return false, l.failClosedTables(ctx, "table_create")
+}
+
+func (l *liveAdapter) DeleteTable(ctx context.Context, _ string) error {
+	return l.failClosedTables(ctx, "table_delete")
+}
+
+func (l *liveAdapter) HeadTable(ctx context.Context, _ string) error {
+	return l.failClosedTables(ctx, "table_exists")
+}
+
+func (l *liveAdapter) ListTables(ctx context.Context, _ string) ([]string, string, error) {
+	return nil, "", l.failClosedTables(ctx, "table_list")
+}
+
+func (l *liveAdapter) PutItem(ctx context.Context, _ string, _ hostkit.Item, _ hostkit.PutMode, _ string) (hostkit.Item, error) {
+	return hostkit.Item{}, l.failClosedTables(ctx, "item_put")
+}
+
+func (l *liveAdapter) GetItem(ctx context.Context, _, _, _ string) (hostkit.Item, error) {
+	return hostkit.Item{}, l.failClosedTables(ctx, "item_get")
+}
+
+func (l *liveAdapter) DeleteItem(ctx context.Context, _, _, _ string) error {
+	return l.failClosedTables(ctx, "item_delete")
+}
+
+func (l *liveAdapter) UpdateItem(ctx context.Context, _, _, _ string, _ hostkit.Item) (hostkit.Item, error) {
+	return hostkit.Item{}, l.failClosedTables(ctx, "item_update")
+}
+
+func (l *liveAdapter) Query(ctx context.Context, _, _, _, _ string, _ int, _ string) (hostkit.TablePage, error) {
+	return hostkit.TablePage{}, l.failClosedTables(ctx, "item_query")
+}
+
+func (l *liveAdapter) Scan(ctx context.Context, _ string, _ int, _ string) (hostkit.TablePage, error) {
+	return hostkit.TablePage{}, l.failClosedTables(ctx, "item_scan")
+}
+
 // liveCredentialsProvider wraps an aws.CredentialsProvider so that:
 //  1. Every retrieved credential (initial or refreshed) is registered for redaction before returning.
 //  2. Any provider failure returns a stable sanitized error that never includes raw provider output
@@ -2458,7 +2614,7 @@ func (r *liveRawBackend) doLiveAWSWithMode(
 	op func(ctx context.Context) error,
 ) error {
 	var lastCallErr error
-	r.retry.Do(ctx, idempotent, func(ctx context.Context, attempt int) hostkit.Attempt {
+	r.retry.Do(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), idempotent, func(ctx context.Context, attempt int) hostkit.Attempt {
 		var (
 			res       *safety.AttemptReservation
 			attemptID string

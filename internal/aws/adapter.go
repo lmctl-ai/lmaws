@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-// Package aws implements the provider-specific hostkit.ObjectStore and
-// hostkit.Queue adapters for AWS S3 and SQS (via github.com/aws/aws-sdk-go-v2).
+// Package aws implements the provider-specific hostkit.ObjectStore,
+// hostkit.Queue, and hostkit.Tables adapters for AWS S3, SQS, and DynamoDB
+// (via github.com/aws/aws-sdk-go-v2).
 //
 // Execution modes:
 //   - Offline fake: when neither LMCLOUD_LIVE=1 nor LMAWS_LIVE=1 is set and no
@@ -69,9 +70,9 @@ type Options struct {
 	LiveCostCapUSD float64
 }
 
-// Adapter implements hostkit.ObjectStore, hostkit.Queue,
-// hostkit.QueueCapsProvider, and hostkit.QueueCreateTokenReader for AWS by
-// delegating through hostkit.Router.
+// Adapter implements hostkit.ObjectStore, hostkit.Queue, hostkit.Tables,
+// hostkit.QueueCapsProvider, hostkit.QueueCreateTokenReader, and
+// hostkit.TableCreateTokenReader for AWS by delegating through hostkit.Router.
 // Note: Adapter intentionally does NOT implement hostkit.BucketCreateTokenReader
 // because S3 CreateBucket has no atomic tag/metadata parameter (tagging requires
 // a separate PutBucketTagging request); a conflict on an accessible S3 bucket
@@ -191,15 +192,34 @@ func (a *Adapter) LiveSession() *safety.Session {
 	return a.live.session()
 }
 
+// LiveGuard returns the active or bootstrap safety.LiveGuard when live mode is
+// enabled in the process environment so cloudhost delegates live admission and
+// metering to the adapter's safety session. When live mode is not enabled, it
+// returns nil so cloudhost uses its standard simulator/offline CostMeter.
+func (a *Adapter) LiveGuard() *safety.LiveGuard {
+	if a == nil || a.live == nil {
+		return nil
+	}
+	return a.live.liveGuard()
+}
+
+// LiveTablesGuard returns the same safety.LiveGuard as LiveGuard when live mode
+// is enabled in the process environment so cloudhost delegates tables calls to
+// Adapter, where liveAdapter fails closed with PERMISSION_DENIED (LiveTablesUnsupported).
+func (a *Adapter) LiveTablesGuard() *safety.LiveGuard {
+	return a.LiveGuard()
+}
+
 // Endpoints returns the AWS endpoint resolver for hostkit/cloudhost:
-//   - provider prefix: LMAWS_STORAGE_ENDPOINT, LMAWS_QUEUE_ENDPOINT, LMAWS_ENDPOINT
-//   - native SDK variables: AWS_ENDPOINT_URL_S3, AWS_ENDPOINT_URL_SQS, AWS_ENDPOINT_URL
+//   - provider prefix: LMAWS_STORAGE_ENDPOINT, LMAWS_QUEUE_ENDPOINT, LMAWS_TABLES_ENDPOINT, LMAWS_ENDPOINT
+//   - native SDK variables: AWS_ENDPOINT_URL_S3, AWS_ENDPOINT_URL_SQS, AWS_ENDPOINT_DYNAMODB, AWS_ENDPOINT_URL_DYNAMODB, AWS_ENDPOINT_URL
 func Endpoints() *hostkit.EndpointResolver {
 	return &hostkit.EndpointResolver{
 		Prefix: "LMAWS",
 		Native: map[string][]hostkit.NativeEnv{
 			"storage": {{Name: "AWS_ENDPOINT_URL_S3"}, {Name: "AWS_ENDPOINT_URL"}},
 			"queue":   {{Name: "AWS_ENDPOINT_URL_SQS"}, {Name: "AWS_ENDPOINT_URL"}},
+			"tables":  {{Name: "AWS_ENDPOINT_DYNAMODB"}, {Name: "AWS_ENDPOINT_URL_DYNAMODB"}, {Name: "AWS_ENDPOINT_URL"}},
 		},
 	}
 }
@@ -305,4 +325,54 @@ func (a *Adapter) Ack(ctx context.Context, queue, receipt string) error {
 
 func (a *Adapter) Nack(ctx context.Context, queue, receipt string, visibility int) (string, error) {
 	return a.router.Nack(ctx, queue, receipt, visibility)
+}
+
+// --- hostkit.Tables & hostkit.TableCreateTokenReader ---
+
+func (a *Adapter) TableCreateToken(ctx context.Context, table string) (string, error) {
+	return a.router.TableCreateToken(ctx, table)
+}
+
+func (a *Adapter) DescribeTable(ctx context.Context, table string) (hostkit.TableInfo, error) {
+	return a.router.DescribeTable(ctx, table)
+}
+
+func (a *Adapter) CreateTable(ctx context.Context, name string, sorted bool) (bool, error) {
+	return a.router.CreateTable(ctx, name, sorted)
+}
+
+func (a *Adapter) DeleteTable(ctx context.Context, name string) error {
+	return a.router.DeleteTable(ctx, name)
+}
+
+func (a *Adapter) HeadTable(ctx context.Context, name string) error {
+	return a.router.HeadTable(ctx, name)
+}
+
+func (a *Adapter) ListTables(ctx context.Context, token string) ([]string, string, error) {
+	return a.router.ListTables(ctx, token)
+}
+
+func (a *Adapter) PutItem(ctx context.Context, table string, item hostkit.Item, mode hostkit.PutMode, expectVersion string) (hostkit.Item, error) {
+	return a.router.PutItem(ctx, table, item, mode, expectVersion)
+}
+
+func (a *Adapter) GetItem(ctx context.Context, table, pk, sk string) (hostkit.Item, error) {
+	return a.router.GetItem(ctx, table, pk, sk)
+}
+
+func (a *Adapter) DeleteItem(ctx context.Context, table, pk, sk string) error {
+	return a.router.DeleteItem(ctx, table, pk, sk)
+}
+
+func (a *Adapter) UpdateItem(ctx context.Context, table, pk, sk string, changes hostkit.Item) (hostkit.Item, error) {
+	return a.router.UpdateItem(ctx, table, pk, sk, changes)
+}
+
+func (a *Adapter) Query(ctx context.Context, table, pk, skFrom, skTo string, max int, token string) (hostkit.TablePage, error) {
+	return a.router.Query(ctx, table, pk, skFrom, skTo, max, token)
+}
+
+func (a *Adapter) Scan(ctx context.Context, table string, max int, token string) (hostkit.TablePage, error) {
+	return a.router.Scan(ctx, table, max, token)
 }

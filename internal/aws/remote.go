@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/smithy-go/middleware"
@@ -31,6 +32,7 @@ type remote struct {
 	stripS3XID   *bool
 	calls        map[string]int
 	mutatorCalls int
+	tableLayouts map[string]bool
 }
 
 func (r *remote) recordCall(name string, mutator bool) {
@@ -168,6 +170,14 @@ func (r *remote) sqsClient(ctx context.Context) *sqs.Client {
 	ep := hostkit.EndpointFrom(ctx)
 	cfg := r.newAWSConfig()
 	return sqs.NewFromConfig(cfg, func(o *sqs.Options) {
+		o.BaseEndpoint = aws.String(ep)
+	})
+}
+
+func (r *remote) ddbClient(ctx context.Context) *dynamodb.Client {
+	ep := hostkit.EndpointFrom(ctx)
+	cfg := r.newAWSConfig()
+	return dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
 		o.BaseEndpoint = aws.String(ep)
 	})
 }

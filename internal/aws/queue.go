@@ -117,7 +117,7 @@ func (r *remote) CreateQueue(ctx context.Context, name string) (bool, error) {
 	// token and report created=true only when it matches the token generated
 	// for THIS call.
 	qURL := normalizeQueueURLToEndpoint(rawURL, hostkit.EndpointFrom(ctx))
-	gotTok, err := r.queueCreateTokenByURL(ctx, cli, qURL)
+	gotTok, err := r.queueCreateTokenByURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, qURL)
 	if err != nil {
 		return false, err
 	}
@@ -127,7 +127,7 @@ func (r *remote) CreateQueue(ctx context.Context, name string) (bool, error) {
 func (r *remote) QueueCreateToken(ctx context.Context, name string) (string, error) {
 	r.recordCall("QueueCreateToken", false)
 	cli := r.sqsClient(ctx)
-	qURL, err := r.resolveQueueURL(ctx, cli, name)
+	qURL, err := r.resolveQueueURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, name)
 	if err != nil {
 		return "", err
 	}
@@ -155,7 +155,7 @@ func (r *remote) queueCreateTokenByURL(ctx context.Context, cli *sqs.Client, qUR
 func (r *remote) DeleteQueue(ctx context.Context, name string) error {
 	r.recordCall("DeleteQueue", true)
 	cli := r.sqsClient(ctx)
-	qURL, err := r.resolveQueueURL(ctx, cli, name)
+	qURL, err := r.resolveQueueURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, name)
 	if err != nil {
 		ce := classify(err, scopeQueue)
 		if ce.Code == hostkit.NotFound {
@@ -221,7 +221,7 @@ func (r *remote) ListQueues(ctx context.Context, token string) ([]string, string
 func (r *remote) Send(ctx context.Context, queue, wire string) (string, error) {
 	r.recordCall("Send", true)
 	cli := r.sqsClient(ctx)
-	qURL, err := r.resolveQueueURL(ctx, cli, queue)
+	qURL, err := r.resolveQueueURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, queue)
 	if err != nil {
 		return "", err
 	}
@@ -250,7 +250,7 @@ func (r *remote) Send(ctx context.Context, queue, wire string) (string, error) {
 func (r *remote) Receive(ctx context.Context, queue string, max, waitSeconds, visibility int) ([]hostkit.RawMessage, error) {
 	r.recordCall("Receive", false)
 	cli := r.sqsClient(ctx)
-	qURL, err := r.resolveQueueURL(ctx, cli, queue)
+	qURL, err := r.resolveQueueURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, queue)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +327,7 @@ func (r *remote) Receive(ctx context.Context, queue string, max, waitSeconds, vi
 func (r *remote) Ack(ctx context.Context, queue, receipt string) error {
 	r.recordCall("Ack", true)
 	cli := r.sqsClient(ctx)
-	qURL, err := r.resolveQueueURL(ctx, cli, queue)
+	qURL, err := r.resolveQueueURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, queue)
 	if err != nil {
 		return err
 	}
@@ -347,7 +347,7 @@ func (r *remote) Ack(ctx context.Context, queue, receipt string) error {
 func (r *remote) Nack(ctx context.Context, queue, receipt string, visibility int) (string, error) {
 	r.recordCall("Nack", true)
 	cli := r.sqsClient(ctx)
-	qURL, err := r.resolveQueueURL(ctx, cli, queue)
+	qURL, err := r.resolveQueueURL(hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{}), cli, queue)
 	if err != nil {
 		return "", err
 	}

@@ -2,8 +2,8 @@
 
 // Command lmaws serves the shared lmcloud schema for AWS. Everything
 // provider-neutral comes from github.com/lmctl-ai/lmcloud/hostkit; this binary
-// adds the AWS S3/SQS adapter (internal/aws), lmaws's CLI surface, and its
-// memory watchdog.
+// adds the AWS S3/SQS/DynamoDB adapter (internal/aws), lmaws's CLI surface,
+// and its memory watchdog.
 package main
 
 import (
@@ -60,6 +60,7 @@ func run(args []string, out io.Writer) int {
 				Provider:  "aws",
 				Store:     a,
 				Queue:     a,
+				Tables:    a,
 				Endpoints: aws.Endpoints(),
 			}, nil
 		},
@@ -81,7 +82,8 @@ Dry runs come from the caller's invocation manifest (lmscript --dry-run).
 
 Endpoints (validated; plain http only for loopback; see lmcloud design 02 §3.3):
   set_endpoint(service|"all", url) > LMCLOUD_<SVC>_ENDPOINT > LMAWS_<SVC>_ENDPOINT >
-  LMCLOUD_ENDPOINT > LMAWS_ENDPOINT > AWS_ENDPOINT_URL_S3 / AWS_ENDPOINT_URL_SQS > AWS_ENDPOINT_URL
+  LMCLOUD_ENDPOINT > LMAWS_ENDPOINT >
+  AWS_ENDPOINT_URL_S3 / AWS_ENDPOINT_URL_SQS / AWS_ENDPOINT_DYNAMODB / AWS_ENDPOINT_URL_DYNAMODB > AWS_ENDPOINT_URL
   No endpoint + no live opt-in: offline in-process fake.
   Loopback endpoint + no live opt-in: awssim simulator.
 

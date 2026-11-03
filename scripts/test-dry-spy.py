@@ -42,6 +42,14 @@ class Spy(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(data)
                 return
+            if target in ("DynamoDB_20120810.DescribeTable", "DynamoDB_20120810.ListTables", "DynamoDB_20120810.GetItem", "DynamoDB_20120810.Query", "DynamoDB_20120810.Scan", "DynamoDB_20120810.ListTagsOfResource"):
+                data = b'{"__type":"com.amazonaws.dynamodb.v20120810#ResourceNotFoundException","message":"spy: no table"}'
+                self.send_response(400)
+                self.send_header("Content-Type", "application/x-amz-json-1.0")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
             return self.reply_xml(
                 500,
                 "<ErrorResponse><Error><Code>InternalError</Code><Message>spy refuses mutations</Message></Error></ErrorResponse>",
@@ -71,6 +79,11 @@ p = _lmcode_ s;
   let id = cloud.queue_send("lmaws-dry-spy-q", "hello");
   let batch = cloud.queue_receive("lmaws-dry-spy-q", 1, 0, 30);
   let qd = cloud.queue_delete("lmaws-dry-spy-q");
+  let tc = cloud.table_create("lmawsdryspytbl", true);
+  let put_it = cloud.item_put("lmawsdryspytbl", cloud.item_new("pk1", "sk1").set_string("a", "b"));
+  let got_it = cloud.item_get("lmawsdryspytbl", "pk1", "sk1");
+  cloud.item_delete("lmawsdryspytbl", "pk1", "sk1");
+  let td = cloud.table_delete("lmawsdryspytbl");
   cloud.set_abort_on_error(false);
   cloud.object_get("lmaws-dry-spy-missing", "missing.txt");
   let err_nf = cloud.last_error().code() == ErrorCode.NOT_FOUND;
@@ -91,7 +104,11 @@ def is_mutating(entry):
     if method in ("PUT", "DELETE"):
         return True
     if method == "POST":
-        return not ("GetQueueUrl" in target or "ListQueues" in target or "Action=GetQueueUrl" in body or "Action=ListQueues" in body)
+        if "GetQueueUrl" in target or "ListQueues" in target or "Action=GetQueueUrl" in body or "Action=ListQueues" in body:
+            return False
+        if target in ("DynamoDB_20120810.DescribeTable", "DynamoDB_20120810.ListTables", "DynamoDB_20120810.GetItem", "DynamoDB_20120810.Query", "DynamoDB_20120810.Scan", "DynamoDB_20120810.ListTagsOfResource"):
+            return False
+        return True
     return False
 
 

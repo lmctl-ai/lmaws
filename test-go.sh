@@ -9,9 +9,9 @@ cd "$ROOT"
 unset LMCLOUD_LIVE LMAWS_LIVE LMAWS_LIVE_MUTATE LMAWS_LIVE_ACCOUNT LMAWS_LIVE_REGION \
   LMAWS_LIVE_POLICY LMCLOUD_LIVE_POLICY LMAWS_LIVE_JOURNAL_DIR LMCLOUD_LIVE_JOURNAL_DIR \
   LMAWS_LIVE_ALLOW_CREDENTIAL_PROCESS \
-  LMCLOUD_ENDPOINT LMCLOUD_STORAGE_ENDPOINT LMCLOUD_QUEUE_ENDPOINT \
-  LMAWS_ENDPOINT LMAWS_STORAGE_ENDPOINT LMAWS_QUEUE_ENDPOINT \
-  AWS_ENDPOINT_URL AWS_ENDPOINT_URL_S3 AWS_ENDPOINT_URL_SQS AWS_ENDPOINT_URL_STS \
+  LMCLOUD_ENDPOINT LMCLOUD_STORAGE_ENDPOINT LMCLOUD_QUEUE_ENDPOINT LMCLOUD_TABLES_ENDPOINT \
+  LMAWS_ENDPOINT LMAWS_STORAGE_ENDPOINT LMAWS_QUEUE_ENDPOINT LMAWS_TABLES_ENDPOINT \
+  AWS_ENDPOINT_URL AWS_ENDPOINT_URL_S3 AWS_ENDPOINT_URL_SQS AWS_ENDPOINT_DYNAMODB AWS_ENDPOINT_URL_DYNAMODB AWS_ENDPOINT_URL_STS \
   AWS_EC2_METADATA_SERVICE_ENDPOINT AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
 
 LMSCRIPT_BIN="${LMSCRIPT_BIN:-/home/ubuntu/lmctl-mono/lmscript/bin/lmscript}"
@@ -24,6 +24,7 @@ ENFORCE_PID=""
 ENFORCE_TMP=""
 
 cleanup() {
+  rm -f "$ROOT/bin/lmaws-tables"
   if [[ -n "$ENFORCE_PID" ]]; then
     kill "$ENFORCE_PID" >/dev/null 2>&1 || true
     wait "$ENFORCE_PID" >/dev/null 2>&1 || true
@@ -175,12 +176,15 @@ if [[ "$rc_mem_prog" -ne 0 ]]; then
   exit 1
 fi
 
-echo "=== 9. Conformance suite against cached released awssim (object-storage + queue) ==="
+echo "=== 9. Conformance suite against cached released awssim (object-storage + queue + cost-perf + tables) ==="
 ENDPOINT="$(LMCLOUD_SIM_DIR="$LMCLOUD_SIM_CACHE" "$SIM_SH" start aws --name "$SIM_NAME" --free-port)"
 echo "awssim running at $ENDPOINT (name: $SIM_NAME)"
 
+ln -sf lmaws "$ROOT/bin/lmaws-tables"
 LMSCRIPT_BIN="$LMSCRIPT_BIN" "$LMCLOUD_DIR/tests/run-conformance.sh" "$BIN" "$ENDPOINT" object-storage
 LMSCRIPT_BIN="$LMSCRIPT_BIN" "$LMCLOUD_DIR/tests/run-conformance.sh" "$BIN" "$ENDPOINT" queue
+LMSCRIPT_BIN="$LMSCRIPT_BIN" "$LMCLOUD_DIR/tests/run-conformance.sh" "$BIN" "$ENDPOINT" cost-perf
+LMSCRIPT_BIN="$LMSCRIPT_BIN" "$LMCLOUD_DIR/tests/run-conformance.sh" "$ROOT/bin/lmaws-tables" "$ENDPOINT" tables
 
 LMCLOUD_SIM_DIR="$LMCLOUD_SIM_CACHE" "$SIM_SH" stop aws --name "$SIM_NAME"
 
@@ -196,13 +200,13 @@ cat > "$ENFORCE_TMP/auth.json" <<EOF
         "Statement": [
           {
             "Effect": "Allow",
-            "Action": ["s3:*", "sqs:*"],
+            "Action": ["s3:*", "sqs:*", "dynamodb:*"],
             "Resource": "*"
           },
           {
             "Effect": "Deny",
             "Action": "*",
-            "Resource": "*denied*"
+            "Resource": ["*denied*", "*lmt14*"]
           }
         ]
       }
@@ -230,6 +234,12 @@ done
   export LMAWS_SIM_SECRET_ACCESS_KEY="test"
   cd "$LMCLOUD_DIR/tests/conformance/queue"
   "$LMSCRIPT_BIN" 13-queue-auth-enforced-denial.lms "$BIN" "http://127.0.0.1:$ENFORCE_PORT" enforce
+)
+(
+  export LMAWS_SIM_ACCESS_KEY_ID="test"
+  export LMAWS_SIM_SECRET_ACCESS_KEY="test"
+  cd "$LMCLOUD_DIR/tests/conformance/tables"
+  "$LMSCRIPT_BIN" 14-tables-auth-enforced-denial.lms "$BIN" "http://127.0.0.1:$ENFORCE_PORT" enforce
 )
 kill "$ENFORCE_PID" >/dev/null 2>&1 || true
 wait "$ENFORCE_PID" >/dev/null 2>&1 || true
@@ -259,14 +269,15 @@ if [[ -f "$AWSSIM_AUTH_JAR" ]]; then
     export LMAWS_SIM_ACCESS_KEY_ID="test"
     export LMAWS_SIM_SECRET_ACCESS_KEY="test"
     export LMAWS_COMPAT_STRIP_S3_XID="0"
-    LMSCRIPT_BIN="$LMSCRIPT_BIN" "$LMCLOUD_DIR/tests/run-conformance.sh" "$BIN" "http://127.0.0.1:$ENFORCE_PORT" all
+    LMSCRIPT_BIN="$LMSCRIPT_BIN" "$LMCLOUD_DIR/tests/run-conformance.sh" "$ROOT/bin/lmaws-tables" "http://127.0.0.1:$ENFORCE_PORT" all
   )"
   echo "$OUT"
-  grep -q "pass 25 / 25, skip 0, fail 0" <<<"$OUT" || { echo "ERROR: enforced conformance did not pass 25/25 with 0 skips" >&2; exit 1; }
+  grep -q "pass 49 / 49, skip 0, fail 0" <<<"$OUT" || { echo "ERROR: enforced conformance did not pass 49/49 with 0 skips" >&2; exit 1; }
   kill "$ENFORCE_PID" >/dev/null 2>&1 || true
   wait "$ENFORCE_PID" >/dev/null 2>&1 || true
   ENFORCE_PID=""
 fi
+rm -f "$ROOT/bin/lmaws-tables"
 
 rm -rf "$ENFORCE_TMP"
 ENFORCE_TMP=""

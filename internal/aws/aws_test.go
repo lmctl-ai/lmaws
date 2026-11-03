@@ -86,6 +86,11 @@ func TestClassifyTable(t *testing.T) {
 		{"S3 SlowDown 503", 503, "SlowDown", "slow down", "", scopeObject, hostkit.Internal, ""},
 		{"S3 InternalError 500", 500, "InternalError", "boom", "", scopeObject, hostkit.Internal, ""},
 		{"HTTP 429 Throttling", 429, "ThrottlingException", "throttled", "", scopeQueue, hostkit.Internal, ""},
+		{"DDB ResourceNotFoundException", 400, "com.amazonaws.dynamodb.v20120810#ResourceNotFoundException", "table not found", "", scopeTable, hostkit.NotFound, hostkit.AbsentTable},
+		{"DDB ResourceInUseException", 400, "ResourceInUseException", "table in use", "", scopeTable, hostkit.Conflict, ""},
+		{"DDB ConditionalCheckFailedException", 400, "ConditionalCheckFailedException", "condition failed", "", scopeItem, hostkit.PreconditionFailed, ""},
+		{"DDB ValidationException", 400, "ValidationException", "bad expr", "", scopeTable, hostkit.InvalidArgument, ""},
+		{"DDB ProvisionedThroughputExceededException", 400, "ProvisionedThroughputExceededException", "throttled", "", scopeTable, hostkit.Internal, ""},
 	}
 	for _, c := range cases {
 		err := synthAWSErr(c.status, c.code, c.msg, c.header)
@@ -198,6 +203,7 @@ func newTestHost(t *testing.T, opts *Options, handle func(w http.ResponseWriter,
 		Provider:  "aws",
 		Store:     a,
 		Queue:     a,
+		Tables:    a,
 		Endpoints: Endpoints(),
 	})
 	h.SetAbortOnError(false)
@@ -869,5 +875,94 @@ func TestOfflineReceiveFollowsRouteCaps(t *testing.T) {
 func TestEnumsDeclaredForDryRun(t *testing.T) {
 	if !cloudhost.EnumsDeclared() {
 		t.Fatalf("expected cloudhost.EnumsDeclared() == true with lmcode-go >= 06cd9ae (Registry.Enum merged upstream)")
+	}
+}
+
+func TestTablesEndpointsOfflineAndDryRun(t *testing.T) {
+	// 1. Endpoint precedence for "tables" including AWS_ENDPOINT_DYNAMODB and AWS_ENDPOINT_URL_DYNAMODB.
+	r := Endpoints()
+	for _, k := range []string{
+		"LMCLOUD_TABLES_ENDPOINT", "LMAWS_TABLES_ENDPOINT",
+		"LMCLOUD_ENDPOINT", "LMAWS_ENDPOINT",
+		"AWS_ENDPOINT_DYNAMODB", "AWS_ENDPOINT_URL_DYNAMODB", "AWS_ENDPOINT_URL",
+	} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:9001")
+	if ep, _, err := r.Resolve("tables"); err != nil || ep != "http://127.0.0.1:9001" {
+		t.Fatalf("AWS_ENDPOINT_URL: ep=%q err=%v", ep, err)
+	}
+	t.Setenv("AWS_ENDPOINT_URL_DYNAMODB", "http://127.0.0.1:9002")
+	if ep, _, err := r.Resolve("tables"); err != nil || ep != "http://127.0.0.1:9002" {
+		t.Fatalf("AWS_ENDPOINT_URL_DYNAMODB: ep=%q err=%v", ep, err)
+	}
+	t.Setenv("AWS_ENDPOINT_DYNAMODB", "http://127.0.0.1:9003")
+	if ep, _, err := r.Resolve("tables"); err != nil || ep != "http://127.0.0.1:9003" {
+		t.Fatalf("AWS_ENDPOINT_DYNAMODB: ep=%q err=%v", ep, err)
+	}
+	t.Setenv("LMAWS_TABLES_ENDPOINT", "http://127.0.0.1:9004")
+	if ep, _, err := r.Resolve("tables"); err != nil || ep != "http://127.0.0.1:9004" {
+		t.Fatalf("LMAWS_TABLES_ENDPOINT: ep=%q err=%v", ep, err)
+	}
+	t.Setenv("LMCLOUD_TABLES_ENDPOINT", "http://127.0.0.1:9005")
+	if ep, _, err := r.Resolve("tables"); err != nil || ep != "http://127.0.0.1:9005" {
+		t.Fatalf("LMCLOUD_TABLES_ENDPOINT: ep=%q err=%v", ep, err)
+	}
+	for _, k := range []string{
+		"LMCLOUD_TABLES_ENDPOINT", "LMAWS_TABLES_ENDPOINT",
+		"AWS_ENDPOINT_DYNAMODB", "AWS_ENDPOINT_URL_DYNAMODB", "AWS_ENDPOINT_URL",
+	} {
+		t.Setenv(k, "")
+	}
+
+	// 2. Offline fake routing + dry-run zero mutator calls for tables.
+	t.Setenv("LMAWS_LIVE", "")
+	t.Setenv("LMCLOUD_LIVE", "")
+	a := New(nil)
+	defer a.Close()
+	h := cloudhost.New(cloudhost.Config{
+		Provider:  "aws",
+		Store:     a,
+		Queue:     a,
+		Tables:    a,
+		Endpoints: Endpoints(),
+	})
+	h.SetAbortOnError(false)
+
+	created, err := h.TableCreate(false, "orders", true)
+	if err != nil || !created || h.LastError().Code != hostkit.OK {
+		t.Fatalf("offline TableCreate: created=%v err=%v last=%+v", created, err, h.LastError())
+	}
+	it, err := h.ItemNew("user-1", "ord-001", true)
+	if err != nil {
+		t.Fatalf("ItemNew: %v", err)
+	}
+	_, _ = it.SetString("status", "pending")
+	_, _ = it.SetInt("count", 3)
+	_, _ = it.SetNumber("total", 19.95)
+	_, _ = it.SetBool("paid", false)
+
+	// Dry-run item_put and table_delete make 0 remote mutator calls.
+	if _, err := h.ItemPut(true, "orders", it, hostkit.PutUnconditional, ""); err != nil {
+		t.Fatalf("dry ItemPut: %v", err)
+	}
+	if _, err := h.TableDelete(true, "orders"); err != nil {
+		t.Fatalf("dry TableDelete: %v", err)
+	}
+	if got := a.MutatorCalls(); got != 0 {
+		t.Fatalf("expected 0 remote mutator calls, got %d", got)
+	}
+
+	// Real offline item_put + item_get round-trips types and version token.
+	putOut, err := h.ItemPut(false, "orders", it, hostkit.PutIfAbsent, "")
+	if err != nil || putOut.Version() == "" {
+		t.Fatalf("offline ItemPut: ver=%q err=%v last=%+v", putOut.Version(), err, h.LastError())
+	}
+	gotItem, err := h.ItemGet(false, "orders", "user-1", "ord-001", true)
+	if err != nil || !gotItem.Exists() || gotItem.Version() != putOut.Version() {
+		t.Fatalf("offline ItemGet: exists=%v ver=%q err=%v", gotItem.Exists(), gotItem.Version(), err)
+	}
+	if gotItem.TypeOf("count") != "int" || gotItem.TypeOf("total") != "number" {
+		t.Fatalf("offline type tags: count=%q total=%q", gotItem.TypeOf("count"), gotItem.TypeOf("total"))
 	}
 }

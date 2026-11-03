@@ -69,7 +69,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: lmctl-ai/lmcloud
-          ref: f67eccc273725e41bfd85897a33a7a17eb9e4121
+          ref: d1eaed3d015e1e2d7ba997a3fde6f8b667ed9fc0
           path: lmcloud
 
       - name: Set up Go

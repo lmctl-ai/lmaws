@@ -146,6 +146,7 @@ func newLiveTestHost(t *testing.T, extraOpts *Options, step httpguard.Step) (*cl
 		Provider:  "aws",
 		Store:     a,
 		Queue:     a,
+		Tables:    a,
 		Endpoints: Endpoints(),
 	})
 	h.SetAbortOnError(false)
@@ -209,12 +210,16 @@ func TestLiveEndpointOverridesForbidden(t *testing.T) {
 		"LMCLOUD_ENDPOINT",
 		"LMCLOUD_STORAGE_ENDPOINT",
 		"LMCLOUD_QUEUE_ENDPOINT",
+		"LMCLOUD_TABLES_ENDPOINT",
 		"LMAWS_ENDPOINT",
 		"LMAWS_STORAGE_ENDPOINT",
 		"LMAWS_QUEUE_ENDPOINT",
+		"LMAWS_TABLES_ENDPOINT",
 		"AWS_ENDPOINT_URL",
 		"AWS_ENDPOINT_URL_S3",
 		"AWS_ENDPOINT_URL_SQS",
+		"AWS_ENDPOINT_DYNAMODB",
+		"AWS_ENDPOINT_URL_DYNAMODB",
 		"AWS_ENDPOINT_URL_STS",
 		"AWS_ENDPOINT_URL_IAM",
 		"AWS_ENDPOINT_URL_SSO",
@@ -571,7 +576,7 @@ func TestLiveCostCapEnforcedOnReadOps(t *testing.T) {
 	if ex, _ := h.BucketExists(false, "bkt-1"); !ex || h.LastError().Code != hostkit.OK {
 		t.Fatalf("first BucketExists: ex=%v last=%+v", ex, h.LastError())
 	}
-	if ex, _ := h.BucketExists(false, "bkt-1"); ex || h.LastError().Code != hostkit.PermissionDenied || h.LastError().ProviderCode != "LiveCostCapExceeded" {
+	if ex, _ := h.BucketExists(false, "bkt-1"); ex || h.LastError().Code != hostkit.CostCapExceeded || h.LastError().ProviderCode != "CostCapExceeded" {
 		t.Fatalf("second BucketExists should exceed cost cap: ex=%v last=%+v", ex, h.LastError())
 	}
 	if s3HeadCount != 1 {
@@ -966,8 +971,8 @@ func TestSolRound2_EscapedXMLEgressReservationNeverOvershootsCap(t *testing.T) {
 	if s3Dispatched {
 		t.Fatalf("expected worst-case escaped-XML reservation to reject before S3 dispatch under 22,000 nano-USD cap")
 	}
-	if h.LastError().Code != hostkit.PermissionDenied || h.LastError().ProviderCode != "LiveCostCapExceeded" {
-		t.Fatalf("expected PermissionDenied / LiveCostCapExceeded, got %+v", h.LastError())
+	if h.LastError().Code != hostkit.CostCapExceeded || h.LastError().ProviderCode != "CostCapExceeded" {
+		t.Fatalf("expected CostCapExceeded / CostCapExceeded, got %+v", h.LastError())
 	}
 }
 
@@ -3192,4 +3197,49 @@ exit 0
 		t.Fatalf("scenario 03 must not execute after global spend ceiling is reached:\n%s", string(rawLog2))
 	}
 }
+
+func TestLiveTablesRefusedFailClosed(t *testing.T) {
+	h, _, srv, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected HTTP request during live tables operation: %s %s", r.Method, r.URL.Path)
+	})
+
+	it, err := h.ItemNew("pk-1", "", false)
+	if err != nil {
+		t.Fatalf("ItemNew: %v", err)
+	}
+	_, _ = it.SetString("k", "v")
+
+	for _, mutateVal := range []string{"", "0", "1"} {
+		t.Run("mutate_"+mutateVal, func(t *testing.T) {
+			setValidLiveEnv(t)
+			t.Setenv("LMAWS_LIVE_MUTATE", mutateVal)
+
+			assertRefused := func(name string, fn func()) {
+				t.Helper()
+				fn()
+				last := h.LastError()
+				if last.Code != hostkit.PermissionDenied || last.ProviderCode != "LiveTablesUnsupported" {
+					t.Fatalf("%s (mutate=%q): got code=%s provider_code=%q msg=%q, want PERMISSION_DENIED / LiveTablesUnsupported",
+						name, mutateVal, last.Code, last.ProviderCode, last.Message)
+				}
+			}
+
+			assertRefused("table_create", func() { _, _ = h.TableCreate(false, "lmcloudconftbl1", false) })
+			assertRefused("table_delete", func() { _, _ = h.TableDelete(false, "lmcloudconftbl1") })
+			assertRefused("table_exists", func() { _, _ = h.TableExists(false, "lmcloudconftbl1") })
+			assertRefused("table_list", func() { _, _ = h.TableList(false) })
+			assertRefused("item_put", func() { _, _ = h.ItemPut(false, "lmcloudconftbl1", it, hostkit.PutUnconditional, "") })
+			assertRefused("item_get", func() { _, _ = h.ItemGet(false, "lmcloudconftbl1", "pk-1", "", false) })
+			assertRefused("item_delete", func() { _ = h.ItemDelete(false, "lmcloudconftbl1", "pk-1", "", false) })
+			assertRefused("item_update", func() { _, _ = h.ItemUpdate(false, "lmcloudconftbl1", "pk-1", "", false, it) })
+			assertRefused("item_query", func() { _, _ = h.ItemQuery(false, "lmcloudconftbl1", "pk-1", "", "", 10, "") })
+			assertRefused("item_scan", func() { _, _ = h.ItemScan(false, "lmcloudconftbl1", 10, "") })
+		})
+	}
+
+	if got := len(srv.Requests()); got != 0 {
+		t.Fatalf("expected 0 HTTP requests during live tables refusal, got %d", got)
+	}
+}
+
 

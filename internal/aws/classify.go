@@ -20,6 +20,8 @@ const (
 	scopeObject
 	scopeQueue
 	scopeMessage
+	scopeTable
+	scopeItem
 )
 
 // extractHTTPResponse inspects an AWS SDK v2 error chain for the underlying
@@ -122,9 +124,13 @@ func classify(err error, sc scope) *hostkit.CloudError {
 	// 1. UNAUTHENTICATED
 	case "InvalidAccessKeyId",
 		"SignatureDoesNotMatch",
+		"InvalidSignatureException",
 		"IncompleteSignature",
+		"IncompleteSignatureException",
 		"MissingAuthenticationToken",
+		"MissingAuthenticationTokenException",
 		"ExpiredToken",
+		"ExpiredTokenException",
 		"TokenRefreshRequired",
 		"InvalidToken",
 		"AuthFailure",
@@ -149,14 +155,20 @@ func classify(err error, sc scope) *hostkit.CloudError {
 		return out(hostkit.NotFound, hostkit.AbsentBucket)
 	case "NoSuchKey":
 		return out(hostkit.NotFound, hostkit.AbsentObject)
+	case "TableNotFoundException":
+		return out(hostkit.NotFound, hostkit.AbsentTable)
 	case "AWS.SimpleQueueService.NonExistentQueue",
 		"QueueDoesNotExist",
 		"NonExistentQueue",
 		"ResourceNotFoundException":
-		if sc == scopeBucket {
+		switch sc {
+		case scopeBucket:
 			return out(hostkit.NotFound, hostkit.AbsentBucket)
+		case scopeTable, scopeItem:
+			return out(hostkit.NotFound, hostkit.AbsentTable)
+		default:
+			return out(hostkit.NotFound, hostkit.AbsentQueue)
 		}
-		return out(hostkit.NotFound, hostkit.AbsentQueue)
 	case "MessageNotInflight", "MessageDoesNotExist":
 		return out(hostkit.NotFound, hostkit.AbsentMessage)
 	case "NotFound":
@@ -169,11 +181,15 @@ func classify(err error, sc scope) *hostkit.CloudError {
 			return out(hostkit.NotFound, hostkit.AbsentQueue)
 		case scopeMessage:
 			return out(hostkit.NotFound, hostkit.AbsentMessage)
+		case scopeTable:
+			return out(hostkit.NotFound, hostkit.AbsentTable)
+		case scopeItem:
+			return out(hostkit.NotFound, hostkit.AbsentItem)
 		default:
 			return out(hostkit.NotFound, "")
 		}
 
-	// 4. CONFLICT (409 / bucket not empty / bucket already exists / queue deleted recently)
+	// 4. CONFLICT (409 / bucket not empty / bucket already exists / queue deleted recently / table in use)
 	case "BucketAlreadyExists",
 		"BucketAlreadyOwnedByYou",
 		"BucketNotEmpty",
@@ -182,16 +198,21 @@ func classify(err error, sc scope) *hostkit.CloudError {
 		"AWS.SimpleQueueService.QueueNameExists",
 		"AWS.SimpleQueueService.QueueDeletedRecently",
 		"QueueDeletedRecently",
+		"ResourceInUseException",
+		"TableInUseException",
 		"OperationAborted",
 		"ConditionalRequestConflict":
 		return out(hostkit.Conflict, "")
 
-	// 5. PRECONDITION_FAILED (412)
-	case "PreconditionFailed":
+	// 5. PRECONDITION_FAILED (412 / ConditionalCheckFailedException)
+	case "PreconditionFailed",
+		"ConditionalCheckFailedException":
 		return out(hostkit.PreconditionFailed, "")
 
-	// 6. INVALID_ARGUMENT (400 / invalid receipt handle / invalid parameters)
+	// 6. INVALID_ARGUMENT (400 / invalid receipt handle / invalid parameters / DynamoDB ValidationException)
 	case "ReceiptHandleIsInvalid",
+		"ValidationException",
+		"SerializationException",
 		"InvalidParameterValue",
 		"InvalidArgument",
 		"InvalidBucketName",
@@ -202,6 +223,7 @@ func classify(err error, sc scope) *hostkit.CloudError {
 		"MetadataTooLarge",
 		"EntityTooLarge",
 		"EntityTooSmall",
+		"ItemCollectionSizeLimitExceededException",
 		"InvalidAttributeName",
 		"InvalidAttributeValue",
 		"InvalidMessageContents",
@@ -216,8 +238,12 @@ func classify(err error, sc scope) *hostkit.CloudError {
 		"RequestThrottled",
 		"Throttling",
 		"ThrottlingException",
+		"ProvisionedThroughputExceededException",
+		"RequestLimitExceeded",
+		"LimitExceededException",
 		"TooManyRequestsException",
 		"InternalError",
+		"InternalServerError",
 		"ServiceUnavailable",
 		"RequestTimeout":
 		return out(hostkit.Internal, "")
@@ -238,6 +264,10 @@ func classify(err error, sc scope) *hostkit.CloudError {
 			return out(hostkit.NotFound, hostkit.AbsentQueue)
 		case scopeMessage:
 			return out(hostkit.NotFound, hostkit.AbsentMessage)
+		case scopeTable:
+			return out(hostkit.NotFound, hostkit.AbsentTable)
+		case scopeItem:
+			return out(hostkit.NotFound, hostkit.AbsentItem)
 		default:
 			return out(hostkit.NotFound, "")
 		}
