@@ -10,11 +10,11 @@ public final class Main {
     public static final String VERSION="0.1.27";
     private static final String HELP="""
         lmaws 0.1.27 — AWS SDK for Java v2 scripting host
-        usage: lmaws [--dry-run] [--apply] --lmcode FILE | --lmcode-schema [--json] | --lmcode-signatures [--without-std]
+        usage: lmaws [--apply] --lmcode FILE [--lmcode FILE ...] | --lmcode-schema [--json] | --lmcode-signatures [--without-std]
                lmaws --credential-process <default|lmaws|lmaws-ec2|lmaws-web> [--source-profile NAME] [--policy-file PATH] [--no-cache]
                lmaws --version | --notices | --help | --self-test
                lmaws --sweep LEDGER_DIR --older-than-hours N
-        DSL context: aws.demo() (offline) or aws.region(\"\") (default profile/region).
+        lmcode context: aws.demo() (offline) or aws.region(\"\") (default profile/region).
         Live writes require AWS_PROFILE=lmaws (or lmaws-ec2 for the spot nano sandbox),
         a new ledger, prefixed names and ownership tags.
         Exceptions for the admin profile (refused for every other mutating call):
@@ -47,7 +47,7 @@ public final class Main {
         CE pages cost about $0.01; GetMetricData counts requested metrics; cap <=$0.25.
         Real spend exports stay under ignored .lmaws-local/spend; no AWS CLI is used.
         No OIDC or AWS credentials in CI; CI uses loopback fakes only.
-        --dry-run uses demo sessions: no AWS requests; local reports/ledgers still write.
+        Invocation manifest dry mode skips host callbacks and returns typed dry values; use aws.demo() for offline fixtures.
         LMAWS_LIVE=1 is required for real-account writes; read-only inventories use the
         standard AWS credential chain. Secret values and IAM key APIs are not exposed.
         Linux requires glibc >= 2.35; Windows requires the Microsoft VC++ runtime.
@@ -91,54 +91,69 @@ public final class Main {
     }
     static int run(String[] args) throws Exception {
         if(Arrays.asList(args).contains("--credential-process")) return CredentialProcess.runCli(args);
-        String[] requested=args;
-        if(Arrays.asList(args).contains("--dry-run") || Arrays.asList(args).contains("--apply") || Arrays.asList(args).contains("--live") || Arrays.asList(args).contains("--profile") || Arrays.asList(args).contains("--region")) {
-            List<String> remaining=new ArrayList<>();
-            boolean dryRun=false,apply=false,live=false;
+        List<String> remaining=new ArrayList<>();
+        if(Arrays.asList(args).contains("--apply") || Arrays.asList(args).contains("--live") || Arrays.asList(args).contains("--profile") || Arrays.asList(args).contains("--region")) {
+            boolean apply=false,live=false;
             String profile=null,region=null;
             for(int i=0;i<args.length;i++) {
                 String arg=args[i];
-                if("--dry-run".equals(arg)) dryRun=true;
-                else if("--apply".equals(arg)) apply=true;
+                if("--apply".equals(arg)) apply=true;
                 else if("--live".equals(arg)) live=true;
                 else if("--profile".equals(arg) && i+1<args.length) profile=args[++i];
                 else if("--region".equals(arg) && i+1<args.length) region=args[++i];
                 else remaining.add(arg);
             }
-            if(dryRun) System.setProperty("lmaws.dryRun","true");
-            if(live && !dryRun) System.setProperty("lmaws.live","true");
-            if(apply && !dryRun) System.setProperty("lmaws.apply","true");
+            if(live) System.setProperty("lmaws.live","true");
+            if(apply) System.setProperty("lmaws.apply","true");
             if(profile!=null) System.setProperty("lmaws.profile",profile);
             if(region!=null) System.setProperty("lmaws.region",region);
             args=remaining.toArray(new String[0]);
-        }
+        } else remaining.addAll(Arrays.asList(args));
         // Reject unknown options before host construction, credentials, journals or SDK clients.
-        if(args.length==0 || !Set.of("--version","--help","--notices","--lmcode-schema","--lmcode-signatures","--sweep","--self-test","--lmcode").contains(args[0])) { System.err.print(HELP); return 2; }
-        long bytes;try{bytes=budget();CloudHost.costCap();}catch(IllegalArgumentException e){System.err.println(e.getMessage());return 2;}
+        if(args.length==0 || !Set.of("--version","--help","--notices","--lmcode-schema","--lmcode-signatures","--sweep","--self-test","--lmcode").contains(args[0])) return Reports.failureFrame("cli",new VmException("CLI_USAGE","unknown or missing command"));
+        long bytes;try{bytes=budget();CloudHost.costCap();}catch(IllegalArgumentException e){return Reports.failureFrame("cli",new VmException("CLI_USAGE",e.getMessage()));}
         if(Arrays.equals(args,new String[]{"--version"})){System.out.println("lmaws "+VERSION);return 0;}
         if(Arrays.equals(args,new String[]{"--help"})){System.out.print(HELP);return 0;}
         if(Arrays.equals(args,new String[]{"--notices"})){try(InputStream in=Main.class.getResourceAsStream("/THIRD_PARTY_NOTICES")){if(in==null)throw new IOException("notices missing");in.transferTo(System.out);}return 0;}
+        if(args.length==1&&args[0].equals("--lmcode-signatures")) { new CloudHost().registry().signatures().forEach(System.out::println); return 0; }
+        if(Arrays.equals(args,new String[]{"--lmcode-signatures","--without-std"})) { new CloudHost().registry().hostSignatures().forEach(System.out::println); return 0; }
+        if(args.length>=1&&args[0].equals("--lmcode-schema")&&(args.length==1||args.length==2&&args[1].equals("--json"))) { try(CloudHost host=new CloudHost()){System.out.write(schema(host.registry()));} return 0; }
+        if(args.length==4&&args[0].equals("--sweep")&&args[2].equals("--older-than-hours")){System.out.println(Jsons.encode(Sandbox.leftovers(Path.of(args[1]),Long.parseLong(args[3]))));return 0;}
+        if(Arrays.equals(args,new String[]{"--self-test"})){SafetyChecks.run();AdversarialChecks.run();WebStackChecks.run();CostChecks.run();AccountSearchChecks.run();LedgerCleanupChecks.run();SpendChecks.run();FleetCostsChecks.main(new String[0]);IamPolicyChecks.run();IamRoleChecks.run();CredentialProcessChecks.run();PolicyBuilderChecks.run();FleetRoleChecks.run();PublishGrantProbeChecks.run();LambdaChecks.run();SelfTest.main(new String[0]);return 0;}
+        List<String> files=new ArrayList<>();
+        for(int i=0;i<args.length;i++){
+            if(!args[i].equals("--lmcode")||i+1>=args.length)return Reports.failureFrame("cli",new VmException("CLI_USAGE","expected --lmcode FILE"));
+            files.add(args[++i]);
+        }
+        InvocationResults results;
+        try{results=InvocationResults.fromCommand(files);}catch(VmException e){return Reports.failureFrame("cli",e);}
+        System.setProperty("lmaws.dryRun",Boolean.toString(results.dry()));
+        if(results.dry()){System.clearProperty("lmaws.live");System.clearProperty("lmaws.apply");}
         CloudHost host=new CloudHost();
         Thread shutdown=new Thread(()->{try{host.emergencyWebCleanup();host.close();}catch(RuntimeException failure){System.err.println("lmaws teardown incomplete; inspect the run ledger");}},"lmaws-teardown");
         Runtime.getRuntime().addShutdownHook(shutdown);
         try(host) {
             Registry registry=host.registry();byte[] schema=schema(registry);
-            if(args.length>=1&&args[0].equals("--lmcode-schema")&&(args.length==1||args.length==2&&args[1].equals("--json"))){System.out.write(schema);return 0;}
-            if(Arrays.equals(args,new String[]{"--lmcode-signatures","--without-std"})){registry.hostSignatures().forEach(System.out::println);return 0;}
-            if(Arrays.equals(args,new String[]{"--lmcode-signatures"})){registry.signatures().forEach(System.out::println);return 0;}
-            if(args.length==4&&args[0].equals("--sweep")&&args[2].equals("--older-than-hours")){System.out.println(Jsons.encode(Sandbox.leftovers(Path.of(args[1]),Long.parseLong(args[3]))));return 0;}
-            if(Arrays.equals(args,new String[]{"--self-test"})){SafetyChecks.run();AdversarialChecks.run();WebStackChecks.run();CostChecks.run();AccountSearchChecks.run();LedgerCleanupChecks.run();SpendChecks.run();FleetCostsChecks.main(new String[0]);IamPolicyChecks.run();IamRoleChecks.run();CredentialProcessChecks.run();PolicyBuilderChecks.run();FleetRoleChecks.run();PublishGrantProbeChecks.run();LambdaChecks.run();SelfTest.main(new String[0]);return 0;}
-            if(args.length!=2||!args[0].equals("--lmcode")){System.err.print(HELP);return 2;}
-            RuntimeBudget.configure(bytes,requested);
-            Path input=Path.of(args[1]);if(Files.size(input)>Math.min(bytes/4,64L*1024*1024))throw VmException.run("LMAWS_MAX_MEMORY_MB bytecode input exceeds memory budget");
-            io.lmctl.lmcode.Program program=io.lmctl.lmcode.Program.load(Files.readAllBytes(input),schema,registry);
-            try{program.run(host.context(bytes),registry);}catch(Exception|OutOfMemoryError failure){
+            Context context=host.context(bytes);context.setDry(results.dry());RuntimeBudget.configure(bytes,args);
+            ResultContract contract=ResultContract.fromSchema(schema);
+            List<InvocationResults.Registration> registrations=results.registrations();
+            for(InvocationResults.Registration registration:registrations){
+                int index=registration.index();String phase="load";
+                try{
+                    results.select(index,registry,contract);
+                    Path input=Path.of(registration.file());
+                    io.lmctl.lmcode.Program program=io.lmctl.lmcode.Program.load(Files.readAllBytes(input),schema,registry);
+                    phase="run";program.run(context,registry);results.complete(index);
+                }catch(VmException failure){host.noteFailure(failure,safeError(failure),"");results.fail(index,phase,failure);break;}
+                catch(IOException failure){host.noteFailure(failure,safeError(failure),"");results.fail(index,phase,new VmException(phase.equals("load")?"LOAD_BAD_BYTECODE":"RUN_HOST",failure.getMessage()));break;}
+                catch(Exception|OutOfMemoryError failure){
                 String action="";
                 if(failure instanceof AwsServiceException service && service.awsErrorDetails()!=null){String reason=service.awsErrorDetails().errorMessage();if(reason!=null){var matcher=java.util.regex.Pattern.compile("perform:?\\s+([A-Za-z0-9]+:[A-Za-z0-9]+)").matcher(reason);if(matcher.find())action=matcher.group(1);}}
                 host.noteFailure(failure,safeError(failure),action);throw failure;
+                }
             }
             host.close();
-            return Reports.ok("null");
+            return results.writeFrame(System.out);
         } finally {try{Runtime.getRuntime().removeShutdownHook(shutdown);}catch(IllegalStateException ignored){}}
     }
     public static void main(String[] args) {
@@ -146,8 +161,8 @@ public final class Main {
         System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out),true,java.nio.charset.StandardCharsets.UTF_8));
         System.setErr(new PrintStream(new FileOutputStream(FileDescriptor.err),true,java.nio.charset.StandardCharsets.UTF_8));
         int status;
-        try{status=run(args);}catch(OutOfMemoryError e){String text="LMAWS_MAX_MEMORY_MB memory budget exceeded";System.err.println(text);status=Reports.error("run",VmException.run(text));}
-        catch(Exception e){String text=safeError(e);if(text.contains("memory budget"))text="LMAWS_MAX_MEMORY_MB: "+text;System.err.println(text);VmException error=e instanceof VmException v?new VmException(v.code,text):VmException.host(text);if(e instanceof VmException v){error.line=v.line;error.column=v.column;}status=Reports.error("run",error);}
+        try{status=run(args);}catch(OutOfMemoryError e){String text="LMAWS_MAX_MEMORY_MB memory budget exceeded";System.err.println(text);status=Reports.failureFrame("run",VmException.run(text));}
+        catch(Exception e){String text=safeError(e);if(text.contains("memory budget"))text="LMAWS_MAX_MEMORY_MB: "+text;System.err.println(text);VmException error=e instanceof VmException v?new VmException(v.code,text):VmException.host(text);if(e instanceof VmException v){error.line=v.line;error.column=v.column;}status=Reports.failureFrame("run",error);}
         if(status!=0)System.exit(status);
     }
 }

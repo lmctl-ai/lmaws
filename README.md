@@ -1098,7 +1098,7 @@ r = system ${dsl_cli(aws)} --lmcode "inventory.dslb";
 assert(r.code == 0);
 ```
 
-`--dry-run` uses demo data and makes no AWS requests, while still writing local reports and ledgers. `lmaws --sweep LEDGER_DIR --older-than-hours 24` is always a dry-run: it lists stale `lmaws-*.jsonl` ledger candidates and never deletes account resources. Create the ledger directory before opening a run; explicit ledger filenames should also use that prefix and extension. Errors use exit 2 for configuration and 3 for runtime failures.
+Offline fixtures are selected explicitly with `aws.demo()`. Invocation-manifest dry mode skips host callbacks and returns typed dry values; it does not select simulated AWS data. `lmaws --sweep LEDGER_DIR --older-than-hours 24` lists stale `lmaws-*.jsonl` ledger candidates and never deletes account resources. Create the ledger directory before opening a run; explicit ledger filenames should also use that prefix and extension. Host invocations return one terminal frame and use exit 2 for command errors, 3 for load or execution errors, and 4 for application or output errors.
 
 For `run.put`, `key` is the S3 object key or DynamoDB `pk`; queue/topic/parameter writes use `value` as the message or parameter value, and log groups accept `key="retention_days"`.
 
