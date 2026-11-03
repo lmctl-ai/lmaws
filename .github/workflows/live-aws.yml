@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: MIT
+name: Live AWS Conformance
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Conformance suite to run (all, object-storage, or queue)"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - object-storage
+          - queue
+      cost_cap_usd:
+        description: "Campaign cost cap in USD (default 0.05, hard ceiling 0.25)"
+        required: false
+        default: "0.05"
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: live-aws-conformance
+  cancel-in-progress: false
+
+jobs:
+  live-conformance:
+    name: Live AWS S3 + SQS Conformance (us-east-1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: live-aws
+    env:
+      LMCLOUD_LIVE: "1"
+      LMAWS_LIVE: "1"
+      LMAWS_LIVE_MUTATE: "1"
+      LMAWS_LIVE_ACCOUNT: "254332045686"
+      LMAWS_LIVE_REGION: "us-east-1"
+      LMAWS_LIVE_COST_CAP_USD: ${{ inputs.cost_cap_usd || '0.05' }}
+      LMAWS_LIVE_MAX_BUCKETS: "16"
+      LMAWS_LIVE_MAX_QUEUES: "16"
+      LMAWS_LIVE_JOURNAL_DIR: ${{ runner.temp }}/lmaws-live-journal
+    steps:
+      - name: Checkout lmaws
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: lmaws
+
+      - name: Checkout lmcloud
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: lmctl-ai/lmcloud
+          ref: live-names
+          path: lmcloud
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: lmaws/go.mod
+          cache-dependency-path: lmaws/go.sum
+
+      - name: Configure AWS OIDC credentials (arn:aws:iam::254332045686:role/lmcloud-conformance-ci)
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.1.0
+        with:
+          role-to-assume: arn:aws:iam::254332045686:role/lmcloud-conformance-ci
+          role-session-name: lmaws-live-conformance-${{ github.run_id }}
+          aws-region: us-east-1
+
+      - name: Prepare journal directory and campaign RUN_ID
+        run: |
+          mkdir -p "$LMAWS_LIVE_JOURNAL_DIR"
+          chmod 0700 "$LMAWS_LIVE_JOURNAL_DIR"
+          RAND_HEX="$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
+          RUN_ID="run-$(date -u +%s)-${RAND_HEX}"
+          echo "LMAWS_RUN_ID=${RUN_ID}" >> "$GITHUB_ENV"
+          echo "LMCLOUD_RUN_ID=${RUN_ID}" >> "$GITHUB_ENV"
+
+      - name: Build lmaws
+        working-directory: lmaws
+        run: |
+          mkdir -p bin
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/lmaws ./cmd/lmaws
+
+      - name: Run 23 live conformance scenarios
+        working-directory: lmaws
+        env:
+          LMCLOUD_DIR: ${{ github.workspace }}/lmcloud
+        run: |
+          ./scripts/live-conformance.sh "${{ inputs.suite || 'all' }}" "$LMAWS_RUN_ID"
+
+      - name: Always run LIFO sweeper with --apply
+        if: always()
+        working-directory: lmaws
+        run: |
+          if [[ -x ./bin/lmaws && -d "$LMAWS_LIVE_JOURNAL_DIR" ]]; then
+            ./bin/lmaws --sweep --apply --journal-dir "$LMAWS_LIVE_JOURNAL_DIR" "${LMAWS_RUN_ID:-}"
+          fi
+
+      - name: Upload live journal artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lmaws-live-journal-${{ github.run_id }}
+          path: ${{ runner.temp }}/lmaws-live-journal/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
