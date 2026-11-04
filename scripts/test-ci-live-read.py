@@ -6,7 +6,8 @@ GitHub OIDC), the caller must be an allowed role, and only the read checks run: 
 the admin profile and a caller or AWS_ROLE_ARN outside the allowlist stay refused; a refused request is never sent."""
 import http.server, os, pathlib, re, subprocess, sys, tempfile, threading, urllib.parse
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-JAR = ROOT / "target" / "lmaws-0.1.27.jar"
+VERSION = re.search(r"<artifactId>lmaws</artifactId><version>([0-9.]+)</version>", (ROOT / "pom.xml").read_text(encoding="utf-8")).group(1)
+JAR = ROOT / "target" / f"lmaws-{VERSION}.jar"
 ACCOUNT, ROLE = "000000000000", "lmaws-ci"
 ALLOWED = f"arn:aws:iam::{ACCOUNT}:role/{ROLE}"
 class Fake(http.server.BaseHTTPRequestHandler):

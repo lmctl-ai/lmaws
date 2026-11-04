@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """CLI, schema parity, failure codes and managed memory enforcement."""
-import hashlib,http.server,json,os,pathlib,struct,subprocess,sys,tempfile,threading,time,shutil
-root=pathlib.Path(__file__).resolve().parents[1];host=pathlib.Path(sys.argv[1]).resolve();env=dict(os.environ);env.pop('LMAWS_LIVE',None);env['CLASSPATH']=str(pathlib.Path(__file__).resolve().parents[1]/'target/lmaws-0.1.27.jar')
+import hashlib,http.server,json,os,pathlib,re,struct,subprocess,sys,tempfile,threading,time,shutil
+version=re.search(r'<artifactId>lmaws</artifactId><version>([0-9.]+)</version>',(pathlib.Path(__file__).resolve().parents[1]/'pom.xml').read_text(encoding='utf-8')).group(1) # set-version.sh writes the pom
+root=pathlib.Path(__file__).resolve().parents[1];host=pathlib.Path(sys.argv[1]).resolve();env=dict(os.environ);env.pop('LMAWS_LIVE',None);env['CLASSPATH']=str(pathlib.Path(__file__).resolve().parents[1]/('target/lmaws-'+version+'.jar'))
 with host.open('rb') as binary: is_elf=binary.read(4)==b'\x7fELF'
 LMSCRIPT=shutil.which('lmscript.cmd' if os.name=='nt' else 'lmscript') or 'lmscript'
 def script_command(*args): return (['cmd.exe','/c',LMSCRIPT] if os.name=='nt' and LMSCRIPT.lower().endswith('.cmd') else [LMSCRIPT])+list(args)
 def run(args,code=0,extra=None):
  p=subprocess.run(([str(host)] if host.suffix!='.cmd' else ['cmd.exe','/c',str(host)])+args,env=dict(env,**(extra or {})),text=True,encoding="utf-8",capture_output=True,timeout=120)
  assert p.returncode==code,(args,p.returncode,p.stdout[-1200:],p.stderr[-1200:]);return p
-assert run(['--version']).stdout=='lmaws 0.1.27\n'
+assert run(['--version']).stdout=='lmaws '+version+'\n'
 assert run(['--notices']).stdout==(root/'THIRD_PARTY_NOTICES').read_text(encoding="utf-8")
 assert 'LMAWS_MAX_MEMORY_MB' in run(['--help']).stdout
 assert '\u2014 AWS SDK' in run(['--help'],extra={'JAVA_TOOL_OPTIONS':'-Dstdout.encoding=windows-1252 -Dstderr.encoding=windows-1252'}).stdout
