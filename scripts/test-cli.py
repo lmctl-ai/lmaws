@@ -123,6 +123,11 @@ with tempfile.TemporaryDirectory(prefix='lmaws-cli-') as d:
  if sys.platform=='linux' and is_elf:
   import resource
   def limit():resource.setrlimit(resource.RLIMIT_AS,(6*1024**3,6*1024**3))
-  p=subprocess.run([str(host),'--lmcode',str(bytecode)],env=env,text=True,encoding="utf-8",capture_output=True,timeout=180,preexec_fn=limit)
+  # run_lmcode cannot set a host rlimit: a stand-in keeps the allocating program for the limited run below.
+  keeper=d/'keep.py';keeper.write_text('import shutil,sys\nshutil.copyfile(sys.argv[1],sys.argv[2])\nprint("LMCODE_RETURN_BEGIN\\n{\\"ok\\":true,\\"result\\":null}\\nLMCODE_RETURN_END")\n',encoding='utf-8')
+  allocating=d/'allocating.dslb'
+  keep=d/'keep.lms';keep.write_text(code.read_text(encoding='utf-8').split('end _lmcode_')[0]+'end _lmcode_\nr=run_lmcode(p,{command:'+json.dumps('"'+sys.executable+'" "'+str(keeper)+'" $DSLFILE "'+str(allocating)+'"')+'});assert(r.ok);\n',encoding='utf-8')
+  kept=subprocess.run(script_command(str(keep)),env=env,text=True,encoding='utf-8',capture_output=True,timeout=60);assert kept.returncode==0,kept.stderr
+  p=subprocess.run([str(host),'--lmcode',str(allocating)],env=env,text=True,encoding="utf-8",capture_output=True,timeout=180,preexec_fn=limit)
   assert p.returncode==3 and 'LMAWS_MAX_MEMORY_MB' in p.stdout,(p.returncode,p.stdout[-1000:],p.stderr[-1000:])
 print('PASS CLI, signatures, eight SDK groups, malformed input and memory limits')

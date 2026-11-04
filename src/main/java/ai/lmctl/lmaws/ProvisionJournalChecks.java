@@ -2,6 +2,11 @@ package ai.lmctl.lmaws;
 
 import java.io.IOException;
 import java.nio.file.*;
+import java.nio.file.attribute.AclEntry;
+import java.nio.file.attribute.AclEntryFlag;
+import java.nio.file.attribute.AclEntryPermission;
+import java.nio.file.attribute.AclEntryType;
+import java.nio.file.attribute.AclFileAttributeView;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.nio.file.attribute.UserPrincipal;
 import java.util.*;
@@ -11,6 +16,25 @@ public final class ProvisionJournalChecks {
     private static Path forbiddenPath;
     private static void check(boolean condition, String message) {
         if (!condition) throw new AssertionError(message);
+    }
+
+    /** A shared workspace: directories the journal creates are private; one that already exists stays refused and unrepaired. */
+    private static void windowsSharedParent(Path temp) throws Exception {
+        var view = Files.getFileAttributeView(temp, AclFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+        if (view == null) { System.out.println("SKIP shared parent regression: ACLs unavailable"); return; }
+        Path shared = temp.resolve("shared"); Files.createDirectory(shared);
+        var sharedView = Files.getFileAttributeView(shared, AclFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+        List<AclEntry> grants = new ArrayList<>(sharedView.getAcl());
+        grants.add(0, AclEntry.newBuilder().setType(AclEntryType.ALLOW).setPrincipal(shared.getFileSystem().getUserPrincipalLookupService().lookupPrincipalByName("Everyone"))
+            .setPermissions(AclEntryPermission.values()).setFlags(AclEntryFlag.FILE_INHERIT, AclEntryFlag.DIRECTORY_INHERIT).build());
+        sharedView.setAcl(grants);
+        Path existing = shared.resolve("existing"); Files.createDirectory(existing);
+        int before = Files.getFileAttributeView(existing, AclFileAttributeView.class, LinkOption.NOFOLLOW_LINKS).getAcl().size();
+        refused("directory_permissions", "configured-directory", "shared-existing", () -> ProvisionJournal.open("shared-existing", true, existing));
+        check(Files.getFileAttributeView(existing, AclFileAttributeView.class, LinkOption.NOFOLLOW_LINKS).getAcl().size() == before, "an existing shared directory was repaired");
+        try (ProvisionJournal journal = ProvisionJournal.open("shared-created", true, shared.resolve("created").resolve("host"))) {
+            check(Files.exists(shared.resolve("created").resolve("host").resolve("demo").resolve("shared-created.jsonl")), "journal missing under a shared parent");
+        }
     }
 
     private static boolean symlinksSupported() {
@@ -139,7 +163,10 @@ public final class ProvisionJournalChecks {
                 refused("directory_permissions", "canonical-mode-directory", "unsafe-mode-id", () -> ProvisionJournal.open("unsafe-mode-id", true, mode));
                 check(Files.getPosixFilePermissions(open).equals(PosixFilePermissions.fromString("rwxr-xr-x")), "permission test unexpectedly changed configured root");
                 check(Files.getPosixFilePermissions(modeDir).equals(PosixFilePermissions.fromString("rwxr-xr-x")), "permission test unexpectedly changed mode root");
-            } else System.out.println("SKIP POSIX permission regression: POSIX attributes unavailable");
+            } else {
+                System.out.println("SKIP POSIX permission regression: POSIX attributes unavailable");
+                windowsSharedParent(temp);
+            }
             Path privateBase = temp.resolve("private"); Files.createDirectory(privateBase); if (posixSupported()) Files.setPosixFilePermissions(privateBase, PosixFilePermissions.fromString("rwx------"));
             basicReplay(privateBase);
         } finally { forbiddenPath = null; deleteTree(temp); }

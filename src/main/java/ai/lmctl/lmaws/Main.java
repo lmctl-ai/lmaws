@@ -165,7 +165,7 @@ public final class Main {
                     Path input=Path.of(registration.file());
                     io.lmctl.lmcode.Program program=io.lmctl.lmcode.Program.load(Files.readAllBytes(input),schema,registry);
                     phase="run";program.run(context,registry);results.complete(index);
-                }catch(VmException failure){host.noteFailure(failure,safeError(failure),"");results.fail(index,phase,failure);break;}
+                }catch(VmException failure){host.noteFailure(failure,safeError(failure),"");results.fail(index,phase,safeError(failure).contains("memory budget")?new VmException(failure.code,"LMAWS_MAX_MEMORY_MB: "+failure.getMessage()):failure);break;}
                 catch(IOException failure){host.noteFailure(failure,safeError(failure),"");results.fail(index,phase,new VmException(phase.equals("load")?"LOAD_BAD_BYTECODE":"RUN_HOST",failure.getMessage()));break;}
                 catch(Exception|OutOfMemoryError failure){
                 String action="";

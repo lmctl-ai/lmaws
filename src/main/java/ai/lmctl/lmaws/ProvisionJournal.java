@@ -7,6 +7,7 @@ import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.nio.file.attribute.AclEntry;
 import java.nio.file.attribute.AclEntryFlag;
 import java.nio.file.attribute.AclEntryPermission;
 import java.nio.file.attribute.AclEntryType;
@@ -116,7 +117,7 @@ final class ProvisionJournal implements AutoCloseable {
         for(Path component:missing) {
             Path child=canonical.resolve(component);
             try {
-                if(windows())Files.createDirectory(child);
+                if(windows()){Files.createDirectory(child);restrictToOwner(child,pathClass);}
                 else Files.createDirectory(child,PosixFilePermissions.asFileAttribute(DIRECTORY_MODE));
             }
             catch(FileAlreadyExistsException raced) { /* Revalidate; never repair another directory. */ }
@@ -172,6 +173,13 @@ final class ProvisionJournal implements AutoCloseable {
         if(!attributes.isRegularFile()||!attributes.owner().equals(currentUser(file,pathClass))
             ||!attributes.permissions().equals(FILE_MODE))
             throw new PathFailure("file_permissions",pathClass,"expected_current_user_regular_0600");
+    }
+    /** A directory this journal just created: on Windows it would otherwise inherit its parent's shared grants. */
+    private static void restrictToOwner(Path created,String pathClass) throws IOException {
+        AclFileAttributeView view=Files.getFileAttributeView(created,AclFileAttributeView.class,LinkOption.NOFOLLOW_LINKS);
+        if(view==null)throw new PathFailure("directory_permissions",pathClass,"acl_unavailable");
+        view.setAcl(List.of(AclEntry.newBuilder().setType(AclEntryType.ALLOW).setPrincipal(Files.getOwner(created,LinkOption.NOFOLLOW_LINKS))
+            .setPermissions(AclEntryPermission.values()).setFlags(AclEntryFlag.FILE_INHERIT,AclEntryFlag.DIRECTORY_INHERIT).build()));
     }
     private static void requirePrivateAcl(Path path,String pathClass,UserPrincipal owner) throws IOException {
         AclFileAttributeView view=Files.getFileAttributeView(path,AclFileAttributeView.class,LinkOption.NOFOLLOW_LINKS);
