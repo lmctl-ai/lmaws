@@ -151,11 +151,9 @@ file_write("console.json", cloud.ec2_provision_console("demo-01"));
 file_write("terminate.json", cloud.ec2_provision_terminate("demo-01"));
 """
     try:
-        ledger_root = tempfile.mkdtemp(prefix="lmaws-provision-ledger-")
-        if os.name == "nt":
-            # Older Pythons leave the inherited ACL (shared write grants) on mkdtemp dirs; the journal requires a private one.
-            user = os.environ.get("USERDOMAIN", "") + "\\" + os.environ["USERNAME"]
-            subprocess.run(["icacls", ledger_root, "/inheritance:r", "/grant:r", user + ":(OI)(CI)F"], check=True, capture_output=True)
+        ledger_parent = tempfile.mkdtemp(prefix="lmaws-provision-ledger-")
+        # The host creates the journal directory itself: it refuses an existing one with shared ACL grants.
+        ledger_root = os.path.join(ledger_parent, "journal")
         runner = shutil.which("lmscript")
         if not runner:
             raise SystemExit("lmscript is required for the provisioning transport test")
@@ -172,7 +170,7 @@ file_write("terminate.json", cloud.ec2_provision_terminate("demo-01"));
                 path.write_text('s=load_schema(cli="java ai.lmctl.lmaws.Main");\np = _lmcode_ s;\n'+source+'\nend _lmcode_\nr=run_lmcode(p); println(json_stringify(r));\n')
                 runner=shutil.which("lmscript.cmd" if os.name=="nt" else "lmscript") or "lmscript"
                 runner_command=["cmd.exe","/c",runner] if os.name=="nt" and runner.lower().endswith(".cmd") else [runner]
-                env = dict(os.environ, LMAWS_ENDPOINT=f"http://127.0.0.1:{server.server_port}", LMAWS_LIVE="1", AWS_PROFILE=profile, AWS_REGION="us-east-1", CI="true", LMAWS_LEDGER_DIR=ledger_root, LMPROV_LEDGER_DIR=ledger_root,PATH=str(HOST and pathlib.Path(HOST[0] if isinstance(HOST,list) else HOST).parent if HOST else ROOT/"target/jvm-bin")+os.pathsep+os.environ.get("PATH",""))
+                env = dict(os.environ, LMAWS_ENDPOINT=f"http://127.0.0.1:{server.server_port}", LMAWS_LIVE="1", AWS_PROFILE=profile, AWS_REGION="us-east-1", CI="true", LMAWS_LEDGER_DIR=ledger_parent, LMPROV_LEDGER_DIR=ledger_root,PATH=str(HOST and pathlib.Path(HOST[0] if isinstance(HOST,list) else HOST).parent if HOST else ROOT/"target/jvm-bin")+os.pathsep+os.environ.get("PATH",""))
                 if crash:
                     process=subprocess.Popen(runner_command+[str(path)],cwd=td,env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
                     try:
@@ -297,7 +295,7 @@ file_write("terminate.json", cloud.ec2_provision_terminate("demo-01"));
     finally:
         server.shutdown(); server.server_close()
         if "schema_path" in locals(): schema_path.unlink(missing_ok=True)
-        if "ledger_root" in locals(): shutil.rmtree(ledger_root)
+        if "ledger_parent" in locals(): shutil.rmtree(ledger_parent)
 
 
 if __name__ == "__main__":
