@@ -1,3 +1,12 @@
+fn host_run(program,args,timeout_ms) {
+  let log=temp_file();
+  set_env("LMAWS_LOG_FILE",log);set_env("LMAWS_DEADLINE_MS",timeout_ms>0 ? str(timeout_ms) : "");
+  let e=run_lmcode(program,{args:args});
+  set_env("LMAWS_LOG_FILE","");set_env("LMAWS_DEADLINE_MS","");
+  let logged=read_file(log);remove_file(log);
+  if(e.ok) {return {code:0,stdout:logged,stderr:""};}
+  return {code:e.phase=="cli" ? 2 : e.phase=="app" ? 4 : 3,stdout:logged,stderr:str(e.code)+": "+str(e.message)};
+}
 let days = len(ARGV) > 0 ? num(ARGV[0]) : 30;
 let top_n = len(ARGV) > 1 ? num(ARGV[1]) : 10;
 let cap = len(ARGV) > 2 ? num(ARGV[2]) : 0.25;
@@ -9,8 +18,7 @@ aws = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let spend = aws.spend("ebs_audit", ${days}, ${top_n}, str_to_float(str(${cap})));
 spend.write(${root} + "/ebs_audit");
 end _lmcode_
-savedsl(aws, "ebs_audit-aws.dslb");
-r = system(concat(dsl_cli(aws), ["--lmcode", "ebs_audit-aws.dslb"]), {timeoutMs: 900000});
+r = host_run(aws, [], 900000);
 let spend_stdout = r.stdout;
 if (r.code != 0) { println(r.stdout); println(r.stderr); }
 if (r.code != 0) { println(r.stdout); println(r.stderr); }
@@ -21,8 +29,7 @@ plot.png(${image} + "/ebs_audit.png", 900, 560);
 plot.cmd("set datafile separator ','; set style data histograms; set style fill solid 0.85; set key off; set xtics rotate by -25 font ',10'; set bmargin 7; set grid ytics; plot '" + ${root} + "/ebs_audit/topic_chart.csv' using 2:xtic(1) title 'monthly saving USD'");
 plot.close();
 end _lmcode_
-savedsl(plot, "ebs_audit-plot.dslb");
-r = system ${dsl_cli(plot)} --lmcode "ebs_audit-plot.dslb";
+r = host_run(plot, [], 120000);
 if (r.code != 0) { println(r.stdout); println(r.stderr); }
 assert(r.code == 0);
 

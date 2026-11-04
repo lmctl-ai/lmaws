@@ -83,6 +83,15 @@ fn recipe_options_impl(argv,allow_admin) {
   o.admin_allowed=allow_admin;
   return recipe_normalize(o);
 }
+fn host_run(program,args,timeout_ms) {
+  let log=temp_file();
+  set_env("LMAWS_LOG_FILE",log);set_env("LMAWS_DEADLINE_MS",timeout_ms>0 ? str(timeout_ms) : "");
+  let e=run_lmcode(program,{args:args});
+  set_env("LMAWS_LOG_FILE","");set_env("LMAWS_DEADLINE_MS","");
+  let logged=read_file(log);remove_file(log);
+  if(e.ok) {return {code:0,stdout:logged,stderr:""};}
+  return {code:e.phase=="cli" ? 2 : e.phase=="app" ? 4 : 3,stdout:logged,stderr:str(e.code)+": "+str(e.message)};
+}
 fn recipe_run(program, options) {
   let o=recipe_normalize(options);
   assert(!o.preview);
@@ -92,21 +101,14 @@ fn recipe_run(program, options) {
     recipe_budget.reserved_units=recipe_budget.reserved_units+units;
   }
   mkdir(dirname(o.output),true);
-  let bytecode=temp_file();savedsl(program,bytecode);
-  let command=dsl_cli(program);
   let settings={AWS_PROFILE:o.profile,AWS_DEFAULT_PROFILE:o.profile,AWS_REGION:o.region,AWS_DEFAULT_REGION:o.region,LMAWS_LIVE:o.live ? "1":"0",LMAWS_APPLY:o.apply ? "1":"0",LMAWS_SPEND_LIVE:o.live ? "1":"0",LMAWS_MAX_COST_USD:str(o.cap),LMAWS_LEDGER_DIR:o.ledger_dir,LMAWS_EVIDENCE_DIR:".lmaws-local/recipes/evidence"};
+  settings.LMAWS_OFFLINE=o.live ? getenv("LMAWS_OFFLINE","") : "1";
   let fleet_config=str(get(o,"fleet_roles_spec",""));
   if(fleet_config!="") {settings.LMAWS_FLEET_ROLES_SPEC=fleet_config;}
   let previous={};
-  for(key in keys(settings)) {previous[key]=getenv(key,"");set_env(key,settings[key]);}
-  let cli_args=o.apply ? ["--apply","--lmcode",bytecode] : ["--lmcode",bytecode];
-  if(!o.live) {cli_args=concat(["--dry-run"],cli_args);}
-  let argv=concat(command,cli_args);
-  if(getenv("OS","")!="Windows_NT") {let pre=["env"];for(key in keys(settings)) {push(pre,key+"="+str(settings[key]));}argv=concat(pre,argv);}
-  else if(o.live) {for(key in keys(settings)) {if(getenv(key,"")!=str(settings[key])) {println("Live recipes on Windows: set "+key+"="+str(settings[key])+" in the parent environment first.");assert(false);}}}
-  let r=system(argv,{timeoutMs:o.timeout_ms});
+  for(key in keys(settings)) {previous[key]=getenv(key,"");set_env(key,str(settings[key]));}
+  let r=host_run(program,o.apply ? ["--apply"] : [],o.timeout_ms);
   for(key in keys(previous)) {set_env(key,previous[key]);}
-  remove_file(bytecode);
   if(r.code!=0) {println("Recipe host failed; see the host's sanitized diagnostic.");println(r.stderr);}
   let found=false;
   for(line in lines(r.stdout)) {
@@ -162,7 +164,7 @@ plot.cmd(${"set datafile separator ','; set title '"+chart_title+"'; unset key; 
 plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});
 plot.close();
 end _lmcode_
-  let code=temp_file();savedsl(chart,code);let r=system(concat(dsl_cli(chart),["--lmcode",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
+  let r=host_run(chart,[],120000);assert(r.code==0);
   println("images/"+name+".png");
 }
 
@@ -487,7 +489,7 @@ plot.cmd(${"set termoption noenhanced; set datafile separator ','; set title '" 
 plot.cmd(${"plot 'data/" + name + ".csv' every ::1" + using});
 plot.close();
 end _lmcode_
-  let code = temp_file(); savedsl(chart, code); let r = system(concat(dsl_cli(chart), ["--lmcode", code]), {timeoutMs:120000}); remove_file(code); assert(r.code == 0);
+  let r=host_run(chart,[],120000); assert(r.code == 0);
   println("images/" + name + ".png");
 }
 
@@ -503,7 +505,7 @@ plot.cmd(${cmds});
 plot.cmd("plot -10 notitle");
 plot.close();
 end _lmcode_
-  let code = temp_file(); savedsl(chart, code); let r = system(concat(dsl_cli(chart), ["--lmcode", code]), {timeoutMs:120000}); remove_file(code); assert(r.code == 0);
+  let r=host_run(chart,[],120000); assert(r.code == 0);
   println("images/" + name + ".png");
 }
 

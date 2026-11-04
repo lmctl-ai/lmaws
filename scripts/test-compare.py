@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory(prefix='lmaws-compare-tests-') as tmp:
  bootstrap=re.sub(r'download = system\(\[[^\n]+\], 60000\);',lambda match:response,bootstrap)
  bootstrap_file=tmp/'bootstrap.lms';bootstrap_file.write_text(bootstrap,encoding='utf-8')
  bootstrap_env=dict(env);bootstrap_env.pop('LMAWS_COMPARE_RUNTIME',None);bootstrap_env.pop('LMAWS_COMPARE_VERIFIER',None)
- boot=subprocess.run([shutil.which('lmscript'),'--no-preflight',str(bootstrap_file)],cwd=tmp,env=bootstrap_env,text=True,capture_output=True,timeout=45)
+ boot=subprocess.run([shutil.which('lmscript'),str(bootstrap_file)],cwd=tmp,env=bootstrap_env,text=True,capture_output=True,timeout=45)
  assert boot.returncode==0,boot.stderr
  assert (tmp/'comparison-main.tf').read_bytes()==(ROOT/'compare/bucket_objects/main.tf').read_bytes(), 'HCL interpolation changed the run-owned configuration'
  assert (tmp/'compare-runtime.py').read_text().strip()=='mock-helper'
@@ -94,12 +94,18 @@ with tempfile.TemporaryDirectory(prefix='lmaws-compare-tests-') as tmp:
   script=ROOT/'compare'/name/(name+'.lms');source=script.read_text()
   assert 'read_file("compare/' not in source
   assert 'tofu.destroy' in source and 'tofu.last_error' in source
-  check_script=script
-  if os.name=='nt':
-   check_script=fake/(name+'.lms')
-   check_script.write_text(re.sub(r'cli="lmcloud" install="github:lmctl-ai/lmcloud@[^"]+"', 'cli="python emit.py"', source),encoding='utf-8')
-  p=subprocess.run([shutil.which('lmscript'),'--check','--no-preflight',str(check_script)],cwd=fake,env=env,text=True,capture_output=True,timeout=45)
+ # --check reads no host: compile against the committed lmcloud schema.
+  check_script=fake/(name+'.lms')
+  check_script.write_text(re.sub(r'cli="lmcloud" install="github:lmctl-ai/lmcloud@[^"]+"', 'schema='+json.dumps((ROOT/'compare/lmcloud.dsl.json').as_posix()), source),encoding='utf-8')
+  p=subprocess.run([shutil.which('lmscript'),'--check',str(check_script)],cwd=fake,env=env,text=True,capture_output=True,timeout=45)
   assert p.returncode==0,(name,p.stderr[-2000:])
+ # The generated programs hand their bytecode to the runtime through a real run_lmcode.
+ keep=tmp/'keep.lms';kept=tmp/'kept.dslb'
+ command=json.dumps('"'+pathlib.Path(sys.executable).as_posix()+'" "'+(ROOT/'compare/runtime.py').as_posix()+'" --save $DSLFILE "'+kept.as_posix()+'"')
+ keep.write_text('p = _lmcode_ schema='+json.dumps((ROOT/'compare/lmcloud.dsl.json').as_posix())+';\nlet ok = tofu.init("infrastructure");\nend _lmcode_\nsaved = run_lmcode(p, {command: '+command+'});\nassert(saved.ok);\n',encoding='utf-8')
+ kept_run=subprocess.run([shutil.which('lmscript'),str(keep)],cwd=tmp,env=env,text=True,capture_output=True,timeout=45)
+ assert kept_run.returncode==0,kept_run.stderr
+ assert kept.read_bytes().startswith(b'DSLB'),'runtime --save did not keep the bytecode'
  # A provider apply error must still destroy and independently verify absence.
  original=pathlib.Path.cwd();work=tmp/'failure';work.mkdir();os.chdir(work)
  try:

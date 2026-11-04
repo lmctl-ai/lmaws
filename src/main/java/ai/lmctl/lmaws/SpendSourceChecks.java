@@ -70,17 +70,16 @@ public final class SpendSourceChecks {
             mode[0]="normal";CostLedger cap=new CostLedger("cap","cap","us-east-1",dir.resolve("cap.jsonl"),new BigDecimal("0.01"),false);
             try(var source=new SpendAwsSource(cap,endpoint,credentials)){source.costs(end.minusDays(1),end,"DAILY","SERVICE","",false);int before=operations.size();boolean refused=false;try{source.costs(end.minusDays(2),end,"DAILY","SERVICE","",false);}catch(CostLedger.BudgetExceeded e){refused=true;}if(!refused||before!=operations.size())throw new AssertionError("cap must refuse before HTTP");assertions++;}
             if(nativeBinary!=null){
-                mode[0]="normal";Path nativeDir=Files.createDirectories(dir.resolve("native"));Path schema=nativeDir.resolve("schema.json"),program=nativeDir.resolve("run.lms"),bytecode=nativeDir.resolve("run.dslb");
+                mode[0]="normal";Path nativeDir=Files.createDirectories(dir.resolve("native"));Path schema=nativeDir.resolve("schema.json"),program=nativeDir.resolve("run.lms");
                 ProcessBuilder schemaCommand=new ProcessBuilder(nativeBinary,"--lmcode-schema","--json").redirectOutput(schema.toFile()).redirectError(nativeDir.resolve("schema.log").toFile());
                 waitFor(schemaCommand.start(),60,"native schema");
-                String source="p = _lmcode_ schema="+Jsons.encode(schema.toString().replace('\\','/'))+";\nlet spend = aws.spend(\"all\",30,10,0.25);\nspend.write(\"native-report\");\nend _lmcode_\nsavedsl(p,"+Jsons.encode(bytecode.toString().replace('\\','/'))+");\n";
+                Map<String,String> live=new LinkedHashMap<>();live.put("AWS_PROFILE","default");live.put("AWS_DEFAULT_PROFILE","default");live.put("AWS_REGION","us-east-1");live.put("LMAWS_SPEND_REGIONS","us-east-1");live.put("LMAWS_ENDPOINT",endpoint.toString());live.put("LMAWS_SPEND_LIVE","1");live.put("LMAWS_LIVE","1");live.put("CI","true");
+                StringBuilder liveEnvText=new StringBuilder();live.forEach((k,v)->liveEnvText.append("set_env(").append(Jsons.encode(k)).append(",").append(Jsons.encode(v)).append(");\n"));String liveEnv=liveEnvText.toString();
+                String source="p = _lmcode_ schema="+Jsons.encode(schema.toString().replace('\\','/'))+";\nlet spend = aws.spend(\"all\",30,10,0.25);\nspend.write(\"native-report\");\nend _lmcode_\n"+liveEnv+"let r = run_lmcode(p,{command:"+Jsons.encode("\""+nativeBinary.replace('\\','/')+"\" --lmcode $DSLFILE")+"});\nif(!r.ok){println(r.code,r.message);}\nassert(r.ok);\n";
                 Files.writeString(program,source);
                 List<String> compile=new ArrayList<>();if(System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win"))compile.addAll(List.of("cmd.exe","/c"));compile.add(System.getenv().getOrDefault("LMSCRIPT_BIN","lmscript"));compile.add(program.toString());
                 ProcessBuilder compiler=new ProcessBuilder(compile).directory(nativeDir.toFile()).redirectOutput(nativeDir.resolve("compile.log").toFile()).redirectErrorStream(true);
-                compiler.environment().put("LMAWS_SPEND_LIVE","0");compiler.environment().put("LMAWS_LIVE","0");waitFor(compiler.start(),90,"native fixture compile");
-                ProcessBuilder run=new ProcessBuilder(nativeBinary,"--lmcode",bytecode.toString()).directory(nativeDir.toFile()).redirectOutput(nativeDir.resolve("run.log").toFile()).redirectErrorStream(true);
-                run.environment().putAll(Map.of("AWS_PROFILE","default","AWS_DEFAULT_PROFILE","default","AWS_REGION","us-east-1","LMAWS_SPEND_REGIONS","us-east-1","LMAWS_ENDPOINT",endpoint.toString(),"LMAWS_SPEND_LIVE","1","LMAWS_LIVE","1","CI","true"));
-                waitFor(run.start(),180,"native SDK fixture");
+                compiler.environment().put("LMAWS_SPEND_LIVE","0");compiler.environment().put("LMAWS_LIVE","0");waitFor(compiler.start(),240,"native SDK fixture");
                 var result=software.amazon.awssdk.protocols.jsoncore.JsonNodeParser.create().parse(Files.readString(nativeDir.resolve("native-report/report.json")));
                 if(!result.field("summary").orElseThrow().field("status").orElseThrow().asString().equals("complete"))throw new AssertionError("native SDK fixture returned incomplete report; inspect "+nativeDir);
                 assertions++;

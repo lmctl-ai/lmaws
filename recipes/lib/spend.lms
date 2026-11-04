@@ -63,9 +63,7 @@ plot.cmd(${"set datafile separator ','; set title '"+title+"'; set ylabel '"+uni
 plot.cmd(${"plot '" + chart + "' using 2:xtic(1) lc rgb '#5db7d1'"});
 plot.close();
 end _lmcode_
-  let path = temp_file(); savedsl(plot, path);
-  let r = system(concat(dsl_cli(plot), ["--lmcode", path]), {timeoutMs:120000});
-  remove_file(path); assert(r.code == 0);
+  let r=host_run(plot,[],120000); assert(r.code == 0);
   println("images/" + name + ".png");
   return "images/" + name + ".png";
 }

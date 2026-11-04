@@ -1085,6 +1085,16 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 | `cloud.session_doctor()` | Read-only profile session mapping, `0600` credential cache expiry/TTL, caller identity, and dry-run/read-only permission & guardrail probes (zero resources created, zero secrets exposed) |
 | `lmaws --credential-process <mode>` | CLI `credential_process` helper (`default`, `lmaws`, `lmaws-ec2`, `lmaws-web`): issues STS `GetFederationToken` (`awsspot-local-<mode>`, 3600s, `0600` file cache until 5m before expiry) from the isolated `agent-issuer` source profile (configurable; admin names refused by default) |
 
+A script runs a block with `run_lmcode(program, options)` and gets `{ok:true,result}` or
+`{ok:false,phase,code,message}` back. Three environment switches serve scripts that need more
+than that (set them with `set_env`; the run inherits them):
+
+| Variable | Effect |
+| --- | --- |
+| `LMAWS_OFFLINE=1` | Offline fixtures for this run, even with `LMAWS_LIVE=1` or `--apply`; no AWS request is made |
+| `LMAWS_LOG_FILE=path` | Host log lines go to this file; the terminal frame stays on stdout |
+| `LMAWS_DEADLINE_MS=n` | The host stops after n ms with exit 124 and no frame, which `run_lmcode` reports as a runtime error |
+
 ```lmscript
 mkdir("data");
 aws = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
@@ -1093,9 +1103,8 @@ let rows = cloud.instances();
 check(rows.len() == 3);
 rows.csv("data/instances.csv");
 end _lmcode_
-savedsl(aws, "inventory.dslb");
-r = system ${dsl_cli(aws)} --lmcode "inventory.dslb";
-assert(r.code == 0);
+r = run_lmcode(aws);
+assert(r.ok);
 ```
 
 Offline fixtures are selected explicitly with `aws.demo()`. Invocation-manifest dry mode skips host callbacks and returns typed dry values; it does not select simulated AWS data. `lmaws --sweep LEDGER_DIR --older-than-hours 24` lists stale `lmaws-*.jsonl` ledger candidates and never deletes account resources. Create the ledger directory before opening a run; explicit ledger filenames should also use that prefix and extension. Host invocations return one terminal frame and use exit 2 for command errors, 3 for load or execution errors, and 4 for application or output errors.

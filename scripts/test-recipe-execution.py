@@ -164,18 +164,19 @@ class RecipeExecutionTests(unittest.TestCase):
         self.assertFalse((self.work / "live.json").exists())
 
     def test_shared_live_budget_refuses_second_program_without_cloud_calls(self) -> None:
-        # Native --dry-run forces the Cloud fixture backend even while the outer
+        # LMAWS_OFFLINE forces the Cloud fixture backend even while the outer
         # recipe budget is in live mode. CI is also true: no AWS calls are possible.
         first=self.work/"first-marker"
         second=self.work/"second-marker"
         entry=self.work/"budget.lms"
         code='import '+json.dumps((ROOT/'recipes/lib/common.lms').as_posix())+';\n'
         for symbol,path in [('one',first),('two',second)]:
-            code+=symbol+' = _lmcode_ cli="lmaws --dry-run" install="github:lmctl-ai/lmaws@latest";\n'
+            code+=symbol+' = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";\n'
             code+='let cloud=aws.example("recipe_budget_fixture");\nfile_write('+json.dumps(str(path))+',"executed");\nend _lmcode_\n'
         code+='recipe_run(one,{live:true,cap:0.20,profile:"default",output:'+json.dumps((self.work/'one').as_posix())+'});\n'
         code+='recipe_run(two,{live:true,cap:0.06,profile:"default",output:'+json.dumps((self.work/'two').as_posix())+'});\n'
         entry.write_text(code)
+        self.env["LMAWS_OFFLINE"]="1"
         result=self.run_script(entry)
         self.assertNotEqual(result.returncode,0)
         self.assertIn("whole-run cap exceeded",result.stdout,result.stdout+result.stderr)

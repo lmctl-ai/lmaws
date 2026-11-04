@@ -35,7 +35,7 @@ for name in examples:
     assert data.startswith(b"\x89PNG\r\n\x1a\n"), image
     assert len(data) <= 300_000, image
     source = source_bundle(root / "examples" / f"{name}.lms")
-    assert "savedsl(" in source and re.search(r"assert\s*\(\s*r\.code\s*==\s*0\s*\)",source), name
+    assert "host_run(" in source and re.search(r"assert\s*\(\s*r\.code\s*==\s*0\s*\)",source), name
 assert len(re.findall(r"lmctl(?: autorun)? https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/", readme)) >= 30
 print(f"gallery: {len(examples)} examples and images verified")
 

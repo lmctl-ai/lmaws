@@ -14,6 +14,8 @@ public final class Main {
                lmaws --credential-process <default|lmaws|lmaws-ec2|lmaws-web> [--source-profile NAME] [--policy-file PATH] [--no-cache]
                lmaws --version | --notices | --help | --self-test
                lmaws --sweep LEDGER_DIR --older-than-hours N
+        Environment: LMAWS_OFFLINE=1 offline sessions (no AWS, never live or apply); LMAWS_LOG_FILE=PATH host log lines go there, the
+           result frame stays on stdout; LMAWS_DEADLINE_MS=N the host ends after N ms (nonzero, no result frame).
         lmcode context: aws.demo() (offline) or aws.region(\"\") (default profile/region).
         Live writes require AWS_PROFILE=lmaws (or lmaws-ec2 for the spot nano sandbox),
         a new ledger, prefixed names and ownership tags.
@@ -89,7 +91,22 @@ public final class Main {
         if(e instanceof VmException || e instanceof IllegalArgumentException || e instanceof IllegalStateException || e instanceof SecurityException) return Jsons.mask(e.getMessage()==null?e.getClass().getSimpleName():e.getMessage());
         return "operation failed ("+e.getClass().getSimpleName()+")";
     }
+    // run_lmcode forwards host stdout and has no deadline, so callers that used to read a captured stdout or set a system()
+    // timeout say so here. LMAWS_LOG_FILE takes the host's log lines (receipts, evidence, prints) and the terminal frame stays
+    // on stdout; LMAWS_DEADLINE_MS ends the host (the shutdown hook still tears down) with no frame, which callers see as a
+    // failed run; LMAWS_OFFLINE=1 makes every session offline, for a non-live preview outside protocol dry mode.
     static int run(String[] args) throws Exception {
+        PrintStream frameOutput=System.out;
+        try{return runHost(args,frameOutput);}finally{System.out.flush();if(System.out!=frameOutput){System.out.close();System.setOut(frameOutput);}}
+    }
+    private static void startDeadline() {
+        String raw=System.getenv("LMAWS_DEADLINE_MS");if(raw==null||raw.isBlank())return;
+        long millis;try{millis=Long.parseLong(raw.trim());}catch(NumberFormatException e){throw new IllegalArgumentException("LMAWS_DEADLINE_MS must be a positive number of milliseconds");}
+        if(millis<1)throw new IllegalArgumentException("LMAWS_DEADLINE_MS must be a positive number of milliseconds");
+        Thread watchdog=new Thread(()->{try{Thread.sleep(millis);}catch(InterruptedException e){return;}System.err.println("lmaws deadline reached after "+millis+" ms");System.exit(124);},"lmaws-deadline");
+        watchdog.setDaemon(true);watchdog.start();
+    }
+    private static int runHost(String[] args,PrintStream frameOutput) throws Exception {
         if(Arrays.asList(args).contains("--credential-process")) return CredentialProcess.runCli(args);
         List<String> remaining=new ArrayList<>();
         if(Arrays.asList(args).contains("--apply") || Arrays.asList(args).contains("--live") || Arrays.asList(args).contains("--profile") || Arrays.asList(args).contains("--region")) {
@@ -127,8 +144,12 @@ public final class Main {
         }
         InvocationResults results;
         try{results=InvocationResults.fromCommand(files);}catch(VmException e){return Reports.failureFrame("cli",e);}
-        System.setProperty("lmaws.dryRun",Boolean.toString(results.dry()));
-        if(results.dry()){System.clearProperty("lmaws.live");System.clearProperty("lmaws.apply");}
+        boolean offline=results.dry()||"1".equals(System.getenv("LMAWS_OFFLINE"));
+        System.setProperty("lmaws.dryRun",Boolean.toString(offline));
+        if(offline){System.clearProperty("lmaws.live");System.clearProperty("lmaws.apply");}
+        try{startDeadline();}catch(IllegalArgumentException e){return Reports.failureFrame("cli",new VmException("CLI_USAGE",e.getMessage()));}
+        String logFile=System.getenv("LMAWS_LOG_FILE");
+        if(logFile!=null&&!logFile.isBlank())System.setOut(new PrintStream(new FileOutputStream(logFile),true,java.nio.charset.StandardCharsets.UTF_8));
         CloudHost host=new CloudHost();
         Thread shutdown=new Thread(()->{try{host.emergencyWebCleanup();host.close();}catch(RuntimeException failure){System.err.println("lmaws teardown incomplete; inspect the run ledger");}},"lmaws-teardown");
         Runtime.getRuntime().addShutdownHook(shutdown);
@@ -153,7 +174,7 @@ public final class Main {
                 }
             }
             host.close();
-            return results.writeFrame(System.out);
+            return results.writeFrame(frameOutput);
         } finally {try{Runtime.getRuntime().removeShutdownHook(shutdown);}catch(IllegalStateException ignored){}}
     }
     public static void main(String[] args) {

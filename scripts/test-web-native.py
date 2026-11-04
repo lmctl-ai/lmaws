@@ -16,6 +16,8 @@ import signal
 import subprocess
 import tempfile
 import threading
+import json
+import sys
 from urllib.parse import urlsplit
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -94,6 +96,17 @@ class AwsFixture(http.server.BaseHTTPRequestHandler):
         return b'<Distribution xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/"><Id>EDFIXTURE</Id><ARN>arn:aws:cloudfront::000000000000:distribution/EDFIXTURE</ARN><Status>Deployed</Status><DomainName>dfixture.cloudfront.net</DomainName><DistributionConfig><CallerReference>fixture</CallerReference><Enabled>true</Enabled><Comment>lmweblab a1b2c3d4</Comment><DefaultRootObject>index.html</DefaultRootObject></DistributionConfig></Distribution>'
 
 
+SAVE_HOST = 'import shutil,sys\nshutil.copyfile(sys.argv[1],sys.argv[2])\nprint("LMCODE_RETURN_BEGIN\\n{\\"ok\\":true,\\"result\\":null}\\nLMCODE_RETURN_END")\n'
+
+
+def keep_bytecode(target: pathlib.Path) -> str:
+    """run_lmcode gives a program only to a host: this stand-in keeps it for the runs this test times and interrupts."""
+    save = target.parent / "keep-bytecode.py"
+    save.write_text(SAVE_HOST, encoding="utf-8")
+    command = f'"{pathlib.Path(sys.executable).as_posix()}" "{save.as_posix()}" $DSLFILE "{target.as_posix()}"'
+    return f"kept = run_lmcode(p, {{command: {json.dumps(command)}}});\nassert(kept.ok);"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=pathlib.Path, default=ROOT / "target" / "lmaws")
@@ -134,7 +147,7 @@ let distribution = web.step("distribution", "{{\\"run_id\\":\\"{RUN}\\"}}");
 let status = web.status();
 file_write("status.json", status.json());
 end _lmcode_
-savedsl(p, "{bytecode.as_posix()}");
+{keep_bytecode(bytecode)}
 ''', encoding="utf-8")
             env = dict(os.environ, AWS_PROFILE="lmaws", AWS_DEFAULT_PROFILE="lmaws", AWS_REGION="us-east-1", AWS_DEFAULT_REGION="us-east-1", LMAWS_LIVE="1", LMAWS_ENDPOINT=endpoint, AWS_EC2_METADATA_DISABLED="true", CI="true")
             compiled = subprocess.run(compiler_argv + [str(source)], cwd=workdir, env=env, text=True, capture_output=True, timeout=120)
@@ -166,7 +179,7 @@ let cloud = aws.example("web_native_foreign");
 let web = cloud.web_stack("{RUN}", "example.com", ".lmweblab-local/foreign.json");
 let bucket = web.step("bucket", "{{\\"run_id\\":\\"{RUN}\\",\\"site_dir\\":\\"{site.as_posix()}\\"}}");
 end _lmcode_
-savedsl(p, "{foreign_bytecode.as_posix()}");
+{keep_bytecode(foreign_bytecode)}
 ''', encoding="utf-8")
             compiled = subprocess.run(compiler_argv + [str(foreign_source)], cwd=workdir, env=env, text=True, capture_output=True, timeout=120)
             if compiled.returncode:
@@ -204,7 +217,7 @@ let cloud = aws.example("web_native_cap");
 let web = cloud.web_stack("{RUN}", "example.com", ".lmweblab-local/cap.json");
 let bucket = web.step("bucket", "{{\\"run_id\\":\\"{RUN}\\",\\"site_dir\\":\\"{site.as_posix()}\\"}}");
 end _lmcode_
-savedsl(p, "{cap_bytecode.as_posix()}");
+{keep_bytecode(cap_bytecode)}
 ''', encoding="utf-8")
             compiled = subprocess.run(compiler_argv + [str(cap_source)], cwd=workdir, env=cap_env, text=True, capture_output=True, timeout=120)
             if compiled.returncode:

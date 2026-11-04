@@ -1,4 +1,13 @@
 # Resource graph diagram with counts read from the host-generated file.
+fn host_run(program,args,timeout_ms) {
+  let log=temp_file();
+  set_env("LMAWS_LOG_FILE",log);set_env("LMAWS_DEADLINE_MS",timeout_ms>0 ? str(timeout_ms) : "");
+  let e=run_lmcode(program,{args:args});
+  set_env("LMAWS_LOG_FILE","");set_env("LMAWS_DEADLINE_MS","");
+  let logged=read_file(log);remove_file(log);
+  if(e.ok) {return {code:0,stdout:logged,stderr:""};}
+  return {code:e.phase=="cli" ? 2 : e.phase=="app" ? 4 : 3,stdout:logged,stderr:str(e.code)+": "+str(e.message)};
+}
 mkdir("images"); mkdir("data");
 aws = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("resource_graph");
@@ -6,8 +15,7 @@ let stores = cloud.buckets(); let queues = cloud.queues(); let workers = cloud.f
 if (cloud.is_demo()) { check(stores.len() == 3); } if (cloud.is_demo()) { check(queues.len() == 3); } if (cloud.is_demo()) { check(workers.len() == 3); }
 file_write("data/resource_graph.count", "stores=" + str(stores.len()) + ", queues=" + str(queues.len()) + ", functions=" + str(workers.len()));
 end _lmcode_
-savedsl(aws, "resource_graph-aws.dslb");
-r = system ${dsl_cli(aws)} --lmcode "resource_graph-aws.dslb";
+r = host_run(aws, [], 120000);
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 let cost_line = "";
@@ -28,8 +36,7 @@ scene.line(258.0, 250.0, 402.0, 250.0, "#f5c16c", 3.0).set_attr("marker-end", "a
 scene.line(498.0, 250.0, 642.0, 250.0, "#f5c16c", 3.0).set_attr("marker-end", "arrow");
 scene.render_png("images/resource_graph.png", 900, 560, 1);
 end _lmcode_
-savedsl(draw, "resource_graph-draw.dslb");
-r = system ${dsl_cli(draw)} --lmcode "resource_graph-draw.dslb";
+r = host_run(draw, [], 120000);
 if (r.code != 0) { println(r.stderr); println(r.stdout); }
 assert(r.code == 0);
 println("images/resource_graph.png");

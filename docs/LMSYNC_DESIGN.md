@@ -972,7 +972,7 @@ file_write(${ERROR_PATH}, response.error());
 file_write(${ETAG_PATH}, response.header("etag"));
 file_write(${DATE_PATH}, response.header("last-modified"));
 end _lmcode_
-# Existing savedsl/dsl_cli/system runs this block. The user script then:
+# run_lmcode runs this block. The user script then:
 # 200 with empty error -> validate saved result and record its actual fingerprint;
 # 304 -> retain/record only if the complete local copy is valid;
 # 404/410 -> record gone data, without an automatic local deletion;
@@ -1364,9 +1364,8 @@ The future picture labels actual API calls, recorded outcomes and any blocked st
 ## 7. One LMScript, two hosts; first milestone
 
 **Available today:** a `.lms` file can contain multiple `_lmcode_` / `_lmcode_` blocks,
-each compiled against its own `cli="host"` schema. `savedsl` writes bytecode;
-`dsl_cli(program)` returns the matching executable argv; `system(argv, timeout)`
-runs it. `${...}` interpolation supplies scalar strings/numbers/bools, so a file
+each compiled against its own `cli="host"` schema. `run_lmcode(program, options)` runs it on
+that host and returns the result envelope. `${...}` interpolation supplies scalar strings/numbers/bools, so a file
 path can bridge blocks. Schema-bound handles belong to their host process: do not
 pass a Registry/provider handle to another host, merge schemas blindly or assume that
 printing/serializing a compiled block transfers its live objects.
@@ -1390,14 +1389,13 @@ let RESULT_PATH = ".lmfiles-local/results.jsonl";
 let state_program = _lmcode_ cli="lmfiles";
   # future local scan/query API; user-written if/loop chooses instructions
 end _lmcode_
-savedsl(state_program, ".lmfiles-local/state.dslb");
-let a = system(concat(dsl_cli(state_program), ["--lmcode", ".lmfiles-local/state.dslb"]), 120000);
-assert(a.code == 0);
+let a = run_lmcode(state_program);
+assert(a.ok);
 
 let transfer_program = _lmcode_ cli="lmcurl";
   # current get/header/retry/send/save calls selected by user-written policy
 end _lmcode_
-# save and run the transfer host only if this script selected actions
+# run the transfer host only if this script selected actions
 
 let record_program = _lmcode_ cli="lmfiles";
   # future local record/log-replay API consumes confirmed RESULT_PATH projections

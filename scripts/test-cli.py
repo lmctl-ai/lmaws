@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """CLI, schema parity, failure codes and managed memory enforcement."""
-import hashlib,json,os,pathlib,struct,subprocess,sys,tempfile,shutil
+import hashlib,http.server,json,os,pathlib,struct,subprocess,sys,tempfile,threading,time,shutil
 root=pathlib.Path(__file__).resolve().parents[1];host=pathlib.Path(sys.argv[1]).resolve();env=dict(os.environ);env.pop('LMAWS_LIVE',None);env['CLASSPATH']=str(pathlib.Path(__file__).resolve().parents[1]/'target/lmaws-0.1.27.jar')
 with host.open('rb') as binary: is_elf=binary.read(4)==b'\x7fELF'
 LMSCRIPT=shutil.which('lmscript.cmd' if os.name=='nt' else 'lmscript') or 'lmscript'
@@ -74,6 +74,51 @@ with tempfile.TemporaryDirectory(prefix='lmaws-cli-') as d:
  guard.write_text('s=load_schema(cli=\"java ai.lmctl.lmaws.Main\");\np = _lmcode_ s;\nlet cloud=aws.example("profile_guard"); let run=cloud.example_run(); let q=run.queue("guard");\nend _lmcode_\nr=run_lmcode(p); assert(!r.ok && r.phase=="run");\n')
  compiled=subprocess.run(script_command(str(guard)),env=dict(env,LMAWS_LIVE='1',AWS_PROFILE='default',AWS_DEFAULT_PROFILE='default',AWS_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_LEDGER_DIR=str(d/'profile-ledgers'),LMAWS_EVIDENCE_DIR=str(d/'profile-evidence'),CI='false',LMAWS_ENDPOINT=''),text=True,encoding='utf-8',capture_output=True,timeout=60);assert compiled.returncode==0,(compiled.stdout,compiled.stderr)
  small=subprocess.run(script_command(str(code)),env=dict(env,LMAWS_MAX_MEMORY_MB='64'),text=True,encoding='utf-8',capture_output=True,timeout=60);assert small.returncode==0,small.stderr
+ # Host switches behind the scripts' host_run helper; each has a red control.
+ def lms(name,body,after,extra=None):
+  path=d/name;path.write_text('s=load_schema(cli=\"java ai.lmctl.lmaws.Main\");\np = _lmcode_ s;\n'+body+'\nend _lmcode_\n'+after+'\n',encoding='utf-8')
+  return subprocess.run(script_command(str(path)),env=dict(env,**(extra or {})),text=True,encoding='utf-8',capture_output=True,timeout=90)
+ log=d/'host.log'
+ def loud(name): return 'let spend = aws.spend("all",30,10,0.25);\nspend.write("'+(d/name).as_posix()+'");'
+ def spin(count): return 'let i = 0; while (i < '+str(count)+') { i = i + 1; }'
+ logged=lms('log.lms',loud('logged'),'r=run_lmcode(p);assert(r.ok);',{'LMAWS_LOG_FILE':str(log)})
+ assert logged.returncode==0,(logged.stdout,logged.stderr)
+ assert 'estimated cost:' in log.read_text(encoding='utf-8') and 'estimated cost:' not in logged.stdout,'LMAWS_LOG_FILE did not capture host stdout'
+ assert 'LMCODE_RETURN' not in log.read_text(encoding='utf-8'),'the terminal frame must stay on real stdout'
+ plain=lms('plain.lms',loud('plain'),'r=run_lmcode(p);assert(r.ok);')
+ assert plain.returncode==0 and 'estimated cost:' in plain.stdout,'red control: host stdout is forwarded without LMAWS_LOG_FILE'
+ failed=lms('log-fail.lms','check(1 == 2);','r=run_lmcode(p);assert(!r.ok);println("failure-is-data");',{'LMAWS_LOG_FILE':str(d/'fail.log')})
+ assert failed.returncode==0 and 'failure-is-data' in failed.stdout,'a failure frame was lost with LMAWS_LOG_FILE set'
+ assert 'LMCODE_RETURN' in run(['--lmcode',str(bad)],3,{'LMAWS_LOG_FILE':str(d/'bad.log')}).stdout,'a failure frame left stdout'
+ quick=lms('deadline-ok.lms',spin(100),'r=run_lmcode(p);assert(r.ok);',{'LMAWS_DEADLINE_MS':'60000'})
+ assert quick.returncode==0,'red control: a deadline that is not reached changes nothing'
+ unset=lms('deadline-unset.lms',spin(100),'r=run_lmcode(p);assert(r.ok);')
+ assert unset.returncode==0,'red control: no deadline by default'
+ for raw in ['0','-1','wat']:
+  sentinel.unlink(missing_ok=True)
+  assert 'CLI_USAGE' in run(['--lmcode',str(bytecode)],2,{'LMAWS_DEADLINE_MS':raw}).stdout,raw
+  assert not sentinel.exists(),'an invalid deadline must refuse before the program runs'
+ calls=[];hang=[0]
+ class Spy(http.server.BaseHTTPRequestHandler):
+  def do_POST(self):
+   calls.append(self.path);time.sleep(hang[0]);self.send_response(500);self.send_header('Content-Length','0');self.end_headers()
+  do_GET=do_POST
+  def log_message(self,*args):pass
+ spy=http.server.ThreadingHTTPServer(('127.0.0.1',0),Spy);threading.Thread(target=spy.serve_forever,daemon=True).start()
+ online={k:v for k,v in env.items() if k not in ('CI','GITHUB_ACTIONS')}
+ online.update(LMAWS_LIVE='1',LMAWS_ENDPOINT='http://127.0.0.1:%d'%spy.server_address[1],AWS_ACCESS_KEY_ID='poc-test-invalid',AWS_SECRET_ACCESS_KEY='poc-test-invalid',AWS_REGION='us-east-1',AWS_EC2_METADATA_DISABLED='true',LMAWS_LEDGER_DIR=str(d/'spy-ledgers'))
+ reader='let cloud=aws.region("us-east-1"); let who=cloud.identity();'
+ def spied(name,offline,extra=None):
+  path=d/name;path.write_text('s=load_schema(cli=\"java ai.lmctl.lmaws.Main\");\np = _lmcode_ s;\n'+reader+'\nend _lmcode_\nr=run_lmcode(p);println("ok="+str(r.ok));\n',encoding='utf-8')
+  return subprocess.run(script_command(str(path)),env=dict(online,**({'LMAWS_OFFLINE':'1'} if offline else {}),**(extra or {})),text=True,encoding='utf-8',capture_output=True,timeout=90)
+ calm=spied('offline.lms',True);assert calm.returncode==0 and 'ok=true' in calm.stdout,(calm.stdout,calm.stderr)
+ assert not calls,('LMAWS_OFFLINE reached the endpoint',calls)
+ spied('online.lms',False);assert calls,'red control: without LMAWS_OFFLINE this program calls AWS'
+ hang[0]=30;started=time.monotonic()
+ slow=spied('deadline.lms',False,{'LMAWS_DEADLINE_MS':'1500'})
+ assert slow.returncode!=0 and 'ok=' not in slow.stdout and 'deadline reached' in slow.stdout+slow.stderr,(slow.stdout,slow.stderr)
+ assert time.monotonic()-started<25,'LMAWS_DEADLINE_MS did not stop a host waiting on AWS'
+ spy.shutdown();spy.server_close()
  if sys.platform=='linux' and is_elf:
   import resource
   def limit():resource.setrlimit(resource.RLIMIT_AS,(6*1024**3,6*1024**3))
