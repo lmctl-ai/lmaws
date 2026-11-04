@@ -96,7 +96,7 @@ class AwsFixture(http.server.BaseHTTPRequestHandler):
         return b'<Distribution xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/"><Id>EDFIXTURE</Id><ARN>arn:aws:cloudfront::000000000000:distribution/EDFIXTURE</ARN><Status>Deployed</Status><DomainName>dfixture.cloudfront.net</DomainName><DistributionConfig><CallerReference>fixture</CallerReference><Enabled>true</Enabled><Comment>lmweblab a1b2c3d4</Comment><DefaultRootObject>index.html</DefaultRootObject></DistributionConfig></Distribution>'
 
 
-SAVE_HOST = 'import shutil,sys\nshutil.copyfile(sys.argv[1],sys.argv[2])\nprint("LMCODE_RETURN_BEGIN\\n{\\"ok\\":true,\\"result\\":null}\\nLMCODE_RETURN_END")\n'
+SAVE_HOST = 'import shutil,sys\nshutil.copyfile(sys.argv[1],sys.argv[2])\nsys.stdout.buffer.write(b"LMCODE_RETURN_BEGIN\\n{\\"ok\\":true,\\"result\\":null}\\nLMCODE_RETURN_END\\n")\n'
 
 
 def keep_bytecode(target: pathlib.Path) -> str:

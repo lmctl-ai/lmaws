@@ -106,7 +106,7 @@ def phase_error(phase,error):
 def main():
     # run_lmcode gives a program only to a host: this stand-in keeps the bytecode for the phases run below.
     if len(sys.argv)==4 and sys.argv[1]=='--save':
-        shutil.copyfile(sys.argv[2],sys.argv[3]);print('LMCODE_RETURN_BEGIN\n{"ok":true,"result":null}\nLMCODE_RETURN_END');return
+        shutil.copyfile(sys.argv[2],sys.argv[3]);sys.stdout.buffer.write(b'LMCODE_RETURN_BEGIN\n{"ok":true,"result":null}\nLMCODE_RETURN_END\n');return
     ap=argparse.ArgumentParser();ap.add_argument('--name',required=True);ap.add_argument('--host',required=True);ap.add_argument('--config',required=True);ap.add_argument('--metadata',required=True);args=ap.parse_args()
     metadata=json.loads(args.metadata);is_write=metadata['write'];live=os.getenv('LMAWS_LIVE')=='1'
     profile=os.getenv('AWS_PROFILE') or os.getenv('AWS_DEFAULT_PROFILE') or 'default'
