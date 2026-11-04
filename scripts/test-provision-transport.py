@@ -152,6 +152,10 @@ file_write("terminate.json", cloud.ec2_provision_terminate("demo-01"));
 """
     try:
         ledger_root = tempfile.mkdtemp(prefix="lmaws-provision-ledger-")
+        if os.name == "nt":
+            # Older Pythons leave the inherited ACL (shared write grants) on mkdtemp dirs; the journal requires a private one.
+            user = os.environ.get("USERDOMAIN", "") + "\\" + os.environ["USERNAME"]
+            subprocess.run(["icacls", ledger_root, "/inheritance:r", "/grant:r", user + ":(OI)(CI)F"], check=True, capture_output=True)
         runner = shutil.which("lmscript")
         if not runner:
             raise SystemExit("lmscript is required for the provisioning transport test")
