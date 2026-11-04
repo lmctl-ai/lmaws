@@ -51,7 +51,7 @@ Rules enforced by the host (not only by IAM):
   `resource_exists("bucket"|"table", ...)`). The check runs per request in the SDK, before anything is sent: any other
   call fails with `<service>:<operation> is refused in CI: LMAWS_OIDC_ALLOWED_ROLE allows only [...]`. Writes,
   inventory listings, object reads, IAM role access, the `admin` profile, live spend, fleet roles and EBS resizing all
-  stay refused in CI. Without the allowlist nothing changes: the blanket CI refusal applies.
+  stay refused in this mode. Without the allowlist lmaws does not treat CI specially: live AWS in CI is the user's choice, so nothing is refused and there is no read-only filter.
   Tested by `scripts/test-ci-live-read.py` (loopback fake, no AWS).
 
   A GitHub job: `permissions: id-token: write`; `aws-actions/configure-aws-credentials` with `role-to-assume` (or the

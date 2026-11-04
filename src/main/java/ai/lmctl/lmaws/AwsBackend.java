@@ -171,8 +171,8 @@ public final class AwsBackend implements AutoCloseable {
         if (cost != null) configBuilder.addExecutionInterceptor(new CostInterceptor(cost));
         String endpointText = System.getenv("LMAWS_ENDPOINT");
         this.endpoint = endpointText == null || endpointText.isBlank() ? null : checkedEndpoint(endpointText);
-        // CI live reads, the OIDC mode (LMAWS_OIDC_ALLOWED_ROLE): in CI, live AWS is refused unless an allowlist of role
-        // ARNs is set. With it the credentials come from the OIDC source only (ciCredentials: AWS_WEB_IDENTITY_TOKEN_FILE +
+        // CI live reads, the OIDC mode (LMAWS_OIDC_ALLOWED_ROLE): live AWS in CI is the user's choice, not the tool's, so it is
+        // never refused. Setting an allowlist of role ARNs is an opt-in read-only mode. With it the credentials come from the OIDC source only (ciCredentials: AWS_WEB_IDENTITY_TOKEN_FILE +
         // AWS_ROLE_ARN, or the environment keys aws-actions/configure-aws-credentials exports; no profile), the caller (STS GetCallerIdentity) must be one of the allowed roles, and every request any
         // client of this backend sends must be one of CI_READ_OPERATIONS (checked per request by the SDK interceptor, so no
         // code path can write). The admin profile is refused. Applied whenever it is set in CI, a fake endpoint included.
@@ -187,8 +187,6 @@ public final class AwsBackend implements AutoCloseable {
             configBuilder.addExecutionInterceptor(new CiReadOnlyInterceptor());
         }
         this.config = configBuilder.build();
-        if (!demo && endpoint == null && ciEnvironment() && !ciLiveRead)
-            throw new IllegalStateException("live AWS credentials are disabled in CI; use a loopback fake endpoint (or " + CI_ROLES_ENV + " for read-only checks by an allowed role)");
         if (ciLiveRead) {
             String caller = sts().getCallerIdentity(GetCallerIdentityRequest.builder().build()).arn();
             if (!ciRoleAllowed(caller, ciAllowedRoles)) throw new IllegalStateException("the caller's role is not in " + CI_ROLES_ENV + "; refused in CI");

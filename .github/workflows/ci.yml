@@ -1,5 +1,7 @@
 name: ci
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 env:
   PYTHONUTF8: '1'
@@ -11,8 +13,27 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 jobs:
+  version:
+    # Push to main builds, tests and releases the next patch version (one pipeline: push -> build -> test -> release).
+    name: version
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      next: ${{ steps.v.outputs.next }}
+    steps:
+      - id: v
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          IFS=. read -r a b c <<< "${latest#v}"
+          echo "latest release $latest"
+          echo "next=$a.$b.$((c + 1))" >> "$GITHUB_OUTPUT"
   native:
     name: ${{ matrix.name }}
+    needs: version
     runs-on: ${{ matrix.os }}
     timeout-minutes: 80
     strategy:
@@ -50,6 +71,8 @@ jobs:
           node-version: 24
       - name: Pinned script compiler
         run: npm install -g @lmctl-ai/lmctl@0.2.458
+      - name: Set the version this run builds and releases
+        run: bash scripts/set-version.sh "${{ needs.version.outputs.next }}"
       - name: JVM, fake endpoints and examples
         timeout-minutes: 25
         run: bash test.sh
@@ -77,8 +100,8 @@ jobs:
   release:
     # Publish when the four Linux/macOS lanes produced binaries even if the Windows lane failed
     # (Windows may be a stub early); a missing Windows asset is stated in the release notes.
-    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
-    needs: native
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+    needs: [version, native]
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     permissions:
@@ -97,4 +120,5 @@ jobs:
           notes='AWS SDK for Java v2 scripting host. Native executables; no Java installation required. Linux: glibc >= 2.35. Windows: Microsoft VC++ runtime. Offline examples and fake-endpoint CI; live writes require opt-in and a run-owned ledger.'
           if ! ls lmaws-windows-x64* >/dev/null 2>&1; then notes="$notes This release has no Windows binary: the Windows lane failed; use the previous release on Windows."; fi
           sha256sum lmaws-* > SHA256SUMS
-          timeout 180 gh release create "$GITHUB_REF_NAME" lmaws-* SHA256SUMS --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "$notes"
+          tag="v${{ needs.version.outputs.next }}"
+          timeout 180 gh release create "$tag" lmaws-* SHA256SUMS --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$tag" --notes "$notes"
