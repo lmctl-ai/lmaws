@@ -1087,12 +1087,12 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 ```lmscript
 mkdir("data");
-aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+aws = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("inventory");
 let rows = cloud.instances();
 check(rows.len() == 3);
 rows.csv("data/instances.csv");
-end _dsl_
+end _lmcode_
 savedsl(aws, "inventory.dslb");
 r = system ${dsl_cli(aws)} --lmcode "inventory.dslb";
 assert(r.code == 0);

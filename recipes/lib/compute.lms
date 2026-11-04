@@ -39,11 +39,11 @@ fn recipe_fleet_status(options) {
   let o = recipe_normalize(options);
   if (o.preview) { return recipe_preview(o, "fleet_status"); }
   let out = _compute_output(o, "fleet_status");
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_fleet_status");
 file_write(${out + ".instances.raw.json"}, cloud.ec2_instances(${o.tag_key}, ${o.tag_value}).json());
 file_write(${out + ".addresses.raw.json"}, cloud.addresses().json());
-end _dsl_
+end _lmcode_
   let result = recipe_run(p, o);
   let addresses = json_parse(read_file(out + ".addresses.raw.json"));
   let rows = [];
@@ -73,10 +73,10 @@ fn recipe_cpu_credits(options) {
   let rows = []; let result = fleet.result;
   if (len(ids) > 0) {
     let csv = join(ids, ",");
-    let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+    let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_cpu_credits");
 file_write(${out + ".metrics.raw.json"}, cloud.cpu_credits(${csv}, ${o.hours}).json());
-end _dsl_
+end _lmcode_
     result = recipe_run(p, o);
     let metrics = json_parse(read_file(out + ".metrics.raw.json"));
     for (id in ids) {
@@ -106,11 +106,11 @@ fn recipe_eip_map(options) {
   let o = recipe_normalize(options);
   if (o.preview) { return recipe_preview(o, "eip_map"); }
   let out = _compute_output(o, "eip_map");
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_eip_map");
 file_write(${out + ".addresses.raw.json"}, cloud.addresses().json());
 file_write(${out + ".instances.raw.json"}, cloud.ec2_instances("", "").json());
-end _dsl_
+end _lmcode_
   let result = recipe_run(p, o);
   let instances = json_parse(read_file(out + ".instances.raw.json"));
   let rows = []; let idle = 0;
@@ -141,13 +141,13 @@ fn recipe_ami_lookup(options) {
   assert(!o.live || o.profile == "lmaws-ec2", "the live AMI lookup needs --profile lmaws-ec2 (the default profile cannot read SSM parameters)");
   let out = _compute_output(o, "ami_lookup");
   let params = recipe_ami_parameters();
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_ami_lookup");
 file_write(${out + ".0.raw"}, cloud.public_parameter(${params[0].parameter}));
 file_write(${out + ".1.raw"}, cloud.public_parameter(${params[1].parameter}));
 file_write(${out + ".2.raw"}, cloud.public_parameter(${params[2].parameter}));
 file_write(${out + ".3.raw"}, cloud.public_parameter(${params[3].parameter}));
-end _dsl_
+end _lmcode_
   let result = recipe_run(p, o);
   let rows = []; let i = 0;
   for (param in params) { push(rows, merge(param, {kind:"ami", ami:trim(read_file(out + "." + str(i) + ".raw"))})); i = i + 1; }
@@ -158,10 +158,10 @@ fn recipe_spot_prices(options) {
   let o = recipe_normalize(options);
   if (o.preview) { return recipe_preview(o, "spot_prices"); }
   let out = _compute_output(o, "spot_prices");
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_spot_prices");
 file_write(${out + ".raw.json"}, cloud.spot_prices(${o.types}, ${o.hours}).json());
-end _dsl_
+end _lmcode_
   let result = recipe_run(p, o);
   let prices = json_parse(read_file(out + ".raw.json"));
   let cheapest = [];
@@ -184,11 +184,11 @@ fn recipe_ebs_roots(options) {
   let o = recipe_normalize(options);
   if (o.preview) { return recipe_preview(o, "ebs_roots"); }
   let out = _compute_output(o, "ebs_roots");
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_ebs_roots");
 file_write(${out + ".volumes.raw.json"}, cloud.volumes().json());
 file_write(${out + ".instances.raw.json"}, cloud.ec2_instances("", "").json());
-end _dsl_
+end _lmcode_
   let result = recipe_run(p, o);
   let instances = json_parse(read_file(out + ".instances.raw.json"));
   let rows = []; let gib = 0;
@@ -228,13 +228,13 @@ fn recipe_spot_nano_lifecycle(options) {
   }
   assert(!o.live || (o.apply && o.profile == "lmaws-ec2"), "a live spot sandbox needs --live --apply --profile lmaws-ec2");
   let out = _compute_output(o, "spot_nano_lifecycle");
-  let p1 = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p1 = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_spot_plan");
 file_write(${out + ".subnets.raw.json"}, cloud.subnets().json());
 file_write(${out + ".prices.raw.json"}, cloud.spot_prices("t4g.nano,t3.nano", 3).json());
 file_write(${out + ".ami_arm64.raw"}, cloud.public_parameter("/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"));
 file_write(${out + ".ami_x86.raw"}, cloud.public_parameter("/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"));
-end _dsl_
+end _lmcode_
   recipe_run(p1, o);
   let subnets = json_parse(read_file(out + ".subnets.raw.json"));
   let prices = json_parse(read_file(out + ".prices.raw.json"));
@@ -249,7 +249,7 @@ end _dsl_
   let ami1 = first.type == "t4g.nano" ? arm : x86; let ami2 = second.type == "t4g.nano" ? arm : x86; let ami3 = x86;
   println("plan:", first.type, first.az, "spot", first.price, "max", first.max_price, "| then:", second.type, second.az, "| then:", third.type, third.az);
   let o2 = merge(o, {timeout_ms:780000});
-  let p2 = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p2 = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_spot_nano_lifecycle");
 let spot = cloud.spot_run();
 let sg = spot.security_group(${first.vpc});
@@ -278,7 +278,7 @@ file_write(${out + ".leftovers.json"}, spot.leftovers().json());
 file_write(${out + ".price.raw"}, str(spot.spot_price()));
 file_write(${out + ".cost.raw"}, str(spot.estimated_cost()));
 file_write(${out + ".denied.raw"}, spot.denied_action());
-end _dsl_
+end _lmcode_
   let result = recipe_run(p2, o2);
   let launch = json_parse(read_file(out + ".launch1.json"));
   let attempts = [launch.type + " " + launch.status];
@@ -326,12 +326,12 @@ fn recipe_compute_chart(name, title, ylabel, header, rows, colors) {
     using = using + " using " + str(i) + (i == 2 ? ":xtic(1)" : "") + " title '" + header[i - 1] + "' lc rgb '" + colors[(i - 2) % len(colors)] + "'";
     i = i + 1;
   }
-  let chart = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+  let chart = _lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${"images/" + name + ".png"}, 900, 560);
 plot.cmd(${"set termoption noenhanced; set datafile separator ','; set title '" + title + "'; set ylabel '" + ylabel + "'; set style data histograms; set style histogram clustered gap 1; set style fill solid 0.85 border -1; set boxwidth 0.9; set grid ytics; set yrange [0:*]; set offsets 0, 0, graph 0.12, 0; " + (len(header) == 2 ? "unset key" : "set key top right") + "; set xtics rotate by -25; set bmargin 6; set rmargin 10"});
 plot.cmd(${"plot 'data/" + name + ".csv' every ::1" + using});
 plot.close();
-end _dsl_
+end _lmcode_
   let code = temp_file(); savedsl(chart, code); let r = system(concat(dsl_cli(chart), ["--lmcode", code]), {timeoutMs:120000}); remove_file(code); assert(r.code == 0);
   println("images/" + name + ".png");
 }
@@ -342,12 +342,12 @@ fn recipe_compute_table(name, title, lines_of_text) {
   let cmds = "set termoption noenhanced; set title '" + title + "' font ',16'; unset border; unset tics; unset key; set xrange [0:1]; set yrange [0:" + str(len(lines_of_text) + 1) + "]";
   let i = 0;
   for (text in lines_of_text) { cmds = cmds + "; set label " + str(i + 1) + " '" + text + "' at 0.04," + str(len(lines_of_text) - i) + " font 'DejaVu Sans Mono,13'"; i = i + 1; }
-  let chart = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+  let chart = _lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${"images/" + name + ".png"}, 900, 360);
 plot.cmd(${cmds});
 plot.cmd("plot -10 notitle");
 plot.close();
-end _dsl_
+end _lmcode_
   let code = temp_file(); savedsl(chart, code); let r = system(concat(dsl_cli(chart), ["--lmcode", code]), {timeoutMs:120000}); remove_file(code); assert(r.code == 0);
   println("images/" + name + ".png");
 }

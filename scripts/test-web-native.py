@@ -126,14 +126,14 @@ def main() -> None:
             (site / "banner.png").write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/3s9cWQAAAABJRU5ErkJggg=="))
             cli = host.as_posix()
             source.write_text(
-                f'''p = _dsl_ cli="{cli}";
+                f'''p = _lmcode_ cli="{cli}";
 let cloud = aws.example("web_native_smoke");
 let web = cloud.web_stack("{RUN}", "example.com", ".lmweblab-local/state.json");
 let bucket = web.step("bucket", "{{\\"run_id\\":\\"{RUN}\\",\\"site_dir\\":\\"{site.as_posix()}\\"}}");
 let distribution = web.step("distribution", "{{\\"run_id\\":\\"{RUN}\\"}}");
 let status = web.status();
 file_write("status.json", status.json());
-end _dsl_
+end _lmcode_
 savedsl(p, "{bytecode.as_posix()}");
 ''', encoding="utf-8")
             env = dict(os.environ, AWS_PROFILE="lmaws", AWS_DEFAULT_PROFILE="lmaws", AWS_REGION="us-east-1", AWS_DEFAULT_REGION="us-east-1", LMAWS_LIVE="1", LMAWS_ENDPOINT=endpoint, AWS_EC2_METADATA_DISABLED="true", CI="true")
@@ -161,11 +161,11 @@ savedsl(p, "{bytecode.as_posix()}");
             foreign_source = workdir / "foreign.lms"
             foreign_bytecode = workdir / "foreign.dslb"
             foreign_source.write_text(
-                f'''p = _dsl_ cli="{cli}";
+                f'''p = _lmcode_ cli="{cli}";
 let cloud = aws.example("web_native_foreign");
 let web = cloud.web_stack("{RUN}", "example.com", ".lmweblab-local/foreign.json");
 let bucket = web.step("bucket", "{{\\"run_id\\":\\"{RUN}\\",\\"site_dir\\":\\"{site.as_posix()}\\"}}");
-end _dsl_
+end _lmcode_
 savedsl(p, "{foreign_bytecode.as_posix()}");
 ''', encoding="utf-8")
             compiled = subprocess.run(compiler_argv + [str(foreign_source)], cwd=workdir, env=env, text=True, capture_output=True, timeout=120)
@@ -199,11 +199,11 @@ savedsl(p, "{foreign_bytecode.as_posix()}");
             cap_source = workdir / "cap.lms"
             cap_bytecode = workdir / "cap.dslb"
             cap_source.write_text(
-                f'''p = _dsl_ cli="{cli}";
+                f'''p = _lmcode_ cli="{cli}";
 let cloud = aws.example("web_native_cap");
 let web = cloud.web_stack("{RUN}", "example.com", ".lmweblab-local/cap.json");
 let bucket = web.step("bucket", "{{\\"run_id\\":\\"{RUN}\\",\\"site_dir\\":\\"{site.as_posix()}\\"}}");
-end _dsl_
+end _lmcode_
 savedsl(p, "{cap_bytecode.as_posix()}");
 ''', encoding="utf-8")
             compiled = subprocess.run(compiler_argv + [str(cap_source)], cwd=workdir, env=cap_env, text=True, capture_output=True, timeout=120)

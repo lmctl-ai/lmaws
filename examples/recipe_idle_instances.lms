@@ -148,12 +148,12 @@ fn recipe_picture(rows,title,name) {
   let chart_title="Synthetic: "+regex_replace(str(title),"[^A-Za-z0-9 ,.:()/+-]","","g");
   if(len(chart_title)>80) {chart_title=substr(chart_title,0,77)+"...";}
   write_file("data/"+name+".csv",data);
-  let chart=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+  let chart=_lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${"images/"+name+".png"},900,560);
 plot.cmd(${"set datafile separator ','; set title '"+chart_title+"'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.6; set yrange [0:"+str(max_count+1)+"]; set ytics 1; set ylabel 'count of resources'; set grid ytics; set xtics rotate by -30"});
 plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});
 plot.close();
-end _dsl_
+end _lmcode_
   let code=temp_file();savedsl(chart,code);let r=system(concat(dsl_cli(chart),["--lmcode",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
   println("images/"+name+".png");
 }
@@ -165,7 +165,7 @@ fn recipe_inventory(options) {
   let output = str(o.output);
   assert(contains(["identity", "buckets", "instances", "vpcs", "security_groups", "tables", "queues", "topics", "functions", "log_groups", "alarms", "zones", "secrets", "parameters", "clusters", "roles"],o.task) || o.task=="all");
   assert(!o.live || (o.task!="identity" && o.task!="roles" && o.profile!="admin"), "live inventory skips IAM identity/roles (federated sessions cannot call IAM) and never uses the admin profile");
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_inventory");
 if ((${o.task} == "identity" || ${o.task} == "all") && !${o.live}) { file_write(${output + ".identity.raw.json"}, cloud.identity().json()); }
 if ((${o.task} == "buckets" || ${o.task} == "all")) { file_write(${output + ".buckets.raw.json"}, cloud.buckets().json()); }
@@ -183,7 +183,7 @@ if ((${o.task} == "secrets" || ${o.task} == "all")) { file_write(${output + ".se
 if ((${o.task} == "parameters" || ${o.task} == "all")) { file_write(${output + ".parameters.raw.json"}, cloud.parameters().json()); }
 if ((${o.task} == "clusters" || ${o.task} == "all")) { file_write(${output + ".clusters.raw.json"}, cloud.clusters().json()); }
 if ((${o.task} == "roles" || ${o.task} == "all") && !${o.live}) { file_write(${output + ".roles.raw.json"}, cloud.roles().json()); }
-end _dsl_
+end _lmcode_
   let result = recipe_run(p, o);
   let selected = [];
   let task = str(o.task);

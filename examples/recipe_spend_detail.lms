@@ -148,12 +148,12 @@ fn recipe_picture(rows,title,name) {
   let chart_title="Synthetic: "+regex_replace(str(title),"[^A-Za-z0-9 ,.:()/+-]","","g");
   if(len(chart_title)>80) {chart_title=substr(chart_title,0,77)+"...";}
   write_file("data/"+name+".csv",data);
-  let chart=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+  let chart=_lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${"images/"+name+".png"},900,560);
 plot.cmd(${"set datafile separator ','; set title '"+chart_title+"'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.6; set yrange [0:"+str(max_count+1)+"]; set ytics 1; set ylabel 'count of resources'; set grid ytics; set xtics rotate by -30"});
 plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});
 plot.close();
-end _dsl_
+end _lmcode_
   let code=temp_file();savedsl(chart,code);let r=system(concat(dsl_cli(chart),["--lmcode",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
   println("images/"+name+".png");
 }
@@ -184,10 +184,10 @@ fn recipe_spend(options) {
   assert(o.top<=100);
   if (o.live) { assert(o.profile == "default", "live spend reports use --profile default (read-only billing data)"); }
   let output = _spend_output(o, topic);
-  let program = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let program = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let spend = aws.spend(${topic}, ${o.period}, ${o.top}, ${o.cap});
 spend.write(${output});
-end _dsl_
+end _lmcode_
   let result = recipe_run(program, o);
   let report = json_parse(read_file(output + "/report.json"));
   let sections = get(report, "sections", {});
@@ -210,12 +210,12 @@ fn recipe_spend_picture(report, name) {
   let range="["+str(low<0 ? low*1.1:0)+":"+str(high*1.15)+"]";
   if(report.topic=="savings_plans") {range="[0:100]";}
   let title="Synthetic spend: "+replace_all(report.topic,"_"," ");
-  let plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+  let plot = _lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${"images/" + name + ".png"}, 900, 560);
 plot.cmd(${"set datafile separator ','; set title '"+title+"'; set ylabel '"+units+"'; set yrange "+range+"; unset key; set xtics rotate by -30; set bmargin 8; set style data histograms; set style fill solid 0.8; set grid ytics"});
 plot.cmd(${"plot '" + chart + "' using 2:xtic(1) lc rgb '#5db7d1'"});
 plot.close();
-end _dsl_
+end _lmcode_
   let path = temp_file(); savedsl(plot, path);
   let r = system(concat(dsl_cli(plot), ["--lmcode", path]), {timeoutMs:120000});
   remove_file(path); assert(r.code == 0);

@@ -5,10 +5,10 @@ mkdir("images");
 mkdir("data");
 let root = "data"; let image = "images";
 if (getenv("LMAWS_SPEND_LIVE", "0") == "1" && getenv("LMAWS_LIVE", "0") == "1") { mkdir(".lmaws-local"); mkdir(".lmaws-local/spend"); root = ".lmaws-local/spend"; image = ".lmaws-local/spend"; }
-aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+aws = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let spend = aws.spend("lambda_spend", ${days}, ${top_n}, str_to_float(str(${cap})));
 spend.write(${root} + "/lambda_spend");
-end _dsl_
+end _lmcode_
 savedsl(aws, "lambda_spend-aws.dslb");
 r = system(concat(dsl_cli(aws), ["--lmcode", "lambda_spend-aws.dslb"]), {timeoutMs: 900000});
 let spend_stdout = r.stdout;
@@ -16,11 +16,11 @@ if (r.code != 0) { println(r.stdout); println(r.stderr); }
 if (r.code != 0) { println(r.stdout); println(r.stderr); }
 assert(r.code == 0);
 copy_file(root + "/lambda_spend/topic_chart.csv", root + "/lambda_spend.csv");
-plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot = _lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${image} + "/lambda_spend.png", 900, 560);
 plot.cmd("set datafile separator ','; set style data histograms; set style fill solid 0.85; set key off; set xtics rotate by -25 font ',10'; set bmargin 7; set grid ytics; plot '" + ${root} + "/lambda_spend/topic_chart.csv' using 2:xtic(1) title 'monthly estimate USD'");
 plot.close();
-end _dsl_
+end _lmcode_
 savedsl(plot, "lambda_spend-plot.dslb");
 r = system ${dsl_cli(plot)} --lmcode "lambda_spend-plot.dslb";
 if (r.code != 0) { println(r.stdout); println(r.stderr); }

@@ -1363,7 +1363,7 @@ The future picture labels actual API calls, recorded outcomes and any blocked st
 
 ## 7. One LMScript, two hosts; first milestone
 
-**Available today:** a `.lms` file can contain multiple `_lmcode_` / `_dsl_` blocks,
+**Available today:** a `.lms` file can contain multiple `_lmcode_` / `_lmcode_` blocks,
 each compiled against its own `cli="host"` schema. `savedsl` writes bytecode;
 `dsl_cli(program)` returns the matching executable argv; `system(argv, timeout)`
 runs it. `${...}` interpolation supplies scalar strings/numbers/bools, so a file

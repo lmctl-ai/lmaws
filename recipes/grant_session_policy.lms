@@ -156,12 +156,12 @@ fn recipe_picture(rows,title,name) {
   let chart_title="Synthetic: "+regex_replace(str(title),"[^A-Za-z0-9 ,.:()/+-]","","g");
   if(len(chart_title)>80) {chart_title=substr(chart_title,0,77)+"...";}
   write_file("data/"+name+".csv",data);
-  let chart=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+  let chart=_lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${"images/"+name+".png"},900,560);
 plot.cmd(${"set datafile separator ','; set title '"+chart_title+"'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.6; set yrange [0:"+str(max_count+1)+"]; set ytics 1; set ylabel 'count of resources'; set grid ytics; set xtics rotate by -30"});
 plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});
 plot.close();
-end _dsl_
+end _lmcode_
   let code=temp_file();savedsl(chart,code);let r=system(concat(dsl_cli(chart),["--lmcode",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
   println("images/"+name+".png");
 }
@@ -288,11 +288,11 @@ fn recipe_policy_lint(options) {
   let output = str(o.output);
   let doc = recipe_policy_document(o);
   let raw = output + ".lint.raw.json";
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_policy_lint");
 let lint = cloud.iam_policy_lint(${doc});
 file_write(${raw}, lint.json());
-end _dsl_
+end _lmcode_
   let result = recipe_run(p, o);
   let lint_obj = json_parse(read_file(raw));
   remove_file(raw);
@@ -348,7 +348,7 @@ fn recipe_grant_session_policy(options) {
   let get_raw = output + ".get.raw.json";
   let ver_raw = output + ".versions.raw.json";
   let do_apply = o.live && o.apply;
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_grant_session_policy");
 let put_res = cloud.iam_policy_put(${policy_name}, ${doc}, ${do_apply});
 let get_res = cloud.iam_policy_get(${policy_name});
@@ -356,7 +356,7 @@ let ver_rows = cloud.iam_policy_versions(${policy_name});
 file_write(${put_raw}, put_res.json());
 file_write(${get_raw}, get_res.json());
 file_write(${ver_raw}, ver_rows.json());
-end _dsl_
+end _lmcode_
   let result = recipe_run(p, o);
   let put_obj = json_parse(read_file(put_raw));
   let get_obj = json_parse(read_file(get_raw));
@@ -402,11 +402,11 @@ fn recipe_session_doctor(options) {
   if (o.preview) { return recipe_preview(o, "session_doctor"); }
   let output = str(o.output);
   let raw = output + ".doctor.raw.json";
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_session_doctor");
 let doctor_rows = cloud.session_doctor();
 file_write(${raw}, doctor_rows.json());
-end _dsl_
+end _lmcode_
   let result = recipe_run(p, o);
   let parsed = json_parse(read_file(raw));
   remove_file(raw);

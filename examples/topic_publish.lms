@@ -1,6 +1,6 @@
 # Create one SNS topic, publish one tiny message, and tear it down.
 mkdir("images"); mkdir("data");
-aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+aws = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("topic_publish");
 let run = cloud.example_run();
 let topic = run.topic("sample");
@@ -12,13 +12,13 @@ run.cleanup();
 let cleaned = run.remaining();
 check(cleaned == 0);
 file_write("data/topic_publish.csv", "phase,count\ncreated," + str(created) + "\npublished," + str(published) + "\ncleaned," + str(cleaned) + "\n");
-end _dsl_
-plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+end _lmcode_
+plot = _lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png("images/topic_publish.png", 900, 560);
 plot.cmd("set datafile separator ','; set yrange [0:*]; set title 'Tiny topic publish'; set style data histograms; set style fill solid 0.8");
 plot.cmd("plot 'data/topic_publish.csv' every ::1 using 2:xtic(1) title 'owned SNS state' lc rgb '#f5c16c'");
 plot.close();
-end _dsl_
+end _lmcode_
 savedsl(aws, "topic_publish-aws.dslb");
 r = system ${dsl_cli(aws)} --lmcode "topic_publish-aws.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }

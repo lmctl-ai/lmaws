@@ -1,7 +1,7 @@
 # DynamoDB billing posture: derived from fields in the host rows.
 mkdir("images");
 mkdir("data");
-aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+aws = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("tables");
 let rows = cloud.tables();
 if (cloud.is_demo()) { check(rows.len() == 3); }
@@ -11,13 +11,13 @@ if (cloud.is_demo()) { check(a_count == 3); }
 if (cloud.is_demo()) { check(b_count == 0); }
 let csv = "category,count\non_demand," + str(a_count) + "\nmissing," + str(b_count) + "\n";
 file_write("data/tables.csv", csv);
-end _dsl_
-plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+end _lmcode_
+plot = _lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png("images/tables.png", 900, 560);
 plot.cmd("set datafile separator ','; set yrange [0:*]; set title 'DynamoDB billing posture'; set style data histograms; set style fill solid 0.8; set boxwidth 0.65");
 plot.cmd("plot 'data/tables.csv' every ::1 using 2:xtic(1) title 'rows' lc rgb '#f5c16c'");
 plot.close();
-end _dsl_
+end _lmcode_
 savedsl(aws, "tables-aws.dslb");
 r = system ${dsl_cli(aws)} --lmcode "tables-aws.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }

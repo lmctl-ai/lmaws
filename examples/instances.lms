@@ -1,7 +1,7 @@
 # Compute state distribution: derived from fields in the host rows.
 mkdir("images");
 mkdir("data");
-aws = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+aws = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("instances");
 let rows = cloud.instances();
 if (cloud.is_demo()) { check(rows.len() == 3); }
@@ -11,13 +11,13 @@ if (cloud.is_demo()) { check(a_count == 1); }
 if (cloud.is_demo()) { check(b_count == 2); }
 let csv = "category,count\nrunning," + str(a_count) + "\nstopped," + str(b_count) + "\n";
 file_write("data/instances.csv", csv);
-end _dsl_
-plot = _dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+end _lmcode_
+plot = _lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png("images/instances.png", 900, 560);
 plot.cmd("set datafile separator ','; set yrange [0:*]; set title 'Compute state distribution'; set style data histograms; set style fill solid 0.8; set boxwidth 0.65");
 plot.cmd("plot 'data/instances.csv' every ::1 using 2:xtic(1) title 'rows' lc rgb '#f5c16c'");
 plot.close();
-end _dsl_
+end _lmcode_
 savedsl(aws, "instances-aws.dslb");
 r = system ${dsl_cli(aws)} --lmcode "instances-aws.dslb";
 if (r.code != 0) { println(r.stderr); println(r.stdout); }

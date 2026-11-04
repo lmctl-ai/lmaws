@@ -23,10 +23,10 @@ fn recipe_s3_objects(options) {
 }
 fn recipe_s3_objects_picture(report,name) {
   mkdir("images");mkdir("data");let labels={s3_bucket_create_exact:"Create tagged",s3_bucket_attach:"Attach/recover",s3_put_file:"PUT checksum",s3_head_object:"HEAD metadata",s3_list_objects:"List keys",s3_delete_objects:"Delete keys",s3_bucket_delete:"Delete empty",s3_ledger_summary:"Local ledger"};let csv="operation,count\n";for(row in report.rows){csv=csv+labels[row.operation]+",1\n";}write_file("data/"+name+".csv",csv);
-  let chart=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+  let chart=_lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${"images/"+name+".png"},900,560);
 plot.cmd("set datafile separator ','; set title 'Synthetic S3 object lifecycle'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.65; set ylabel 'Illustrative stages (not requests)'; set yrange [0:2]; set ytics 1; set grid ytics; set xtics rotate by -30; set bmargin 6");
 plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});plot.close();
-end _dsl_
+end _lmcode_
   let bytecode=temp_file();savedsl(chart,bytecode);let r=system(concat(dsl_cli(chart),["--lmcode",bytecode]),120000);remove_file(bytecode);assert(r.code==0);
 }

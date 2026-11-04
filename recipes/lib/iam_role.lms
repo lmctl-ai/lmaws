@@ -42,13 +42,13 @@ fn recipe_grant_lambda_role(options) {
   let get_raw=output+".get.raw.json";
   let put_raw=output+".put.raw.json";
 
-  let p=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p=_lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud=aws.example("recipe_grant_lambda_role");
 let before=cloud.iam_role_get(${role});
 let changed=cloud.iam_role_put(${role},${spec},${apply_requested});
 file_write(${get_raw},before.json());
 file_write(${put_raw},changed.json());
-end _dsl_
+end _lmcode_
   let result=recipe_run(p,merge(o,{preview:false,apply:apply_requested}));
   let before_obj=json_parse(read_file(get_raw));
   let changed_obj=json_parse(read_file(put_raw));

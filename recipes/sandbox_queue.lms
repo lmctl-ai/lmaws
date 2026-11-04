@@ -156,19 +156,19 @@ fn recipe_picture(rows,title,name) {
   let chart_title="Synthetic: "+regex_replace(str(title),"[^A-Za-z0-9 ,.:()/+-]","","g");
   if(len(chart_title)>80) {chart_title=substr(chart_title,0,77)+"...";}
   write_file("data/"+name+".csv",data);
-  let chart=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+  let chart=_lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${"images/"+name+".png"},900,560);
 plot.cmd(${"set datafile separator ','; set title '"+chart_title+"'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.6; set yrange [0:"+str(max_count+1)+"]; set ytics 1; set ylabel 'count of resources'; set grid ytics; set xtics rotate by -30"});
 plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});
 plot.close();
-end _dsl_
+end _lmcode_
   let code=temp_file();savedsl(chart,code);let r=system(concat(dsl_cli(chart),["--lmcode",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
   println("images/"+name+".png");
 }
 
 
 fn _lifecycle_call(options, task, name, raw) {
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_lifecycle");
 let run = cloud.example_run();
 let row_name = "";
@@ -182,7 +182,7 @@ else { check(false); }
 file_write(${raw}, row_name);
 run.cleanup();
 check(run.remaining() == 0);
-end _dsl_
+end _lmcode_
   let r = recipe_run(p, options);
   return {"result": r, "raw": trim(read_file(raw))};
 }

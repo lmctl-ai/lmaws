@@ -148,12 +148,12 @@ fn recipe_picture(rows,title,name) {
   let chart_title="Synthetic: "+regex_replace(str(title),"[^A-Za-z0-9 ,.:()/+-]","","g");
   if(len(chart_title)>80) {chart_title=substr(chart_title,0,77)+"...";}
   write_file("data/"+name+".csv",data);
-  let chart=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+  let chart=_lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${"images/"+name+".png"},900,560);
 plot.cmd(${"set datafile separator ','; set title '"+chart_title+"'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.6; set yrange [0:"+str(max_count+1)+"]; set ytics 1; set ylabel 'count of resources'; set grid ytics; set xtics rotate by -30"});
 plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});
 plot.close();
-end _dsl_
+end _lmcode_
   let code=temp_file();savedsl(chart,code);let r=system(concat(dsl_cli(chart),["--lmcode",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
   println("images/"+name+".png");
 }
@@ -166,7 +166,7 @@ fn recipe_discovery(options) {
     if(!o.output_explicit) {o.output=".lmaws-local/search/"+o.task;}
     assert(starts_with(o.output,".lmaws-local/"));
   }
-  let p=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p=_lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud=aws.example(${o.task});
 if (${o.task} == "find_lmaws_resources") {
   let rows=cloud.find_prefix(${o.prefix});
@@ -175,7 +175,7 @@ if (${o.task} == "find_lmaws_resources") {
   let rows=cloud.cleanup_prefix(${o.prefix},${o.older_hours},${o.apply});
   rows.csv(${o.output+".csv"});file_write(${o.output+".json"},rows.json());
 }
-end _dsl_
+end _lmcode_
   if(!o.live){o.ledger_dir="data/discovery-ledgers";}
   let result=recipe_run(p,o);let rows=json_parse(read_file(o.output+".json"));
   for(row in rows) {
@@ -207,7 +207,7 @@ fn recipe_discovery_picture(report,name) {
   let age_rows=[];for(bucket in keys(ages)) {push(age_rows,{label:bucket,count:ages[bucket]});}
   write_csv(root+"/"+name+".csv",counts);write_csv(root+"/"+name+"_age.csv",age_rows);write_csv(root+"/"+name+"_table.csv",table);
   let prefix=report.live ? "Account":"Synthetic account";
-  let plot=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+  let plot=_lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${images+"/"+name+".png"},1000,560);
 plot.cmd(${"set datafile separator ','; set title '"+prefix+" prefix matches by service'; unset key; set style data histograms; set style fill solid 0.8; set yrange [0:"+str(max_count+1)+"]; set grid ytics"});
 plot.cmd(${"plot '"+root+"/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});plot.close();
@@ -217,7 +217,7 @@ plot.cmd(${"plot '"+root+"/"+name+"_age.csv' every ::1 using 2:xtic(1) lc rgb '#
 plot.png(${images+"/"+name+"_table.png"},1300,560);
 plot.cmd(${"set termoption noenhanced; set title '"+prefix+" resource names and recovery status'; unset xtics; unset ytics; unset grid; set xrange [0:1]; set yrange [0:13]; unset border"});
 plot.cmd(${"plot '"+root+"/"+name+"_table.csv' every ::1 using 1:2:3 with labels left font 'Monospace,10'"});plot.close();
-end _dsl_
+end _lmcode_
   let code=temp_file();savedsl(plot,code);let r=system(concat(dsl_cli(plot),["--lmcode",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
   println(images+"/"+name+".png");println(images+"/"+name+"_age.png");println(images+"/"+name+"_table.png");
 }

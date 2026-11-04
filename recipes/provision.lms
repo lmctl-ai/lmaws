@@ -156,12 +156,12 @@ fn recipe_picture(rows,title,name) {
   let chart_title="Synthetic: "+regex_replace(str(title),"[^A-Za-z0-9 ,.:()/+-]","","g");
   if(len(chart_title)>80) {chart_title=substr(chart_title,0,77)+"...";}
   write_file("data/"+name+".csv",data);
-  let chart=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+  let chart=_lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${"images/"+name+".png"},900,560);
 plot.cmd(${"set datafile separator ','; set title '"+chart_title+"'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.6; set yrange [0:"+str(max_count+1)+"]; set ytics 1; set ylabel 'count of resources'; set grid ytics; set xtics rotate by -30"});
 plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});
 plot.close();
-end _dsl_
+end _lmcode_
   let code=temp_file();savedsl(chart,code);let r=system(concat(dsl_cli(chart),["--lmcode",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
   println("images/"+name+".png");
 }
@@ -277,7 +277,7 @@ fn recipe_provision(options) {
   if(o.preview) { println(json_stringify({operation:op,lmprov_id:id,config:cfg,preview:true},2)); println("estimated cost: $0.00"); return {rows:[],preview:true}; }
   provision_private_directory(o.live);
   let before=provision_record(id);let expected_mode=o.live ? "aws":"demo";assert(before.stage=="" || get(before,"mode",expected_mode)==expected_mode,"registry mode mismatch; use the same live/demo mode as the original job");
-  let p_live=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p_live=_lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud=aws.region(${cfg.region}); let receipt="";
 if (${op}=="create") { receipt=cloud.ec2_provision_run(${json_stringify(cfg)}); }
 if (${op}=="status") { receipt=cloud.ec2_provision_describe(${id}); }
@@ -291,8 +291,8 @@ if (${op}=="errors") { receipt=cloud.ec2_provision_describe(${id}); }
 if (${op}=="verify") { receipt=cloud.ec2_provision_verify(${id}); }
 if (${op}=="console") { receipt=cloud.ec2_provision_console(${id}); }
 file_write(${".lmaws-local/provision/"+id+".receipt.json"},receipt);
-end _dsl_
-  let p_demo=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+end _lmcode_
+  let p_demo=_lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud=aws.demo(); let receipt="";
 if (${op}=="create") { receipt=cloud.ec2_provision_run(${json_stringify(cfg)}); }
 if (${op}=="status") { receipt=cloud.ec2_provision_describe(${id}); }
@@ -306,7 +306,7 @@ if (${op}=="errors") { receipt=cloud.ec2_provision_describe(${id}); }
 if (${op}=="verify") { receipt=cloud.ec2_provision_verify(${id}); }
 if (${op}=="console") { receipt=cloud.ec2_provision_console(${id}); }
 file_write(${".lmaws-local/provision/"+id+".receipt.json"},receipt);
-end _dsl_
+end _lmcode_
   let request_receipt={ok:true,requested:true,stage:"requested",synthetic:!o.live,timestamp:str(now())};
   if(op=="create" && before.stage=="" && !o.dry) { let requested=provision_stage(id,"requested",request_receipt,cfg,true); }
   let result=provision_execute(o.live ? p_live : p_demo,o);

@@ -13,7 +13,7 @@ fn _hy_output(o, name) {
   return out;
 }
 fn _hy_inventory(o, out, kinds) {
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_hygiene");
 if (${contains(kinds, "buckets")}) { file_write(${out + ".buckets.raw.json"}, cloud.buckets().json()); }
 if (${contains(kinds, "instances")}) { file_write(${out + ".instances.raw.json"}, cloud.instances().json()); }
@@ -30,7 +30,7 @@ if (${contains(kinds, "parameters")}) { file_write(${out + ".parameters.raw.json
 if (${contains(kinds, "volumes")}) { file_write(${out + ".volumes.raw.json"}, cloud.volumes().json()); }
 if (${contains(kinds, "ec2_instances")}) { file_write(${out + ".ec2_instances.raw.json"}, cloud.ec2_instances("", "").json()); }
 if (${contains(kinds, "addresses")}) { file_write(${out + ".addresses.raw.json"}, cloud.addresses().json()); }
-end _dsl_
+end _lmcode_
   let result = recipe_run(p, o);
   let data = {};
   for (kind in kinds) { data[kind] = json_parse(read_file(out + "." + kind + ".raw.json")); }

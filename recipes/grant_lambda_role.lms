@@ -156,12 +156,12 @@ fn recipe_picture(rows,title,name) {
   let chart_title="Synthetic: "+regex_replace(str(title),"[^A-Za-z0-9 ,.:()/+-]","","g");
   if(len(chart_title)>80) {chart_title=substr(chart_title,0,77)+"...";}
   write_file("data/"+name+".csv",data);
-  let chart=_dsl_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+  let chart=_lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
 plot.png(${"images/"+name+".png"},900,560);
 plot.cmd(${"set datafile separator ','; set title '"+chart_title+"'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.6; set yrange [0:"+str(max_count+1)+"]; set ytics 1; set ylabel 'count of resources'; set grid ytics; set xtics rotate by -30"});
 plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});
 plot.close();
-end _dsl_
+end _lmcode_
   let code=temp_file();savedsl(chart,code);let r=system(concat(dsl_cli(chart),["--lmcode",code]),{timeoutMs:120000});remove_file(code);assert(r.code==0);
   println("images/"+name+".png");
 }
@@ -206,13 +206,13 @@ fn recipe_grant_lambda_role(options) {
   let get_raw=output+".get.raw.json";
   let put_raw=output+".put.raw.json";
 
-  let p=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p=_lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud=aws.example("recipe_grant_lambda_role");
 let before=cloud.iam_role_get(${role});
 let changed=cloud.iam_role_put(${role},${spec},${apply_requested});
 file_write(${get_raw},before.json());
 file_write(${put_raw},changed.json());
-end _dsl_
+end _lmcode_
   let result=recipe_run(p,merge(o,{preview:false,apply:apply_requested}));
   let before_obj=json_parse(read_file(get_raw));
   let changed_obj=json_parse(read_file(put_raw));

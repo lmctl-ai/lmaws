@@ -7,7 +7,7 @@ import "./common.lms";
 
 // Import-only run-owned lifecycle implementation. Static calls preserve schema checking.
 fn _lifecycle_call(options, task, name, raw) {
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_lifecycle");
 let run = cloud.example_run();
 let row_name = "";
@@ -21,7 +21,7 @@ else { check(false); }
 file_write(${raw}, row_name);
 run.cleanup();
 check(run.remaining() == 0);
-end _dsl_
+end _lmcode_
   let r = recipe_run(p, options);
   return {"result": r, "raw": trim(read_file(raw))};
 }

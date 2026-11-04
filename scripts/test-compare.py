@@ -79,7 +79,7 @@ with tempfile.TemporaryDirectory(prefix='lmaws-compare-tests-') as tmp:
  env=dict(os.environ,PATH=str(fake)+os.pathsep+os.environ['PATH'],LMAWS_LIVE='0')
  # Exercise the actual generated bootstrap with unset env variables, replacing
  # only HTTP transport with a harmless Python response. No provider is launched.
- bootstrap=(ROOT/'compare/bucket_objects/bucket_objects.lms').read_text().split('phase_init = _dsl_')[0]
+ bootstrap=(ROOT/'compare/bucket_objects/bucket_objects.lms').read_text().split('phase_init = _lmcode_')[0]
  response='download = system('+json.dumps([sys.executable,'-c','print("mock-helper")'])+', 60000);'
  bootstrap=re.sub(r'download = system\(\[[^\n]+\], 60000\);',lambda match:response,bootstrap)
  bootstrap_file=tmp/'bootstrap.lms';bootstrap_file.write_text(bootstrap,encoding='utf-8')

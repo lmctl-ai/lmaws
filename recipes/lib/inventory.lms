@@ -12,7 +12,7 @@ fn recipe_inventory(options) {
   let output = str(o.output);
   assert(contains(["identity", "buckets", "instances", "vpcs", "security_groups", "tables", "queues", "topics", "functions", "log_groups", "alarms", "zones", "secrets", "parameters", "clusters", "roles"],o.task) || o.task=="all");
   assert(!o.live || (o.task!="identity" && o.task!="roles" && o.profile!="admin"), "live inventory skips IAM identity/roles (federated sessions cannot call IAM) and never uses the admin profile");
-  let p = _dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p = _lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud = aws.example("recipe_inventory");
 if ((${o.task} == "identity" || ${o.task} == "all") && !${o.live}) { file_write(${output + ".identity.raw.json"}, cloud.identity().json()); }
 if ((${o.task} == "buckets" || ${o.task} == "all")) { file_write(${output + ".buckets.raw.json"}, cloud.buckets().json()); }
@@ -30,7 +30,7 @@ if ((${o.task} == "secrets" || ${o.task} == "all")) { file_write(${output + ".se
 if ((${o.task} == "parameters" || ${o.task} == "all")) { file_write(${output + ".parameters.raw.json"}, cloud.parameters().json()); }
 if ((${o.task} == "clusters" || ${o.task} == "all")) { file_write(${output + ".clusters.raw.json"}, cloud.clusters().json()); }
 if ((${o.task} == "roles" || ${o.task} == "all") && !${o.live}) { file_write(${output + ".roles.raw.json"}, cloud.roles().json()); }
-end _dsl_
+end _lmcode_
   let result = recipe_run(p, o);
   let selected = [];
   let task = str(o.task);

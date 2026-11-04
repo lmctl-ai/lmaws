@@ -171,8 +171,8 @@ class RecipeExecutionTests(unittest.TestCase):
         entry=self.work/"budget.lms"
         code='import '+json.dumps((ROOT/'recipes/lib/common.lms').as_posix())+';\n'
         for symbol,path in [('one',first),('two',second)]:
-            code+=symbol+' = _dsl_ cli="lmaws --dry-run" install="github:lmctl-ai/lmaws@latest";\n'
-            code+='let cloud=aws.example("recipe_budget_fixture");\nfile_write('+json.dumps(str(path))+',"executed");\nend _dsl_\n'
+            code+=symbol+' = _lmcode_ cli="lmaws --dry-run" install="github:lmctl-ai/lmaws@latest";\n'
+            code+='let cloud=aws.example("recipe_budget_fixture");\nfile_write('+json.dumps(str(path))+',"executed");\nend _lmcode_\n'
         code+='recipe_run(one,{live:true,cap:0.20,profile:"default",output:'+json.dumps((self.work/'one').as_posix())+'});\n'
         code+='recipe_run(two,{live:true,cap:0.06,profile:"default",output:'+json.dumps((self.work/'two').as_posix())+'});\n'
         entry.write_text(code)

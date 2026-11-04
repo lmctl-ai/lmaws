@@ -116,7 +116,7 @@ fn recipe_provision(options) {
   if(o.preview) { println(json_stringify({operation:op,lmprov_id:id,config:cfg,preview:true},2)); println("estimated cost: $0.00"); return {rows:[],preview:true}; }
   provision_private_directory(o.live);
   let before=provision_record(id);let expected_mode=o.live ? "aws":"demo";assert(before.stage=="" || get(before,"mode",expected_mode)==expected_mode,"registry mode mismatch; use the same live/demo mode as the original job");
-  let p_live=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+  let p_live=_lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud=aws.region(${cfg.region}); let receipt="";
 if (${op}=="create") { receipt=cloud.ec2_provision_run(${json_stringify(cfg)}); }
 if (${op}=="status") { receipt=cloud.ec2_provision_describe(${id}); }
@@ -130,8 +130,8 @@ if (${op}=="errors") { receipt=cloud.ec2_provision_describe(${id}); }
 if (${op}=="verify") { receipt=cloud.ec2_provision_verify(${id}); }
 if (${op}=="console") { receipt=cloud.ec2_provision_console(${id}); }
 file_write(${".lmaws-local/provision/"+id+".receipt.json"},receipt);
-end _dsl_
-  let p_demo=_dsl_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+end _lmcode_
+  let p_demo=_lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
 let cloud=aws.demo(); let receipt="";
 if (${op}=="create") { receipt=cloud.ec2_provision_run(${json_stringify(cfg)}); }
 if (${op}=="status") { receipt=cloud.ec2_provision_describe(${id}); }
@@ -145,7 +145,7 @@ if (${op}=="errors") { receipt=cloud.ec2_provision_describe(${id}); }
 if (${op}=="verify") { receipt=cloud.ec2_provision_verify(${id}); }
 if (${op}=="console") { receipt=cloud.ec2_provision_console(${id}); }
 file_write(${".lmaws-local/provision/"+id+".receipt.json"},receipt);
-end _dsl_
+end _lmcode_
   let request_receipt={ok:true,requested:true,stage:"requested",synthetic:!o.live,timestamp:str(now())};
   if(op=="create" && before.stage=="" && !o.dry) { let requested=provision_stage(id,"requested",request_receipt,cfg,true); }
   let result=provision_execute(o.live ? p_live : p_demo,o);
