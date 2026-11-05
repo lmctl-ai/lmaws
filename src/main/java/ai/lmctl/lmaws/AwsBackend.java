@@ -1834,6 +1834,7 @@ public final class AwsBackend implements AutoCloseable {
     CloudWatchClient cloudWatchClient() { return cloudwatch(); }
     CloudFrontClient cloudFrontClient() { return cloudfront(); }
     String cloudfrontTraffic(String domain,String start,String end) { return new CloudFrontTraffic(this).collect(domain,start,end); }
+    String cloudfrontLogs(String id,String from,String to,String output,int maxObjects,int maxBytes) { return new CloudFrontLogs(this).collect(id,from,to,output,maxObjects,maxBytes); }
     java.math.BigDecimal cloudfrontCostTotal() { return cost==null?java.math.BigDecimal.ZERO:cost.total(); }
     StsClient stsClientForDoctor() { return sts(); }
     S3Client s3ClientForDoctor() { return s3(); }

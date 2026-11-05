@@ -44,6 +44,7 @@ timeout 180 python3 scripts/test-credential-process.py
 timeout 240 python3 scripts/test-iam-role.py "$jvm"
 timeout 180 python3 scripts/test-ebs-root-resize.py
 AWS_PROFILE=default LMAWS_ENDPOINT=http://127.0.0.1:9 timeout 30 java -cp target/lmaws-0.1.27.jar ai.lmctl.lmaws.CloudFrontTrafficChecks
+AWS_PROFILE=default LMAWS_ENDPOINT=http://127.0.0.1:9 timeout 30 java -cp target/lmaws-0.1.27.jar ai.lmctl.lmaws.CloudFrontLogsChecks
 timeout 180 python3 scripts/test-web-fake.py
 timeout 180 python3 scripts/test-web-http.py
 timeout 180 python3 scripts/test-web-ec2.py

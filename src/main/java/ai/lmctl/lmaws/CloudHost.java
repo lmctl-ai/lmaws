@@ -92,6 +92,7 @@ public final class CloudHost implements AutoCloseable {
             }
         });
         r.method("Cloud","cloudfront_traffic",List.of("string","string","string"),"string",(c,s,a)->Value.ofString(session(s).backend.isDemo()?CloudFrontTrafficDemo.collect(text(a[0]),text(a[1]),text(a[2])):session(s).backend.cloudfrontTraffic(text(a[0]),text(a[1]),text(a[2]))));
+        r.method("Cloud","cloudfront_logs",List.of("string","string","string","string","int","int"),"string",(c,s,a)->Value.ofString(session(s).backend.isDemo()?"{\"mode\":\"synthetic\",\"distribution_id\":\""+text(a[0])+"\",\"objects\":[],\"totals\":{\"listed_objects\":0,\"listed_bytes\":0,\"downloaded_bytes\":0},\"complete\":true,\"warnings\":[\"synthetic\"]}":session(s).backend.cloudfrontLogs(text(a[0]),text(a[1]),text(a[2]),text(a[3]),Math.toIntExact(a[4].asInt()),Math.toIntExact(a[5].asInt()))));
         r.method("Cloud","find_prefix",List.of("string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.findPrefix(text(a[0])),c)));
         r.method("Cloud","s3_bucket_create_exact",List.of("string","string"),"string",(c,s,a)->Value.ofString(session(s).backend.s3Objects().create(text(a[0]),text(a[1]))));
         r.method("Cloud","s3_bucket_attach",List.of("string","string"),"string",(c,s,a)->Value.ofString(session(s).backend.s3Objects().attach(text(a[0]),text(a[1]))));

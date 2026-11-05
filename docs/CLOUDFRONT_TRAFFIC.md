@@ -1,5 +1,8 @@
 # Read-only CloudFront viewer traffic
 
+For existing S3 access logs and status/User-Agent investigation, see
+[read-only CloudFront log retrieval](CLOUDFRONT_LOGS.md).
+
 `Cloud.cloudfront_traffic(domain, startISO, endISO)` returns JSON with matching
 CloudFront distributions and hourly Requests, BytesDownloaded, 4xxErrorRate
 and 5xxErrorRate. Dates may be UTC `YYYY-MM-DD` or ISO instants; the end is
