@@ -26,8 +26,8 @@ Current Windows release binaries are real native hosts, not stubs.
 
 Local build/tests are the publication gate by user decision; do not wait for CI
 or live permissions before publishing. `.github/workflows/ci.yml` remains the
-five-platform fake-only release automation. No cloud credentials or GitHub OIDC
-are allowed in CI; `LMAWS_LIVE=0` is set there and real-backend CI guards are tested.
+five-platform release automation: build and test lanes are fake-only, and only the integration job (read-only, environment cert) uses GitHub OIDC. No other
+cloud credentials are allowed in CI; `LMAWS_LIVE=0` is set there and real-backend CI guards are tested.
 GitHub download tokens are not AWS credentials. Live tests are separate opt-in
 work, described in [03-live.md](03-live.md).
 

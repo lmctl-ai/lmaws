@@ -16,4 +16,4 @@ converged; a fresh executor observed NoSuchBucket/404 after explicit teardown.
 1433 request attempts,estimated$0.0018854,cap$0.05,maxskew1.081s. No IAM denial or
 host bug observed; only local checker fixes were needed. Public proof contains
 counts/status only: lmfiles docs/S3_100_RESULTS.json. No further live run is
-implicitly authorized. CI/tests remain fake-only; no new credentials or OIDC.
+implicitly authorized. Build and test lanes remain fake-only; only the ci.yml integration job (read-only, environment cert) uses OIDC.

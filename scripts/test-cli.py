@@ -26,7 +26,11 @@ for raw in ['0','-1','wat','1.5','99999999999999999999999999']:
 for raw in ['-0.01','0.250001','nan','1e100']:
  assert 'LMAWS_MAX_COST_USD' in run(['--version'],2,{'LMAWS_MAX_COST_USD':raw}).stdout
 workflow=(root/'.github/workflows/ci.yml').read_text(encoding='utf-8').lower()
-assert 'id-token:' not in workflow and 'configure-aws-credentials' not in workflow and 'secrets.aws_' not in workflow,'CI must remain fake-only with no OIDC or cloud credentials'
+# Build and test lanes stay fake-only. Only the `integration` job (read-only live checks, environment cert, OIDC role) may hold cloud credentials.
+integ_start=workflow.index('\n  integration:\n');integ_end=workflow.index('\n  release:\n')
+outside=workflow[:integ_start]+workflow[integ_end:]
+assert 'id-token:' not in outside and 'configure-aws-credentials' not in outside and 'secrets.aws_' not in workflow,'only the integration job may use OIDC or cloud credentials'
+assert 'environment: cert' in workflow[integ_start:integ_end] and 'secrets.aws_' not in workflow,'the integration job must run in environment cert with no static keys'
 run(['--self-test'])
 with tempfile.TemporaryDirectory(prefix='lmaws-cli-') as d:
  d=pathlib.Path(d);bad=d/'bad.dslb';bad.write_bytes(b'not bytecode');run(['--lmcode',str(bad)],3)
