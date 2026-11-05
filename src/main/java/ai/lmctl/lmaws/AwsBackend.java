@@ -36,6 +36,7 @@ import software.amazon.awssdk.core.retry.RetryPolicy;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
+import software.amazon.awssdk.services.cloudfront.CloudFrontClient;
 import software.amazon.awssdk.services.cloudwatch.model.DescribeAlarmsRequest;
 import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
 import software.amazon.awssdk.services.cloudwatchlogs.model.DescribeLogGroupsRequest;
@@ -146,7 +147,7 @@ public final class AwsBackend implements AutoCloseable {
     private String cachedAccountId;
 
     private S3Client s3; private SqsClient sqs; private SnsClient sns; private SsmClient ssm; private DynamoDbClient ddb;
-    private CloudWatchLogsClient logs; private CloudWatchClient cloudwatch; private Ec2Client ec2; private LambdaClient lambda;
+    private CloudWatchLogsClient logs; private CloudWatchClient cloudwatch; private CloudFrontClient cloudfront; private Ec2Client ec2; private LambdaClient lambda;
     private EventBridgeClient events;
     private Route53Client route53; private KmsClient kms; private SecretsManagerClient secrets; private EcsClient ecs; private IamClient iam; private StsClient sts; private CloudFormationClient cloudformation;
 
@@ -1078,6 +1079,7 @@ public final class AwsBackend implements AutoCloseable {
     private DynamoDbClient ddb() { return ddb == null ? ddb = register(base(DynamoDbClient.builder()).build()) : ddb; }
     private CloudWatchLogsClient logs() { return logs == null ? logs = register(base(CloudWatchLogsClient.builder()).build()) : logs; }
     private CloudWatchClient cloudwatch() { return cloudwatch == null ? cloudwatch = register(base(CloudWatchClient.builder()).build()) : cloudwatch; }
+    private CloudFrontClient cloudfront() { return cloudfront == null ? cloudfront = register(base(CloudFrontClient.builder()).build()) : cloudfront; }
     private Ec2Client ec2() { return ec2 == null ? ec2 = register(base(Ec2Client.builder()).build()) : ec2; }
     Map<String,String> ebsRootResize(String spec, boolean apply, boolean human) { return new EbsResize(this).resize(spec,apply,human); }
     String accountIdForResize() { return accountId(); }
@@ -1830,6 +1832,9 @@ public final class AwsBackend implements AutoCloseable {
     }
     SsmClient ssmClient() { return ssm(); }
     CloudWatchClient cloudWatchClient() { return cloudwatch(); }
+    CloudFrontClient cloudFrontClient() { return cloudfront(); }
+    String cloudfrontTraffic(String domain,String start,String end) { return new CloudFrontTraffic(this).collect(domain,start,end); }
+    java.math.BigDecimal cloudfrontCostTotal() { return cost==null?java.math.BigDecimal.ZERO:cost.total(); }
     StsClient stsClientForDoctor() { return sts(); }
     S3Client s3ClientForDoctor() { return s3(); }
     SqsClient sqsClientForDoctor() { return sqs(); }

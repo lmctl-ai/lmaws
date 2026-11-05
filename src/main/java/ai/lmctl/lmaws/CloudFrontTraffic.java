@@ -1,0 +1,33 @@
+package ai.lmctl.lmaws;
+
+import java.time.*;
+import java.util.*;
+import software.amazon.awssdk.services.cloudfront.CloudFrontClient;
+import software.amazon.awssdk.services.cloudfront.model.*;
+import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
+import software.amazon.awssdk.services.cloudwatch.model.*;
+
+/** Read-only CloudFront distribution projection plus hourly CloudWatch metrics. */
+final class CloudFrontTraffic {
+    private final AwsBackend backend;
+    CloudFrontTraffic(AwsBackend backend){this.backend=backend;}
+    String collect(String domain,String startRaw,String endRaw){
+        if(!"us-east-1".equals(backend.region()))throw new IllegalArgumentException("CloudFront metrics require the us-east-1 metric client");
+        if(!"default".equals(backend.profileName())||!"default".equals(AwsBackend.activeProfile()))throw new SecurityException("CloudFront traffic requires AWS_PROFILE=default");
+        Instant requestedStart=parse(startRaw), requestedEnd=parse(endRaw), now=Instant.now();
+        if(!requestedStart.isBefore(requestedEnd))throw new IllegalArgumentException("start must be before end");
+        if(Duration.between(requestedStart,requestedEnd).compareTo(Duration.ofDays(31))>0)throw new IllegalArgumentException("range must be at most 31 days");
+        Instant end=requestedEnd.isAfter(now)?now:requestedEnd; if(!requestedStart.isBefore(end))throw new IllegalArgumentException("query range is entirely in the future");
+        String wanted=norm(domain);if(!wanted.matches("[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?"))throw new IllegalArgumentException("domain must be a DNS name without path or query");CloudFrontClient cf=backend.cloudFrontClient();List<DistributionSummary> matches=new ArrayList<>();String marker=null;Set<String> seen=new HashSet<>();int pages=0;
+        do{if(++pages>100)throw new IllegalStateException("CloudFront pagination limit exceeded");var response=cf.listDistributions(ListDistributionsRequest.builder().marker(marker).build());var list=response.distributionList();if(list!=null)for(var d:list.items())if(matches(d,wanted))matches.add(d);marker=list==null?null:list.nextMarker();if(marker!=null&&marker.isBlank())marker=null;if(marker!=null&&!seen.add(marker))throw new IllegalStateException("CloudFront pagination repeated");}while(marker!=null);
+        List<Map<String,Object>> distributions=new ArrayList<>();List<String>warnings=new ArrayList<>();
+        for(var summary:matches){DistributionConfig config=cf.getDistributionConfig(GetDistributionConfigRequest.builder().id(summary.id()).build()).distributionConfig();Map<String,Object> d=new LinkedHashMap<>();d.put("id",summary.id());d.put("domain_name",summary.domainName());d.put("aliases",summary.aliases()==null?List.of():summary.aliases().items());d.put("enabled",Boolean.TRUE.equals(summary.enabled()));d.put("web_acl_id",config==null?summary.webACLId():config.webACLId());d.put("origins",config==null||config.origins()==null?List.of():config.origins().items().stream().map(Origin::domainName).filter(Objects::nonNull).toList());var logging=config==null?null:config.logging();d.put("logging_enabled",logging!=null&&Boolean.TRUE.equals(logging.enabled()));d.put("logging_type","legacy_s3");d.put("logging_bucket",logging==null?"":Objects.toString(logging.bucket(),""));Map<String,Object> metrics=new LinkedHashMap<>();for(String metric:List.of("Requests","BytesDownloaded","4xxErrorRate","5xxErrorRate")){MetricValues values=query(backend.cloudWatchClient(),summary.id(),metric,requestedStart,end);metrics.put(metric,values.values);if(values.missing)warnings.add("partial_or_missing_data:"+summary.id()+":"+metric);}d.put("metrics",metrics);distributions.add(d);}
+        Map<String,Object> out=new LinkedHashMap<>();out.put("mode",backend.isDemo()?"synthetic":"live_read_only");out.put("domain",domain);out.put("query_start",requestedStart.toString());out.put("query_end",end.toString());out.put("requested_end",requestedEnd.toString());out.put("metric_region","us-east-1");out.put("period_seconds",3600);out.put("distributions",distributions);out.put("warnings",warnings);out.put("query_estimate_usd",backend.cloudfrontCostTotal().toPlainString());return Jsons.encodeRaw(out);
+    }
+    private record MetricValues(List<Map<String,Object>> values,boolean missing){}
+    private MetricValues query(CloudWatchClient cw,String id,String metric,Instant start,Instant end){String next=null;Map<Instant,Double> data=new TreeMap<>();Set<String> seen=new HashSet<>();boolean partial=false;do{String qid="q"+Math.abs(metric.hashCode());var req=MetricDataQuery.builder().id(qid).metricStat(MetricStat.builder().period(3600).stat(Set.of("Requests","BytesDownloaded").contains(metric)?"Sum":"Average").metric(Metric.builder().namespace("AWS/CloudFront").metricName(metric).dimensions(Dimension.builder().name("DistributionId").value(id).build(),Dimension.builder().name("Region").value("Global").build()).build()).build()).returnData(true).build();var response=cw.getMetricData(GetMetricDataRequest.builder().startTime(start).endTime(end).scanBy(ScanBy.TIMESTAMP_ASCENDING).metricDataQueries(req).nextToken(next).build());for(var r:response.metricDataResults()){if(!qid.equals(r.id())){partial=true;continue;}if(!"Complete".equalsIgnoreCase(r.statusCodeAsString()))partial=true;if(r.timestamps().size()!=r.values().size())partial=true;for(int i=0;i<Math.min(r.timestamps().size(),r.values().size());i++){Double v=r.values().get(i);if(v==null||!Double.isFinite(v)){partial=true;continue;}data.put(r.timestamps().get(i),v);}}next=response.nextToken();if(next!=null&&next.isBlank())next=null;if(next!=null&&!seen.add(next))throw new IllegalStateException("CloudWatch pagination repeated");}while(next!=null);List<Map<String,Object>> rows=new ArrayList<>();for(var e:data.entrySet())rows.add(Map.of("timestamp",e.getKey().toString(),"value",e.getValue()));return new MetricValues(rows,partial||data.isEmpty());}
+    private static boolean matches(DistributionSummary d,String wanted){if(norm(d.domainName()).equals(wanted))return true;return d.aliases()!=null&&d.aliases().items().stream().map(CloudFrontTraffic::norm).anyMatch(x->x.equals(wanted)||x.equals(wwwVariant(wanted)));}
+    private static String norm(String x){return x.toLowerCase(Locale.ROOT).replaceFirst("^https?://","").replaceAll("\\.$","").trim();}
+    private static String wwwVariant(String x){return x.startsWith("www.")?x.substring(4):"www."+x;}
+    private static Instant parse(String x){try{return Instant.parse(x);}catch(Exception ignored){return LocalDate.parse(x).atStartOfDay(ZoneOffset.UTC).toInstant();}}
+}

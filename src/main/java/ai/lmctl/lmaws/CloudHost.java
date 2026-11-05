@@ -91,6 +91,7 @@ public final class CloudHost implements AutoCloseable {
                 return Value.ofString(report);
             }
         });
+        r.method("Cloud","cloudfront_traffic",List.of("string","string","string"),"string",(c,s,a)->Value.ofString(session(s).backend.isDemo()?CloudFrontTrafficDemo.collect(text(a[0]),text(a[1]),text(a[2])):session(s).backend.cloudfrontTraffic(text(a[0]),text(a[1]),text(a[2]))));
         r.method("Cloud","find_prefix",List.of("string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.findPrefix(text(a[0])),c)));
         r.method("Cloud","s3_bucket_create_exact",List.of("string","string"),"string",(c,s,a)->Value.ofString(session(s).backend.s3Objects().create(text(a[0]),text(a[1]))));
         r.method("Cloud","s3_bucket_attach",List.of("string","string"),"string",(c,s,a)->Value.ofString(session(s).backend.s3Objects().attach(text(a[0]),text(a[1]))));

@@ -17,6 +17,10 @@ Then the same recipe against your account, read-only: `lmctl https://raw.githubu
 
 ## Detailed spend report — read-only
 
+For actual CDN request/download trends, see the
+[read-only CloudFront traffic API](docs/CLOUDFRONT_TRAFFIC.md). It discovers
+the www and bare-domain distributions and preserves partial/missing metrics.
+
 For a tag-selected EC2 fleet with compute, gp3 disks, public IPv4, charged CPU
 surplus and Savings Plan amortization, see the
 [read-only fleet cost API](docs/FLEET_COSTS.md). It keeps current monthly
