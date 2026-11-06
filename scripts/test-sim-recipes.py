@@ -81,6 +81,42 @@ def build_cloud_host() -> str:
     return str(out)
 
 
+def run_persistence(sim: str, lmscript: str, hostargs: list[str], env: dict[str, str], work: Path, timeout: int) -> bool:
+    """persistence_restart.lms across a real emulator restart: write with --data-dir, stop, start again, verify."""
+    data_dir = work / "persist-data"
+    data_dir.mkdir()
+    out_dir = work / "persist-out"
+    out_dir.mkdir()
+    cwd = work / "persistence_restart_restart"
+    cwd.mkdir()
+    port = free_port()
+    recipe = str(RECIPES / "persistence_restart.lms")
+
+    def phase(name: str) -> subprocess.CompletedProcess[str]:
+        cmd = [lmscript, recipe, "--phase", name, "--endpoint", f"http://127.0.0.1:{port}", "--out", str(out_dir), "--run", "restart1", *hostargs]
+        return subprocess.run(cmd, cwd=cwd, env=env, text=True, capture_output=True, timeout=timeout)
+
+    proc = start_sim(sim, port, work / "awssim-persist-1.log", ["--data-dir", str(data_dir)], env)
+    try:
+        wrote = phase("write")
+    finally:
+        proc.terminate()
+        proc.wait(timeout=30)
+    if wrote.returncode != 0:
+        (cwd / "stdout.txt").write_text(wrote.stdout + wrote.stderr)
+        return False
+    proc = start_sim(sim, port, work / "awssim-persist-2.log", ["--data-dir", str(data_dir)], env)
+    try:
+        verified = phase("verify")
+    finally:
+        proc.terminate()
+        proc.wait(timeout=30)
+    ok = verified.returncode == 0 and "PASS persistence_restart" in verified.stdout
+    if not ok:
+        (cwd / "stdout.txt").write_text(verified.stdout + verified.stderr)
+    return ok
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--awssim")
@@ -141,6 +177,13 @@ def main() -> int:
             if not ok:
                 failures.append(recipe.stem)
                 (cwd / "stdout.txt").write_text(result.stdout if 'result' in locals() else "")
+
+        if not args.only or "persistence_restart" in args.only:
+            started = time.monotonic()
+            ok = run_persistence(awssim, lmscript, ["--host", lmaws, "--cloud-host", cloud], base_env, work, args.timeout)
+            print(f"{'ok' if ok else 'FAIL':4} {'persistence_restart*':26} {time.monotonic() - started:6.1f}s" + ("" if ok else "  (write, emulator restart with --data-dir, verify)"))
+            if not ok:
+                failures.append("persistence_restart(restart)")
     finally:
         for proc in procs:
             proc.terminate()

@@ -68,6 +68,18 @@ everything down. It takes `--awssim`, `--lmaws`, `--cloud-host`, `--lmscript`
 | `ec2_web_server.lms` | lmaws (lmaws-ec2 profile) | EC2 (`FLOCI_SERVICES_EC2_ENABLED=true`) | Provision a nano web server: owned security group, 80/tcp from one /32, user-data, running, stop/start, terminate, teardown with no leftovers |
 | `ec2_fleet_inventory.lms` | lmaws (default profile) | EC2 | VPCs, subnets, security groups with open ports, instances, volumes, addresses, one status probe |
 | `leftover_sweep.lms` | lmaws + lmaws cloud | S3, SQS, EC2 tags | Untracked `lmaws-` resources are discovered, the sweep refuses them without run-ledger proof, the owner removes them explicitly |
+| `smoke_test.lms` | lmaws cloud | S3, SQS | CI smoke test: emulator answers, bucket/object/queue/message round trips, timed |
+| `error_handling.lms` | lmaws cloud | S3, SQS | Error contract: idempotent creates and deletes, false-not-fail probes, NOT_FOUND/CONFLICT with HTTP status, pre-flight INVALID_ARGUMENT guards |
+| `object_listing_pagination.lms` | lmaws cloud | S3 | 120 objects, continuation-token paging in pages of 50, ascending order, prefix counts, exhaustive list |
+| `binary_object_roundtrip.lms` | lmaws cloud | S3 | PNG header, all 256 byte values, empty object, UTF-8 text, 64 KiB file byte-exact with content types and ETags |
+| `queue_visibility_timeout.lms` | lmaws cloud | SQS | In-flight messages invisible, redelivered after the visibility timeout with the same ids, nack(0) immediate redelivery, drained |
+| `upload_thumbnail_pipeline.lms` | lmaws cloud | S3, SQS | Uploads enqueue jobs, a worker writes thumbnails with provenance metadata, every upload gets exactly one |
+| `blue_green_release.lms` | lmaws cloud | S3 | Two release trees, a current.json pointer, instant switch, verified rollback, prune of the retired release |
+| `concurrent_uploaders.lms` | lmaws cloud | S3 | Four host processes upload disjoint prefixes at once (parallel_map), one listing proves nothing lost |
+| `persistence_restart.lms` | lmaws cloud | S3, SQS | Write phase, emulator restart with --data-dir, verify phase: objects intact, queue present (runner shows it as persistence_restart*) |
+| `iam_policy_unit_tests.lms` | lmaws (offline simulator) | none | Nine allow/deny probes against the typed deployer policy, including a region-context probe; any unexpected decision fails |
+| `site_config_notifications.lms` | lmaws | SSM, SNS, CloudWatch Logs | Config parameters, deploy notifications on a topic, an app log group, inventories, cleanup |
+| `budget_guardrail.lms` | lmaws | S3, SQS | LMAWS_MAX_COST_USD=0 refuses the first charged resource and journals cost_refused; the default cap lets the same program run |
 
 ## Emulator findings
 

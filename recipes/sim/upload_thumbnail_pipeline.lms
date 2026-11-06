@@ -1,0 +1,68 @@
+# Access: Write to awssim through the shared lmcloud schema (Go lmaws build)
+# What: Event-driven integration: uploads land under raw/, each enqueues a JSON job, a worker drains the queue, reads the upload, writes a derived thumbs/ object with provenance metadata and acks; the recipe proves every upload got exactly one thumbnail
+# When: Testing an image-processing or document-conversion pipeline end to end without cloud functions
+# Emulator: awssim (S3, SQS) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/upload_thumbnail_pipeline.lms --cloud-host bin/lmaws
+# Arguments: --endpoint URL --cloud-host PATH --run ID --out DIR --uploads N
+# Cleanup: objects, bucket and queue are deleted
+import "./lib/common.lms";
+
+o = sim_options("upload_thumbnail_pipeline", {uploads: {type: "number", default: 4, description: "images to upload (1..20)"}}, "usage: upload_thumbnail_pipeline.lms [--endpoint URL] [--cloud-host PATH] [--uploads N]");
+assert(o.uploads >= 1 && o.uploads <= 20, "--uploads must be 1..20");
+bucket = "lmaws-sim-media-" + o.run;
+queue = "lmaws-sim-media-jobs-" + o.run;
+
+program = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  let b = ${bucket};
+  let q = ${queue};
+  let n = ${o.uploads};
+  cloud.bucket_create(b);
+  cloud.queue_create(q);
+  for (i in range(0, n)) {
+    let name = "photo-" + str(100 + i) + ".img";
+    let body = "IMAGEDATA:" + name + ":" + str_repeat("x", 200 + i * 37);
+    cloud.object_put(b, "raw/" + name, body, "image/jpeg", str_map().set("uploader", "web-form"));
+    cloud.queue_send(q, "{\"source\":\"raw/" + name + "\",\"target\":\"thumbs/" + name + "\",\"width\":128}");
+  }
+  let processed = 0;
+  let polls = 0;
+  while (processed < n && polls < 40) {
+    polls = polls + 1;
+    let batch = cloud.queue_receive(q, 10, 1, 60);
+    for (i in range(0, batch.len())) {
+      let m = batch.at(i);
+      let job = json_parse(m.body());
+      let source = job.get("source").as_string();
+      let target = job.get("target").as_string();
+      let original = cloud.object_get(b, source);
+      let thumb = "THUMB(" + str(job.get("width").as_int()) + "):" + str_substr(original, 0, 32);
+      cloud.object_put(b, target, thumb, "image/jpeg", str_map().set("source", source).set("width", str(job.get("width").as_int())));
+      cloud.queue_ack(q, m.receipt());
+      processed = processed + 1;
+    }
+  }
+  let thumbs = cloud.object_list_all(b, "thumbs/");
+  let raws = cloud.object_list_all(b, "raw/");
+  let sample = cloud.object_head(b, "thumbs/photo-100.img");
+  let left = cloud.queue_receive(q, 10, 1, 30);
+  for (k in cloud.object_list_all(b, "")) { cloud.object_delete(b, k); }
+  lmcode_return_put("uploads", raws.len());
+  lmcode_return_put("thumbs", thumbs.len());
+  lmcode_return_put("processed", processed);
+  lmcode_return_put("polls", polls);
+  lmcode_return_put("sample_source", sample.metadata().get("source"));
+  lmcode_return_put("sample_width", sample.metadata().get("width"));
+  lmcode_return_put("sample_bytes", sample.size());
+  lmcode_return_put("left", left.len());
+  lmcode_return_put("bucket_deleted", cloud.bucket_delete(b));
+  lmcode_return_put("queue_deleted", cloud.queue_delete(q));
+end _lmcode_
+
+r = sim_run(program, aws_cloud_command(o)).result;
+assert(r.uploads == o.uploads && r.thumbs == o.uploads && r.processed == o.uploads, "every upload must produce exactly one thumbnail: " + json_stringify(r));
+assert(r.sample_source == "raw/photo-100.img" && r.sample_width == "128" && r.left == 0, "thumbnails must carry provenance metadata and the queue must be drained");
+assert(r.bucket_deleted && r.queue_deleted, "teardown must remove bucket and queue");
+println(str(r.uploads) + " uploads -> " + str(r.processed) + " jobs -> " + str(r.thumbs) + " thumbnails (sample " + str(r.sample_bytes) + " B from " + r.sample_source + ") in " + str(r.polls) + " worker polls; everything removed");
+sim_report(o, {endpoint: o.endpoint, host: "lmaws cloud", pipeline: r});
+sim_pass(o);

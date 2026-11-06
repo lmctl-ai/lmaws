@@ -1,0 +1,81 @@
+# Access: Write to awssim through the shared lmcloud schema (Go lmaws build)
+# What: Durable state: the write phase stores a site's objects and queue plus a local manifest, the verify phase (after the emulator was restarted with --data-dir) checks every object is intact and the queue still exists, then cleans up
+# When: Proving an emulator started with --data-dir keeps state across restarts, or that a deploy survives an emulator bounce in CI
+# Emulator: awssim serve --data-dir DIR (S3, SQS) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/persistence_restart.lms --phase write --cloud-host bin/lmaws; restart awssim with the same --data-dir; lmscript recipes/sim/persistence_restart.lms --phase verify --cloud-host bin/lmaws (default --phase both runs both without a restart)
+# Arguments: --endpoint URL --cloud-host PATH --run ID --out DIR --phase write|verify|both
+# Cleanup: the verify phase deletes everything it finds in the manifest
+import "./lib/common.lms";
+
+o = sim_options("persistence_restart", {phase: {type: "string", default: "both", description: "write, verify or both"}}, "usage: persistence_restart.lms [--phase write|verify|both] [--endpoint URL] [--cloud-host PATH]");
+assert(o.phase == "write" || o.phase == "verify" || o.phase == "both", "--phase must be write, verify or both");
+manifest_path = o.out + "/manifest.json";
+command = aws_cloud_command(o);
+
+if (o.phase == "write" || o.phase == "both") {
+  bucket = "lmaws-sim-durable-" + o.run;
+  queue = "lmaws-sim-durable-q-" + o.run;
+  writer = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  let b = ${bucket};
+  let q = ${queue};
+  cloud.bucket_create(b);
+  let etags = str_list();
+  for (i in range(0, 5)) {
+    let m = cloud.object_put(b, "site/page-" + str(i) + ".html", "<h1>page " + str(i) + " of run " + ${o.run} + "</h1>", "text/html; charset=utf-8", str_map().set("run", ${o.run}));
+    etags.add(m.etag());
+  }
+  cloud.queue_create(q);
+  cloud.queue_send(q, "pending-job-1");
+  cloud.queue_send(q, "pending-job-2");
+  lmcode_return_put("etags", etags.join(","));
+end _lmcode_
+  w = sim_run(writer, command).result;
+  write_json(manifest_path, {bucket: bucket, queue: queue, run: o.run, objects: 5, etags: split(w.etags, ","), written_at: strftime(now(), "%Y-%m-%dT%H:%M:%SZ")});
+  println("wrote 5 objects to " + bucket + " and 2 messages to " + queue + "; manifest " + manifest_path);
+}
+
+if (o.phase == "verify" || o.phase == "both") {
+  assert(file_exists(manifest_path), "no manifest at " + manifest_path + "; run --phase write first with the same --out");
+  m = read_json(manifest_path);
+  verifier = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  cloud.set_abort_on_error(false);
+  let b = ${m.bucket};
+  let q = ${m.queue};
+  let expected_etags = str_split(${join(m.etags, ",")}, ",");
+  let intact = 0;
+  let same_etag = 0;
+  for (i in range(0, ${m.objects})) {
+    let key = "site/page-" + str(i) + ".html";
+    let body = cloud.object_get(b, key);
+    if (body == "<h1>page " + str(i) + " of run " + ${m.run} + "</h1>") { intact = intact + 1; }
+    if (cloud.object_head(b, key).etag() == expected_etags.at(i)) { same_etag = same_etag + 1; }
+  }
+  let bucket_exists = cloud.bucket_exists(b);
+  let queue_exists = cloud.queue_exists(q);
+  let pending = 0;
+  if (queue_exists) {
+    let polls = 0;
+    while (pending < 2 && polls < 3) {
+      polls = polls + 1;
+      let batch = cloud.queue_receive(q, 10, 1, 30);
+      for (i in range(0, batch.len())) { pending = pending + 1; cloud.queue_ack(q, batch.at(i).receipt()); }
+    }
+  }
+  for (k in cloud.object_list_all(b, "")) { cloud.object_delete(b, k); }
+  lmcode_return_put("bucket_exists", bucket_exists);
+  lmcode_return_put("intact", intact);
+  lmcode_return_put("same_etag", same_etag);
+  lmcode_return_put("queue_exists", queue_exists);
+  lmcode_return_put("pending_messages", pending);
+  lmcode_return_put("bucket_deleted", cloud.bucket_delete(b));
+  lmcode_return_put("queue_deleted", cloud.queue_delete(q));
+end _lmcode_
+  v = sim_run(verifier, command).result;
+  assert(v.bucket_exists && v.intact == m.objects, "every object written before the restart must read back intact: " + json_stringify(v));
+  assert(v.queue_exists && v.bucket_deleted && v.queue_deleted, "the queue must survive and cleanup must succeed");
+  println(str(v.intact) + "/" + str(m.objects) + " objects intact (" + str(v.same_etag) + " with unchanged ETag), queue " + m.queue + " present with " + str(v.pending_messages) + " pending messages (written " + m.written_at + "); cleaned up");
+  sim_report(o, {endpoint: o.endpoint, host: "lmaws cloud", manifest: m, verify: v});
+}
+sim_pass(o);

@@ -1,0 +1,57 @@
+# Access: Write to awssim through the shared lmcloud schema (Go lmaws build)
+# What: Concurrency: several host processes upload disjoint prefixes into one bucket at the same time (lmscript parallel_map()), then one listing proves nothing was lost or duplicated
+# When: Load-testing a deploy that fans out uploads, or checking the emulator under concurrent writers
+# Emulator: awssim (S3) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/concurrent_uploaders.lms --cloud-host bin/lmaws
+# Arguments: --endpoint URL --cloud-host PATH --run ID --out DIR --workers N --per-worker N
+# Cleanup: all objects and the bucket are deleted
+import "./lib/common.lms";
+
+o = sim_options("concurrent_uploaders", {workers: {type: "number", default: 4, description: "parallel host processes (1..8)"}, per_worker: {flag: "per-worker", type: "number", default: 25, description: "objects per worker (1..200)"}}, "usage: concurrent_uploaders.lms [--endpoint URL] [--cloud-host PATH] [--workers N] [--per-worker N]");
+assert(o.workers >= 1 && o.workers <= 8 && o.per_worker >= 1 && o.per_worker <= 200, "--workers must be 1..8 and --per-worker 1..200");
+bucket = "lmaws-sim-parallel-" + o.run;
+command = aws_cloud_command(o);
+
+prepare = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  lmcode_return_put("created", cloud.bucket_create(${bucket}));
+end _lmcode_
+assert(sim_run(prepare, command).result.created, "the shared bucket must be created first");
+
+fn upload(worker) {
+  let p = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  let b = ${bucket};
+  let prefix = "worker-" + ${str(worker)} + "/";
+  let n = ${o.per_worker};
+  for (i in range(0, n)) {
+    cloud.object_put(b, prefix + "part-" + str(1000 + i) + ".txt", "worker " + ${str(worker)} + " part " + str(i), "text/plain", str_map().set("worker", ${str(worker)}));
+  }
+  lmcode_return_put("worker", ${worker});
+  lmcode_return_put("uploaded", n);
+  lmcode_return_put("listed", cloud.object_list_all(b, prefix).len());
+end _lmcode_
+  return run_lmcode(p, {command: command});
+}
+started = now();
+results = parallel_map(range(1, o.workers + 1), upload);
+elapsed_ms = now() - started;
+for (res in results) { assert(res.ok && res.result.listed == o.per_worker, "every worker must upload and see its own objects: " + json_stringify(res)); }
+
+verify = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  let b = ${bucket};
+  let all = cloud.object_list_all(b, "");
+  let per_worker = str_list();
+  for (w in range(1, ${o.workers} + 1)) { per_worker.add(str(cloud.object_list_all(b, "worker-" + str(w) + "/").len())); }
+  for (k in all) { cloud.object_delete(b, k); }
+  lmcode_return_put("total", all.len());
+  lmcode_return_put("per_worker", per_worker.join(","));
+  lmcode_return_put("deleted", cloud.bucket_delete(b));
+end _lmcode_
+v = sim_run(verify, command).result;
+expected = o.workers * o.per_worker;
+assert(v.total == expected && v.deleted, "the bucket must hold exactly " + str(expected) + " objects after all workers finish, got " + str(v.total));
+println(str(o.workers) + " concurrent workers x " + str(o.per_worker) + " objects = " + str(v.total) + " objects in " + str(elapsed_ms) + " ms (" + str(round(v.total * 1000 / max(elapsed_ms, 1))) + " objects/s); per worker " + v.per_worker + "; bucket removed");
+sim_report(o, {endpoint: o.endpoint, host: "lmaws cloud", workers: o.workers, per_worker: o.per_worker, elapsed_ms: elapsed_ms, verify: v});
+sim_pass(o);

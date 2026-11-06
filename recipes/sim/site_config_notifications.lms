@@ -1,0 +1,38 @@
+# Access: Write with the lmaws profile (native lmaws host against awssim)
+# What: Operational plumbing for a site: configuration in SSM parameters, an SNS topic that receives a deploy notification, a CloudWatch log group for the app, inventories of all three, ledger cleanup
+# When: Wiring the non-storage pieces (config, alerts, logs) a web deployment needs
+# Emulator: awssim (SSM, SNS, CloudWatch Logs) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/site_config_notifications.lms
+# Arguments: --endpoint URL --host PATH --run ID --out DIR
+# Cleanup: run.cleanup() deletes the parameters, topic and log group
+import "./lib/common.lms";
+
+o = sim_options("site_config_notifications", {}, "usage: site_config_notifications.lms [--endpoint URL] [--host PATH]");
+raw = o.out + "/ops.json";
+config = json_stringify({theme: "dark", maintenance: false, cdn: "https://cdn.example.com", features: ["search", "comments"]});
+
+program = _lmcode_ cli="lmaws";
+let cloud = aws.region("us-east-1");
+let run = cloud.run(${o.run}, ${o.out + "/ledgers"});
+let site_config = run.parameter("site-config", ${config});
+let api_url = run.parameter("api-url", "https://api.example.com");
+let deploys = run.topic("deploys");
+run.put(deploys, "message", "{\"event\":\"deploy\",\"run\":\"" + ${o.run} + "\",\"status\":\"ok\"}");
+run.put(deploys, "message", "{\"event\":\"smoke\",\"run\":\"" + ${o.run} + "\",\"status\":\"ok\"}");
+let app_logs = run.log_group("app");
+let parameters = cloud.parameters();
+let topics = cloud.topics();
+let log_groups = cloud.log_groups();
+let created = run.remaining();
+run.cleanup();
+check(run.remaining() == 0);
+file_write(${raw}, "{\"created\":" + str(created) + ",\"site_config\":" + site_config.json() + ",\"api_url\":" + api_url.json() + ",\"topic\":" + deploys.json() + ",\"log_group\":" + app_logs.json() + ",\"parameters\":" + parameters.json() + ",\"topics\":" + topics.json() + ",\"log_groups\":" + log_groups.json() + ",\"estimated_cost\":" + str(run.estimated_cost()) + "}");
+end _lmcode_
+
+sim_run(program, aws_native_command(o, "lmaws"));
+ops = sim_read_json(raw);
+assert(ops.created == 4, "two parameters, a topic and a log group must be owned by the run");
+assert(len(filter_by(ops.parameters, "name", ops.site_config.name)) == 1 && len(filter_by(ops.topics, "name", ops.topic.name)) == 1 && len(filter_by(ops.log_groups, "name", ops.log_group.name)) == 1, "inventories must list the owned config, topic and log group");
+println("config " + ops.site_config.name + " and " + ops.api_url.name + " stored; 2 notifications published to " + ops.topic.name + "; log group " + ops.log_group.name + " ready; all removed (estimated $" + str(ops.estimated_cost) + ")");
+sim_report(o, {endpoint: o.endpoint, host: "lmaws", ops: ops});
+sim_pass(o);

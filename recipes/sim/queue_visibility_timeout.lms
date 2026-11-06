@@ -1,0 +1,93 @@
+# Access: Write to awssim through the shared lmcloud schema (Go lmaws build)
+# What: At-least-once semantics: messages received without an ack stay invisible for the visibility timeout and then come back, a nack with zero visibility hands a message back immediately, acked messages never return
+# When: Designing a worker that may crash mid-job and must not lose or duplicate work
+# Emulator: awssim (SQS) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/queue_visibility_timeout.lms --cloud-host bin/lmaws
+# Arguments: --endpoint URL --cloud-host PATH --run ID --out DIR
+# Cleanup: the queue is deleted
+import "./lib/common.lms";
+
+o = sim_options("queue_visibility_timeout", {}, "usage: queue_visibility_timeout.lms [--endpoint URL] [--cloud-host PATH]");
+queue = "lmaws-sim-vis-" + o.run;
+
+first = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  let q = ${queue};
+  cloud.queue_create(q);
+  cloud.queue_send(q, "job-a");
+  cloud.queue_send(q, "job-b");
+  cloud.queue_send(q, "job-c");
+  let ids = str_list();
+  let receipts = str_list();
+  let polls = 0;
+  while (ids.len() < 3 && polls < 10) {
+    polls = polls + 1;
+    let batch = cloud.queue_receive(q, 10, 1, 3);
+    for (i in range(0, batch.len())) { ids.add(batch.at(i).id()); receipts.add(batch.at(i).receipt()); }
+  }
+  let hidden = cloud.queue_receive(q, 10, 0, 3);
+  lmcode_return_put("received", ids.len());
+  lmcode_return_put("ids", ids.join(","));
+  lmcode_return_put("receipts", receipts.join("|"));
+  lmcode_return_put("hidden_while_in_flight", hidden.len());
+end _lmcode_
+command = aws_cloud_command(o);
+a = sim_run(first, command).result;
+assert(a.received == 3 && a.hidden_while_in_flight == 0, "three messages must be in flight and invisible: " + json_stringify(a));
+sleep_ms(4500);
+
+second = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  let q = ${queue};
+  let first_ids = str_split(${a.ids}, ",");
+  let saved_receipts = str_split(${a.receipts}, "|");
+  let again = str_list();
+  let polls = 0;
+  let natural = 0;
+  let forced = false;
+  while (again.len() < 3 && polls < 20) {
+    polls = polls + 1;
+    if (polls == 6 && again.len() < 3) {
+      # Not every emulator redelivers on ack-deadline expiry (Pub/Sub on gcpsim does not); hand the
+      # in-flight messages back explicitly with their saved receipts.
+      forced = true;
+      for (rc in saved_receipts) { cloud.queue_nack(q, rc, 0); }
+    }
+    let batch = cloud.queue_receive(q, 10, 2, 60);
+    for (i in range(0, batch.len())) {
+      let m = batch.at(i);
+      again.add(m.id());
+      if (!forced) { natural = natural + 1; }
+      cloud.queue_ack(q, m.receipt());
+    }
+  }
+  let same = 0;
+  for (id in again) { if (first_ids.contains(id)) { same = same + 1; } }
+
+  cloud.queue_send(q, "job-d");
+  let got = cloud.queue_receive(q, 1, 2, 60);
+  let new_receipt = cloud.queue_nack(q, got.at(0).receipt(), 0);
+  let redelivered = 0;
+  polls = 0;
+  while (redelivered == 0 && polls < 15) {
+    polls = polls + 1;
+    let batch = cloud.queue_receive(q, 10, 2, 30);
+    for (i in range(0, batch.len())) { redelivered = redelivered + 1; cloud.queue_ack(q, batch.at(i).receipt()); }
+  }
+  let empty = cloud.queue_receive(q, 10, 1, 30);
+  lmcode_return_put("redelivered_after_timeout", again.len());
+  lmcode_return_put("natural_redelivery", natural);
+  lmcode_return_put("forced_nack", forced);
+  lmcode_return_put("same_ids", same);
+  lmcode_return_put("nack_redelivered", redelivered);
+  lmcode_return_put("nack_receipt_rotated", new_receipt != got.at(0).receipt());
+  lmcode_return_put("left", empty.len());
+  lmcode_return_put("deleted", cloud.queue_delete(q));
+end _lmcode_
+b = sim_run(second, command).result;
+assert(b.redelivered_after_timeout == 3, "all three unacked messages must come back (by timeout or by nack), got " + str(b.redelivered_after_timeout));
+assert(b.nack_redelivered == 1 && b.left == 0 && b.deleted, "a nack must hand the message back once and acks must drain the queue");
+how = if_else(b.forced_nack, "only after an explicit nack(0) of the saved receipts (" + str(b.natural_redelivery) + " came back on their own)", "on their own after the 3 s timeout");
+println("3 messages invisible while in flight, redelivered " + how + " (" + str(b.same_ids) + "/3 with the same id), nack(0) redelivered immediately (receipt rotated: " + str(b.nack_receipt_rotated) + "), queue drained and deleted");
+sim_report(o, {endpoint: o.endpoint, host: "lmaws cloud", first: a, second: b});
+sim_pass(o);

@@ -1,0 +1,39 @@
+# Access: Write with the lmaws profile (native lmaws host against awssim)
+# What: Cost guardrail: with LMAWS_MAX_COST_USD set to zero the host refuses the first charged resource before any request leaves, records the refusal in the cost ledger and fails the program; with the normal cap the same program succeeds and cleans up
+# When: Making sure a runaway test or deploy script cannot spend past its budget
+# Emulator: awssim (S3, SQS) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/budget_guardrail.lms
+# Arguments: --endpoint URL --host PATH --run ID --out DIR
+# Cleanup: the refused run creates nothing; the allowed run cleans up through its ledger
+import "./lib/common.lms";
+
+o = sim_options("budget_guardrail", {}, "usage: budget_guardrail.lms [--endpoint URL] [--host PATH]");
+raw = o.out + "/allowed.json";
+
+program = _lmcode_ cli="lmaws";
+let cloud = aws.region("us-east-1");
+let run = cloud.run(${o.run}, ${o.out + "/ledgers"});
+let bucket = run.bucket("budgeted");
+let queue = run.queue("budgeted");
+let created = run.remaining();
+run.cleanup();
+check(run.remaining() == 0);
+file_write(${raw}, "{\"created\":" + str(created) + ",\"estimated_cost\":" + str(run.estimated_cost()) + "}");
+end _lmcode_
+
+command = aws_native_command(o, "lmaws");
+set_env("LMAWS_MAX_COST_USD", "0");
+refused = run_lmcode(program, {command: command});
+assert(!refused.ok, "a zero budget must refuse the first charged resource");
+set_env("LMAWS_MAX_COST_USD", "0.05");
+sim_run(program, command);
+allowed = sim_read_json(raw);
+assert(allowed.created == 2, "the same program must succeed under the default cap");
+ledgers = glob(o.out + "/ledgers/lmaws-*.jsonl");
+refusals = 0;
+for (path in ledgers) { for (line in lines(read_file(path))) { if (contains(line, "cost_refused")) { refusals = refusals + 1; } } }
+assert(refusals >= 1, "the cost ledger must record the refusal");
+println("cap $0: refused with " + getstr(refused, "code", "") + " (" + getstr(refused, "message", "") + ")");
+println("cap $0.05: 2 resources created and cleaned up, estimated $" + str(allowed.estimated_cost) + "; " + str(refusals) + " cost_refused ledger entries");
+sim_report(o, {endpoint: o.endpoint, host: "lmaws", refused: refused, allowed: allowed, refusals: refusals});
+sim_pass(o);

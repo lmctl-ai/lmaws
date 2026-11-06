@@ -1,0 +1,89 @@
+# Access: Write to awssim through the shared lmcloud schema (Go lmaws build)
+# What: Client robustness: idempotent creates and deletes, probes that answer false instead of failing, NOT_FOUND and CONFLICT classification with HTTP status, and pre-flight INVALID_ARGUMENT guards that never reach the wire
+# When: Writing retry and error-handling code for a web backend; the same contract holds on every provider
+# Emulator: awssim (S3, SQS) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/error_handling.lms --cloud-host bin/lmaws
+# Arguments: --endpoint URL --cloud-host PATH --run ID --out DIR
+# Cleanup: the bucket and queue are deleted
+import "./lib/common.lms";
+
+o = sim_options("error_handling", {}, "usage: error_handling.lms [--endpoint URL] [--cloud-host PATH]");
+bucket = "lmaws-sim-errors-" + o.run;
+missing = "lmaws-sim-missing-" + o.run;
+queue = "lmaws-sim-errors-q-" + o.run;
+
+program = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  cloud.set_abort_on_error(false);
+  let b = ${bucket};
+  let mb = ${missing};
+  let q = ${queue};
+
+  let first = cloud.bucket_create(b);
+  let second = cloud.bucket_create(b);
+  lmcode_return_put("create_idempotent", first && !second && cloud.last_error().code() == ErrorCode.OK);
+
+  let probe = cloud.bucket_exists(mb);
+  lmcode_return_put("missing_bucket_probe", !probe && cloud.last_error().code() == ErrorCode.OK);
+  cloud.object_get(mb, "x.txt");
+  let e = cloud.last_error();
+  lmcode_return_put("missing_bucket_get", str(e.code()) + " http=" + str(e.http_status()) + " provider=" + e.provider_code());
+  lmcode_return_put("missing_bucket_get_nf", e.code() == ErrorCode.NOT_FOUND && e.http_status() == 404);
+
+  cloud.object_put(b, "keep.txt", "keep", "text/plain", str_map());
+  let head = cloud.object_head(b, "nope.txt");
+  lmcode_return_put("missing_key_head", !head.exists() && cloud.last_error().code() == ErrorCode.OK);
+  cloud.object_get(b, "nope.txt");
+  lmcode_return_put("missing_key_get_nf", cloud.last_error().code() == ErrorCode.NOT_FOUND);
+  cloud.object_delete(b, "nope.txt");
+  lmcode_return_put("missing_key_delete_ok", cloud.last_error().code() == ErrorCode.OK);
+
+  let blocked = cloud.bucket_delete(b);
+  let conflict = cloud.last_error();
+  lmcode_return_put("nonempty_delete", str(conflict.code()) + " http=" + str(conflict.http_status()));
+  lmcode_return_put("nonempty_delete_conflict", !blocked && conflict.code() == ErrorCode.CONFLICT);
+
+  cloud.bucket_create("Bad_Name");
+  let bad_name = cloud.last_error();
+  cloud.object_put(b, "", "x", "text/plain", str_map());
+  let bad_key = cloud.last_error();
+  cloud.object_put(b, "meta.txt", "x", "text/plain", str_map().set("Not-Valid", "v"));
+  let bad_meta = cloud.last_error();
+  cloud.queue_receive(q, 50, 1, 30);
+  let bad_bounds = cloud.last_error();
+  lmcode_return_put("preflight", str(bad_name.code()) + "," + str(bad_key.code()) + "," + str(bad_meta.code()) + "," + str(bad_bounds.code()));
+  lmcode_return_put("preflight_ok", bad_name.code() == ErrorCode.INVALID_ARGUMENT && bad_name.http_status() == 0 && bad_key.code() == ErrorCode.INVALID_ARGUMENT && bad_meta.code() == ErrorCode.INVALID_ARGUMENT && bad_bounds.code() == ErrorCode.INVALID_ARGUMENT);
+
+  cloud.queue_send(q, "x");
+  lmcode_return_put("missing_queue_send_nf", cloud.last_error().code() == ErrorCode.NOT_FOUND);
+  let qexists = cloud.queue_exists(q);
+  lmcode_return_put("missing_queue_probe", !qexists && cloud.last_error().code() == ErrorCode.OK);
+  cloud.queue_create(q);
+  cloud.queue_send(q, "one");
+  let got = cloud.queue_receive(q, 1, 2, 30);
+  let receipt = got.at(0).receipt();
+  cloud.queue_ack(q, receipt);
+  cloud.queue_ack(q, receipt);
+  lmcode_return_put("double_ack_ok", cloud.last_error().code() == ErrorCode.OK);
+  cloud.queue_nack(q, "not-a-real-receipt", 0);
+  lmcode_return_put("bad_receipt", str(cloud.last_error().code()));
+  lmcode_return_put("bad_receipt_invalid", cloud.last_error().code() == ErrorCode.INVALID_ARGUMENT);
+  let qdel1 = cloud.queue_delete(q);
+  let qdel2 = cloud.queue_delete(q);
+  lmcode_return_put("queue_delete_idempotent", qdel1 && !qdel2 && cloud.last_error().code() == ErrorCode.OK);
+
+  cloud.object_delete(b, "keep.txt");
+  let del1 = cloud.bucket_delete(b);
+  let del2 = cloud.bucket_delete(b);
+  lmcode_return_put("bucket_delete_idempotent", del1 && !del2 && cloud.last_error().code() == ErrorCode.OK);
+end _lmcode_
+
+r = sim_run(program, aws_cloud_command(o)).result;
+checks = ["create_idempotent", "missing_bucket_probe", "missing_bucket_get_nf", "missing_key_head", "missing_key_get_nf", "missing_key_delete_ok", "nonempty_delete_conflict", "preflight_ok", "missing_queue_send_nf", "missing_queue_probe", "double_ack_ok", "bad_receipt_invalid", "queue_delete_idempotent", "bucket_delete_idempotent"];
+failed = [];
+for (c in checks) { if (!r[c]) { push(failed, c); } }
+assert(len(failed) == 0, "error contract violations: " + json_stringify(failed) + " in " + json_stringify(r));
+println("missing bucket get -> " + r.missing_bucket_get + "; non-empty delete -> " + r.nonempty_delete + "; pre-flight guards -> " + r.preflight + "; bad receipt -> " + r.bad_receipt);
+println(str(len(checks)) + " error-contract checks hold on " + o.endpoint);
+sim_report(o, {endpoint: o.endpoint, host: "lmaws cloud", checks: checks, results: r});
+sim_pass(o);

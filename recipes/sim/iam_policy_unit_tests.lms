@@ -1,0 +1,47 @@
+# Access: Read-only (native lmaws host; the simulator runs offline inside the host, no IAM request is sent)
+# What: Unit tests for an IAM policy: build the site deployer policy with the typed builder, run allowed/implicitDeny/explicitDeny probes (deployer may write site buckets and send jobs, must not touch other buckets, drop tables or act outside us-east-1) and fail on any probe the simulator marks as not passed
+# When: Guarding a policy change in CI the same way application code is unit-tested
+# Emulator: none required (offline simulator); the emulator endpoint is still accepted so the recipe fits the runner
+# Run: lmscript recipes/sim/iam_policy_unit_tests.lms
+# Arguments: --endpoint URL --host PATH --out DIR
+# Cleanup: nothing is created
+import "./lib/common.lms";
+
+o = sim_options("iam_policy_unit_tests", {}, "usage: iam_policy_unit_tests.lms [--host PATH]");
+raw = o.out + "/simulation.json";
+probes = [
+  {id: "site_upload_allowed", action: "s3:PutObject", resource: "arn:aws:s3:::lmaws-site-prod/index.html", expected: "allowed"},
+  {id: "site_list_allowed", action: "s3:ListBucket", resource: "arn:aws:s3:::lmaws-site-prod", expected: "allowed"},
+  {id: "foreign_bucket_denied", action: "s3:PutObject", resource: "arn:aws:s3:::customer-data/export.csv", expected: "implicitDeny"},
+  {id: "job_send_allowed", action: "sqs:SendMessage", resource: "arn:aws:sqs:us-east-1:000000000000:lmaws_jobs", expected: "allowed"},
+  {id: "foreign_queue_denied", action: "sqs:SendMessage", resource: "arn:aws:sqs:us-east-1:000000000000:billing", expected: "implicitDeny"},
+  {id: "session_item_allowed", action: "dynamodb:PutItem", resource: "arn:aws:dynamodb:us-east-1:000000000000:table/lmaws_sessions", expected: "allowed"},
+  {id: "table_delete_denied", action: "dynamodb:DeleteTable", resource: "arn:aws:dynamodb:us-east-1:000000000000:table/lmaws_sessions", expected: "explicitDeny"},
+  {id: "iam_denied", action: "iam:CreateUser", resource: "*", expected: "implicitDeny"},
+  {id: "other_region_denied", action: "s3:PutObject", resource: "arn:aws:s3:::lmaws-site-prod/index.html", expected: "explicitDeny", context: {"aws:RequestedRegion": "eu-west-1"}}
+];
+
+program = _lmcode_ cli="lmaws";
+let p = aws.policy("lmaws_site_deployer")
+  .s3_bucket_sandbox("lmaws")
+  .queue_sandbox("lmaws")
+  .table_sandbox("lmaws")
+  .deny("NoTableDrops", "dynamodb:DeleteTable", "*")
+  .region_lock("OnlyRegion", "us-east-1", "sts:*");
+let results = aws.policy_simulate(p.json(), ${json_stringify(probes)});
+file_write(${raw}, "{\"policy\":" + p.json() + ",\"lint\":" + p.lint().json() + ",\"results\":" + results.json() + "}");
+end _lmcode_
+
+sim_run(program, aws_native_command(o, "default"));
+sim = sim_read_json(raw);
+failures = [];
+for (row in sim.results) {
+  verdict = if_else(getstr(row, "passed") == "true", "ok", "MISMATCH");
+  println(pad_end(verdict, 9) + pad_end(getstr(row, "probe_id"), 26) + pad_end(getstr(row, "action"), 22) + pad_end(getstr(row, "decision"), 14) + "expected " + pad_end(getstr(row, "expected"), 13) + if_else(getstr(row, "matched_statements") != "", "via " + getstr(row, "matched_statements"), ""));
+  if (verdict != "ok") { push(failures, row); }
+}
+assert(len(sim.results) == len(probes), "the simulator must answer every probe (" + str(len(sim.results)) + "/" + str(len(probes)) + ")");
+assert(len(failures) == 0, "policy probes with unexpected decisions: " + json_stringify(failures));
+println(str(len(probes)) + " probes decided as expected; lint valid=" + getstr(sim, "lint.valid") + ", " + getstr(sim, "lint.statement_count") + " statements");
+sim_report(o, {host: "lmaws (offline simulator)", probes: probes, simulation: sim});
+sim_pass(o);

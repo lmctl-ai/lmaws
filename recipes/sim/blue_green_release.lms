@@ -1,0 +1,59 @@
+# Access: Write to awssim through the shared lmcloud schema (Go lmaws build)
+# What: Blue/green static releases: two immutable release trees under releases/, a tiny current.json pointer the edge reads first, an instant switch to the new release, a verified rollback and pruning of the retired tree
+# When: Deploying a static site without half-written pages and with a one-object rollback
+# Emulator: awssim (S3) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/blue_green_release.lms --cloud-host bin/lmaws
+# Arguments: --endpoint URL --cloud-host PATH --run ID --out DIR
+# Cleanup: both release trees, the pointer and the bucket are deleted
+import "./lib/common.lms";
+
+o = sim_options("blue_green_release", {}, "usage: blue_green_release.lms [--endpoint URL] [--cloud-host PATH]");
+bucket = "lmaws-sim-releases-" + o.run;
+
+program = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  let b = ${bucket};
+  cloud.bucket_create(b);
+  fn publish(b: string, release: string, title: string) -> int {
+    cloud.object_put(b, "releases/" + release + "/index.html", "<!doctype html><title>" + title + "</title><h1>" + title + "</h1><script src=app.js></script>", "text/html; charset=utf-8", str_map().set("release", release));
+    cloud.object_put(b, "releases/" + release + "/app.js", "console.log('" + release + "')", "application/javascript", str_map().set("release", release));
+    cloud.object_put(b, "releases/" + release + "/style.css", "h1{color:#" + str_substr(release + "000000", 0, 6) + "}", "text/css", str_map().set("release", release));
+    return 3;
+  }
+  fn point_to(b: string, release: string) -> void {
+    cloud.object_put(b, "current.json", "{\"release\":\"" + release + "\"}", "application/json", str_map().set("cache_control", "no-store"));
+  }
+  fn serve_index(b: string) -> string {
+    let current = json_parse(cloud.object_get(b, "current.json")).get("release").as_string();
+    return cloud.object_get(b, "releases/" + current + "/index.html");
+  }
+  let v1 = publish(b, "v1", "Site v1 (blue)");
+  point_to(b, "v1");
+  let served_v1 = serve_index(b);
+  let v2 = publish(b, "v2", "Site v2 (green)");
+  let still_v1 = serve_index(b);
+  point_to(b, "v2");
+  let served_v2 = serve_index(b);
+  point_to(b, "v1");
+  let rolled_back = serve_index(b);
+  for (k in cloud.object_list_all(b, "releases/v2/")) { cloud.object_delete(b, k); }
+  let pruned = cloud.object_list_all(b, "releases/v2/").len();
+  let remaining = cloud.object_list_all(b, "").len();
+  for (k in cloud.object_list_all(b, "")) { cloud.object_delete(b, k); }
+  lmcode_return_put("v1_files", v1);
+  lmcode_return_put("v2_files", v2);
+  lmcode_return_put("served_v1", str_contains(served_v1, "Site v1"));
+  lmcode_return_put("still_v1_while_staging", str_contains(still_v1, "Site v1"));
+  lmcode_return_put("served_v2", str_contains(served_v2, "Site v2"));
+  lmcode_return_put("rolled_back", str_contains(rolled_back, "Site v1"));
+  lmcode_return_put("pruned_left", pruned);
+  lmcode_return_put("remaining_after_prune", remaining);
+  lmcode_return_put("deleted", cloud.bucket_delete(b));
+end _lmcode_
+
+r = sim_run(program, aws_cloud_command(o)).result;
+assert(r.served_v1 && r.still_v1_while_staging && r.served_v2 && r.rolled_back, "the pointer must select the release and roll back cleanly: " + json_stringify(r));
+assert(r.pruned_left == 0 && r.remaining_after_prune == r.v1_files + 1 && r.deleted, "pruning must remove only the retired release");
+println("v1 live -> v2 staged alongside (v1 still served) -> switched to v2 -> rolled back to v1 -> v2 pruned (" + str(r.remaining_after_prune) + " objects left: v1 tree + pointer); bucket removed");
+sim_report(o, {endpoint: o.endpoint, host: "lmaws cloud", release: r});
+sim_pass(o);

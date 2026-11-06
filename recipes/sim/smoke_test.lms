@@ -1,0 +1,46 @@
+# Access: Write to awssim through the shared lmcloud schema (Go lmaws build)
+# What: CI smoke test: the emulator answers, a bucket and a queue can be created, probed and removed, and every step is timed
+# When: First thing in a pipeline before the longer recipes; fails fast with the host's classified error when the emulator is down or misconfigured
+# Emulator: awssim (S3, SQS) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/smoke_test.lms --cloud-host bin/lmaws
+# Arguments: --endpoint URL --cloud-host PATH --run ID --out DIR
+# Cleanup: the bucket and queue are deleted
+import "./lib/common.lms";
+
+o = sim_options("smoke_test", {}, "usage: smoke_test.lms [--endpoint URL] [--cloud-host PATH]");
+bucket = "lmaws-sim-smoke-" + o.run;
+queue = "lmaws-sim-smoke-q-" + o.run;
+started = now();
+
+program = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  let b = ${bucket};
+  let q = ${queue};
+  lmcode_return_put("provider", cloud.provider());
+  lmcode_return_put("storage_endpoint", cloud.endpoint("storage"));
+  lmcode_return_put("queue_endpoint", cloud.endpoint("queue"));
+  lmcode_return_put("bucket_created", cloud.bucket_create(b));
+  lmcode_return_put("bucket_exists", cloud.bucket_exists(b));
+  let put = cloud.object_put(b, "smoke.txt", "ok", "text/plain", str_map());
+  lmcode_return_put("object_size", put.size());
+  lmcode_return_put("object_back", cloud.object_get(b, "smoke.txt"));
+  cloud.object_delete(b, "smoke.txt");
+  lmcode_return_put("bucket_deleted", cloud.bucket_delete(b));
+  lmcode_return_put("queue_created", cloud.queue_create(q));
+  lmcode_return_put("queue_exists", cloud.queue_exists(q));
+  let id = cloud.queue_send(q, "smoke");
+  let got = cloud.queue_receive(q, 1, 2, 30);
+  lmcode_return_put("message_id", id);
+  lmcode_return_put("received", got.len());
+  if (got.len() > 0) { cloud.queue_ack(q, got.at(0).receipt()); }
+  lmcode_return_put("queue_deleted", cloud.queue_delete(q));
+end _lmcode_
+
+r = sim_run(program, aws_cloud_command(o)).result;
+elapsed_ms = now() - started;
+assert(r.bucket_created && r.bucket_exists && r.bucket_deleted, "bucket lifecycle must work");
+assert(r.object_size == 2 && r.object_back == "ok", "a tiny object must round-trip");
+assert(r.queue_created && r.queue_exists && r.received == 1 && r.queue_deleted, "queue lifecycle and one message must work");
+println(r.provider + " at " + r.storage_endpoint + " / " + r.queue_endpoint + ": bucket, object, queue and message round trips in " + str(elapsed_ms) + " ms");
+sim_report(o, {endpoint: o.endpoint, host: "lmaws cloud", elapsed_ms: elapsed_ms, smoke: r});
+sim_pass(o);

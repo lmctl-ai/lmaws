@@ -1,0 +1,47 @@
+# Access: Write to awssim through the shared lmcloud schema (Go lmaws build)
+# What: Payload fidelity: a PNG header, every byte value 0..255, an empty object, UTF-8 text with emoji and a 64 KiB text file round-trip with exact size, non-empty ETag and content type
+# When: Serving images, fonts or downloads from object storage and needing byte-exact integrity on every provider
+# Emulator: awssim (S3) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/binary_object_roundtrip.lms --cloud-host bin/lmaws
+# Arguments: --endpoint URL --cloud-host PATH --run ID --out DIR
+# Cleanup: all objects and the bucket are deleted
+import "./lib/common.lms";
+
+o = sim_options("binary_object_roundtrip", {}, "usage: binary_object_roundtrip.lms [--endpoint URL] [--cloud-host PATH]");
+bucket = "lmaws-sim-binary-" + o.run;
+hex_digits = "0123456789abcdef";
+all_bytes_hex = "";
+for (i in range(0, 256)) { all_bytes_hex = all_bytes_hex + char_at(hex_digits, floor(i / 16)) + char_at(hex_digits, i % 16); }
+big_text = repeat("The quick brown fox jumps over the lazy dog. 0123456789\n", 1170);
+
+program = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  let b = ${bucket};
+  cloud.bucket_create(b);
+  let png = str_hex_decode("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489");
+  let every = str_hex_decode(${all_bytes_hex});
+  let text = "Grüße — 雪 ☃ 🚀 \"quoted\" \\ backslash";
+  let big = ${big_text};
+  let m1 = cloud.object_put(b, "images/pixel.png", png, "image/png", str_map());
+  let m2 = cloud.object_put(b, "bin/all-bytes.bin", every, "application/octet-stream", str_map());
+  let m3 = cloud.object_put(b, "empty.txt", "", "text/plain", str_map());
+  let m4 = cloud.object_put(b, "text/unicode.txt", text, "text/plain; charset=utf-8", str_map());
+  let m5 = cloud.object_put(b, "text/big.txt", big, "text/plain", str_map());
+  lmcode_return_put("png_ok", cloud.object_get(b, "images/pixel.png") == png && m1.size() == 33 && str_len(m1.etag()) > 0 && cloud.object_head(b, "images/pixel.png").content_type() == "image/png");
+  lmcode_return_put("all_bytes_ok", cloud.object_get(b, "bin/all-bytes.bin") == every && m2.size() == 256);
+  lmcode_return_put("empty_ok", cloud.object_get(b, "empty.txt") == "" && m3.size() == 0 && cloud.object_head(b, "empty.txt").exists());
+  lmcode_return_put("unicode_ok", cloud.object_get(b, "text/unicode.txt") == text && m4.size() == str_len(text));
+  lmcode_return_put("big_ok", cloud.object_get(b, "text/big.txt") == big && m5.size() == str_len(big));
+  lmcode_return_put("big_bytes", m5.size());
+  lmcode_return_put("unicode_bytes", m4.size());
+  lmcode_return_put("etags_distinct", m1.etag() != m2.etag() && m2.etag() != m4.etag());
+  for (k in cloud.object_list_all(b, "")) { cloud.object_delete(b, k); }
+  lmcode_return_put("deleted", cloud.bucket_delete(b));
+end _lmcode_
+
+r = sim_run(program, aws_cloud_command(o)).result;
+assert(r.png_ok && r.all_bytes_ok && r.empty_ok && r.unicode_ok && r.big_ok, "every payload must round-trip byte for byte: " + json_stringify(r));
+assert(r.etags_distinct && r.deleted, "distinct payloads must have distinct ETags and teardown must succeed");
+println("PNG header (33 B), all 256 byte values, empty object, UTF-8 text (" + str(r.unicode_bytes) + " B) and " + str(r.big_bytes) + " B text all intact on " + o.endpoint);
+sim_report(o, {endpoint: o.endpoint, host: "lmaws cloud", roundtrip: r});
+sim_pass(o);

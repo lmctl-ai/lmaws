@@ -1,0 +1,74 @@
+# Access: Write to awssim through the shared lmcloud schema (Go lmaws build)
+# What: Listing at scale: 120 objects under date and asset prefixes, page through 50 at a time with continuation tokens, verify ascending order, prefix counts and the exhaustive list, tear down
+# When: Building a media browser, backup index or sync job that must page through a large bucket correctly
+# Emulator: awssim (S3) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/object_listing_pagination.lms --cloud-host bin/lmaws
+# Arguments: --endpoint URL --cloud-host PATH --run ID --out DIR --count N
+# Cleanup: all objects and the bucket are deleted
+import "./lib/common.lms";
+
+o = sim_options("object_listing_pagination", {count: {type: "number", default: 120, description: "objects to create (10..500)"}}, "usage: object_listing_pagination.lms [--endpoint URL] [--cloud-host PATH] [--count N]");
+assert(o.count >= 10 && o.count <= 500, "--count must be 10..500");
+bucket = "lmaws-sim-listing-" + o.run;
+
+program = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  let b = ${bucket};
+  let n = ${o.count};
+  cloud.bucket_create(b);
+  let dated = 0;
+  let assets = 0;
+  for (i in range(0, n)) {
+    let num = str(1000 + i);
+    if (i % 3 == 2) {
+      cloud.object_put(b, "assets/img-" + num + ".png", "img" + num, "image/png", str_map());
+      assets = assets + 1;
+    } else {
+      let month = "01";
+      if (i % 2 == 1) { month = "02"; }
+      cloud.object_put(b, "2026/" + month + "/event-" + num + ".json", "{\"n\":" + num + "}", "application/json", str_map());
+      dated = dated + 1;
+    }
+  }
+  let pages = 0;
+  let paged_keys = str_list();
+  let token = "";
+  let more = true;
+  while (more) {
+    let page = cloud.object_list(b, "2026/", 50, token);
+    pages = pages + 1;
+    for (i in range(0, page.len())) { paged_keys.add(page.at(i).key()); }
+    more = page.has_more();
+    token = page.next_token();
+  }
+  let seen = paged_keys.len();
+  let jan = cloud.object_list_all(b, "2026/01/").len();
+  let feb = cloud.object_list_all(b, "2026/02/").len();
+  let asset_page = cloud.object_list(b, "assets/");
+  let everything = cloud.object_list_all(b, "");
+  for (k in everything) { cloud.object_delete(b, k); }
+  let deleted = cloud.bucket_delete(b);
+  lmcode_return_put("created", n);
+  lmcode_return_put("dated", dated);
+  lmcode_return_put("assets", assets);
+  lmcode_return_put("pages", pages);
+  lmcode_return_put("paged_total", seen);
+  lmcode_return_put("paged_keys", paged_keys.join("|"));
+  lmcode_return_put("jan", jan);
+  lmcode_return_put("feb", feb);
+  lmcode_return_put("asset_count", asset_page.len());
+  lmcode_return_put("asset_has_more", asset_page.has_more());
+  lmcode_return_put("all", everything.len());
+  lmcode_return_put("deleted", deleted);
+end _lmcode_
+
+r = sim_run(program, aws_cloud_command(o)).result;
+paged = split(r.paged_keys, "|");
+r.ordered = json_stringify(paged) == json_stringify(sort(paged)) && len(unique(paged)) == len(paged);
+assert(r.paged_total == r.dated && r.pages >= 2, "paging through 2026/ must visit every dated object in more than one page (" + str(r.paged_total) + "/" + str(r.dated) + " in " + str(r.pages) + " pages)");
+assert(r.ordered, "pages must arrive in ascending key order without duplicates across pages");
+assert(r.jan + r.feb == r.dated && r.asset_count == r.assets && !r.asset_has_more, "prefix counts must add up");
+assert(r.all == r.created && r.deleted, "the exhaustive listing must see every object and teardown must succeed");
+println(str(r.created) + " objects: " + str(r.dated) + " dated (" + str(r.jan) + " in 2026/01, " + str(r.feb) + " in 2026/02) read in " + str(r.pages) + " pages of 50, " + str(r.assets) + " assets in one page; ordered=" + str(r.ordered) + "; bucket removed");
+sim_report(o, {endpoint: o.endpoint, host: "lmaws cloud", listing: r});
+sim_pass(o);
