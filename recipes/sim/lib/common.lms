@@ -1,0 +1,94 @@
+# Access: Read-only helpers; importing this file changes no files, processes or environment.
+# What: Shared argument parsing, emulator defaults, host invocation and report helpers for recipes/sim.
+# When: Import from every recipes/sim/*.lms entry. See recipes/sim/README.md.
+# Emulator: awssim on http://127.0.0.1:4566 (override with --endpoint or AWSSIM_ENDPOINT).
+
+fn sim_run_id() {
+  # Digits only: valid for Run names ([a-z0-9]{1,24}), spot runs and the hex web/serverless run ids.
+  let stamp = str(now());
+  return substr(stamp, len(stamp) - 9, 9);
+}
+
+fn sim_flags(extra) {
+  let base = {
+    endpoint: {type: "string", default: getenv("AWSSIM_ENDPOINT", "http://127.0.0.1:4566"), description: "awssim origin; plain http on a loopback address only"},
+    host: {type: "string", default: getenv("LMAWS_BIN", "lmaws"), description: "native lmaws executable (its schema is read from the PATH binary named lmaws)"},
+    cloud_host: {flag: "cloud-host", type: "string", default: getenv("LMAWS_CLOUD_BIN", "lmaws"), description: "Go lmaws build serving the shared lmcloud schema (cmd/lmaws)"},
+    out: {type: "string", default: "", description: "report directory (default data/sim/<recipe>)"},
+    run: {type: "string", default: "", description: "run id suffix; digits or lowercase letters, default from the clock"}
+  };
+  return merge(base, extra);
+}
+
+fn sim_options(name, extra, usage) {
+  let parsed = args_parse(ARGV, sim_flags(extra), usage);
+  if (parsed.help_requested) { println(parsed.help); exit(0); }
+  let o = parsed.values;
+  o.name = name;
+  if (o.out == "") { o.out = "data/sim/" + name; }
+  if (o.run == "") { o.run = sim_run_id(); }
+  assert(regex_test(o.run, "^[a-z0-9]{1,16}$"), "--run must be 1..16 lowercase letters or digits");
+  assert(regex_test(o.endpoint, "^http://(127\\.0\\.0\\.1|localhost|\\[::1\\])(:[0-9]{1,5})?/?$"), "--endpoint must be a loopback http origin such as http://127.0.0.1:4566");
+  o.endpoint = regex_replace(o.endpoint, "/$", "");
+  mkdir(o.out, true);
+  return o;
+}
+
+# Environment for the native (AWS SDK for Java) lmaws host against awssim and the matching command line.
+# profile: lmaws (service sandboxes), lmaws-ec2 (spot/EC2 sandboxes), admin (IAM grants), default (read-only).
+fn aws_native_command(o, profile) {
+  set_env("LMAWS_ENDPOINT", o.endpoint);
+  set_env("LMAWS_LIVE", "1");
+  set_env("LMAWS_APPLY", "1");
+  set_env("AWS_PROFILE", profile);
+  set_env("AWS_DEFAULT_PROFILE", profile);
+  set_env("AWS_REGION", "us-east-1");
+  set_env("AWS_DEFAULT_REGION", "us-east-1");
+  set_env("AWS_EC2_METADATA_DISABLED", "true");
+  set_env("LMAWS_LEDGER_DIR", o.out + "/ledgers");
+  set_env("LMAWS_ADMIN_GRANT", profile == "admin" ? "1" : "");
+  let command = [o.host, "--live", "--profile", profile];
+  if (profile != "default") { push(command, "--apply"); }
+  push(command, "--lmcode");
+  push(command, "$DSLFILE");
+  return command;
+}
+
+# Command line for the Go lmaws port serving the shared lmcloud schema (bucket/object/queue).
+fn aws_cloud_command(o) {
+  set_env("LMCLOUD_ENDPOINT", o.endpoint);
+  set_env("LMAWS_ENDPOINT", o.endpoint);
+  set_env("LMAWS_LIVE", "");
+  set_env("LMAWS_APPLY", "");
+  return [o.cloud_host, "cloud", "--lmcode", "$DSLFILE"];
+}
+
+# Run one lmcode program; the host log is captured and printed only on failure, cost lines always.
+fn sim_run(program, command) {
+  let log = temp_file();
+  set_env("LMAWS_LOG_FILE", log);
+  let r = run_lmcode(program, {command: command});
+  set_env("LMAWS_LOG_FILE", "");
+  let logged = file_exists(log) ? read_file(log) : "";
+  if (file_exists(log)) { remove_file(log); }
+  for (line in lines(logged)) {
+    if (starts_with(line, "estimated cost: $") || starts_with(line, "IAM policy")) { println(line); }
+  }
+  if (!r.ok) {
+    println(logged);
+    println("host failed: " + json_stringify(r));
+    exit(1);
+  }
+  return r;
+}
+
+fn sim_read_json(path) { return json_parse(read_file(path)); }
+
+fn sim_report(o, data) {
+  let path = o.out + "/" + o.name + ".json";
+  write_json(path, data, 2);
+  println("report: " + path);
+  return path;
+}
+
+fn sim_pass(o) { println("PASS " + o.name); }

@@ -1,6 +1,7 @@
 /target/
 /third_party/
 /bin/
+/build/
 /images/
 /data/
 /.omx/

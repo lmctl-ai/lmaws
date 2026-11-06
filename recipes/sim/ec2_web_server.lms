@@ -1,0 +1,73 @@
+# Access: Write with the lmaws-ec2 profile (native lmaws host against awssim with EC2 enabled)
+# What: Provision a disposable nano web server: owned security group, HTTP ingress from one /32, user-data that installs a page, wait for running, verify, stop/start, terminate, teardown with zero leftovers
+# When: Rehearsing a VM-backed site launch; awssim emulates the EC2 control plane (metadata only, no Docker needed)
+# Emulator: awssim started with FLOCI_SERVICES_EC2_ENABLED=true (default endpoint http://127.0.0.1:4567); a VPC whose id matches vpc-[0-9a-z]+ with one subnet must exist (see scripts/test-sim-recipes.py seeding)
+# Run: lmscript recipes/sim/ec2_web_server.lms --endpoint http://127.0.0.1:4567
+# Arguments: --endpoint URL --host PATH --run ID --out DIR --ami ID --cidr A.B.C.D/32 --type t3.nano|t4g.nano --vpc ID --subnet ID
+# Cleanup: Spot.teardown() terminates the instance and deletes the security group
+import "./lib/common.lms";
+
+o = sim_options("ec2_web_server", {
+  endpoint: {type: "string", default: getenv("AWSSIM_EC2_ENDPOINT", "http://127.0.0.1:4567"), description: "awssim origin with EC2 enabled"},
+  ami: {type: "string", default: "ami-0abcdef1234567890", description: "image id (awssim ships this Amazon Linux fixture)"},
+  cidr: {type: "string", default: "203.0.113.10/32", description: "the one IPv4 /32 allowed to reach port 80"},
+  type: {type: "string", default: "t3.nano", description: "t3.nano or t4g.nano"},
+  vpc: {type: "string", default: "", description: "VPC id; default: first non-default VPC on the emulator"},
+  subnet: {type: "string", default: "", description: "subnet id inside --vpc; default: first subnet of that VPC"}
+}, "usage: ec2_web_server.lms [--endpoint URL] [--vpc ID --subnet ID] [--ami ID] [--cidr A.B.C.D/32]");
+user_data = "#!/bin/sh\nset -e\nmkdir -p /var/www/html\ncat > /var/www/html/index.html <<'HTML'\n<!doctype html><html><body><h1>lmaws web server " + o.run + "</h1></body></html>\nHTML\n(command -v python3 >/dev/null && nohup python3 -m http.server 80 --directory /var/www/html >/dev/null 2>&1 &) || true\n";
+network_raw = o.out + "/network.json";
+raw = o.out + "/server.json";
+
+discover = _lmcode_ cli="lmaws";
+let cloud = aws.region("us-east-1");
+file_write(${network_raw}, "{\"vpcs\":" + cloud.vpcs().json() + ",\"subnets\":" + cloud.subnets().json() + "}");
+end _lmcode_
+sim_run(discover, aws_native_command(o, "default"));
+net = sim_read_json(network_raw);
+vpc = o.vpc;
+subnet = o.subnet;
+if (vpc == "") {
+  for (row in net.vpcs) { if (vpc == "" && regex_test(row.id, "^vpc-[0-9a-z]+$")) { vpc = row.id; } }
+}
+if (subnet == "" && vpc != "") {
+  for (row in net.subnets) { if (subnet == "" && row.vpc == vpc && regex_test(row.id, "^subnet-[0-9a-z]+$")) { subnet = row.id; } }
+}
+if (vpc == "" || subnet == "") {
+  println("no usable VPC/subnet on " + o.endpoint + " (awssim's built-in default VPC id is not an EC2-style id); create one first, for example with scripts/test-sim-recipes.py --seed-ec2, or pass --vpc and --subnet");
+  exit(2);
+}
+
+program = _lmcode_ cli="lmaws";
+let cloud = aws.region("us-east-1");
+let spot = cloud.spot_run();
+let group = spot.security_group(${vpc});
+let ingress = spot.http_ingress(group.get("id"), ${o.cidr});
+let server = spot.launch_web(${o.type}, ${o.ami}, ${subnet}, group.get("id"), 0.005, ${user_data});
+let id = server.get("id");
+let running = spot.wait_state(id, "running", 120);
+let verify = spot.verify();
+let status = cloud.instance_status(id);
+let stopped = spot.stop(id);
+let stopped_state = spot.wait_state(id, "stopped", 120);
+let started = spot.start(id);
+let running_again = spot.wait_state(id, "running", 120);
+let fleet = cloud.instances();
+let terminated = spot.terminate(id);
+let gone = spot.wait_state(id, "terminated", 120);
+let teardown = spot.teardown();
+let leftovers = spot.leftovers();
+file_write(${raw}, "{\"run_id\":\"" + spot.run_id() + "\",\"vpc\":\"" + ${vpc} + "\",\"subnet\":\"" + ${subnet} + "\",\"group\":" + group.json() + ",\"ingress\":" + ingress.json() + ",\"server\":" + server.json() + ",\"running\":" + running.json() + ",\"verify\":" + verify.json() + ",\"status\":" + status.json() + ",\"stopped\":" + stopped.json() + ",\"stopped_state\":" + stopped_state.json() + ",\"started\":" + started.json() + ",\"running_again\":" + running_again.json() + ",\"fleet\":" + fleet.json() + ",\"terminated\":" + terminated.json() + ",\"gone\":" + gone.json() + ",\"teardown\":" + teardown.json() + ",\"leftovers\":" + leftovers.json() + ",\"estimated_cost_usd\":" + str(spot.estimated_cost()) + "}");
+end _lmcode_
+
+set_env("LMAWS_FAST_WAITS", "1");
+sim_run(program, aws_native_command(o, "lmaws-ec2"));
+s = sim_read_json(raw);
+assert(getstr(s, "ingress.port") == "80" && getstr(s, "ingress.cidr") == o.cidr, "HTTP ingress must be limited to the given /32");
+assert(getstr(s, "running.state") == "running" && getstr(s, "running.timed_out") == "false", "the instance must reach running");
+assert(getstr(s, "stopped_state.state") == "stopped" && getstr(s, "running_again.state") == "running", "stop and start must round-trip");
+assert(getstr(s, "teardown.terminated") == "1" && getstr(s, "teardown.groups_left") == "0" && len(s.leftovers) == 0, "teardown must leave nothing behind");
+println("instance " + getstr(s, "server.id") + " (" + getstr(s, "server.type") + ", " + getstr(s, "server.az") + ") in " + vpc + "/" + subnet + " behind " + getstr(s, "group.id") + " allowing 80/tcp from " + o.cidr);
+println("lifecycle: launched -> running -> stopped -> running -> terminated; estimated cost $" + str(s.estimated_cost_usd));
+sim_report(o, {endpoint: o.endpoint, host: "lmaws", server: s});
+sim_pass(o);

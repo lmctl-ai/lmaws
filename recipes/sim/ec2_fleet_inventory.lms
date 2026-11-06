@@ -1,0 +1,33 @@
+# Access: Read-only with the default profile (native lmaws host against awssim with EC2 enabled)
+# What: Network and compute inventory for a VM-hosted site: VPCs, subnets, security groups with open ports, instances, volumes, addresses, plus one instance status probe
+# When: Reviewing what a web fleet looks like on the emulator after provisioning, or auditing open ports before go-live
+# Emulator: awssim started with FLOCI_SERVICES_EC2_ENABLED=true (default endpoint http://127.0.0.1:4567)
+# Run: lmscript recipes/sim/ec2_fleet_inventory.lms --endpoint http://127.0.0.1:4567
+# Arguments: --endpoint URL --host PATH --out DIR
+# Cleanup: nothing is created
+import "./lib/common.lms";
+
+o = sim_options("ec2_fleet_inventory", {endpoint: {type: "string", default: getenv("AWSSIM_EC2_ENDPOINT", "http://127.0.0.1:4567"), description: "awssim origin with EC2 enabled"}}, "usage: ec2_fleet_inventory.lms [--endpoint URL] [--host PATH]");
+raw = o.out + "/fleet.json";
+
+program = _lmcode_ cli="lmaws";
+let cloud = aws.region("us-east-1");
+let instances = cloud.instances();
+let probe = "{}";
+if (instances.len() > 0) { probe = cloud.instance_status(instances.at(0).get("id")).json(); }
+file_write(${raw}, "{\"vpcs\":" + cloud.vpcs().json() + ",\"subnets\":" + cloud.subnets().json() + ",\"security_groups\":" + cloud.security_groups().json() + ",\"instances\":" + instances.json() + ",\"volumes\":" + cloud.volumes().json() + ",\"addresses\":" + cloud.addresses().json() + ",\"first_instance_status\":" + probe + "}");
+end _lmcode_
+
+sim_run(program, aws_native_command(o, "default"));
+f = sim_read_json(raw);
+assert(len(f.vpcs) >= 1 && len(f.subnets) >= 1, "the emulator must expose at least its default VPC and subnets");
+open_groups = [];
+for (g in f.security_groups) { if (getstr(g, "public") == "true") { push(open_groups, g.name + " (" + getstr(g, "open_ports") + ")"); } }
+println(str(len(f.vpcs)) + " VPCs, " + str(len(f.subnets)) + " subnets, " + str(len(f.security_groups)) + " security groups (" + str(len(open_groups)) + " open to the internet), " + str(len(f.instances)) + " instances, " + str(len(f.volumes)) + " volumes, " + str(len(f.addresses)) + " elastic IPs");
+for (i in f.instances) { println("  " + i.id + " " + i.state + " " + i.type); }
+if (len(open_groups) > 0) { println("open groups: " + join(open_groups, ", ")); }
+rows = [];
+for (kind in ["vpcs", "subnets", "security_groups", "instances", "volumes", "addresses"]) { push(rows, {kind: kind, count: len(f[kind])}); }
+write_csv(o.out + "/fleet_counts.csv", rows);
+sim_report(o, {endpoint: o.endpoint, host: "lmaws", open_groups: open_groups, fleet: f});
+sim_pass(o);

@@ -1,0 +1,63 @@
+# Access: Write with the lmaws profile (native lmaws host against awssim)
+# What: Drive the guarded, journaled S3 object API: exact bucket create/attach, checksummed PUT receipts, HEAD, bounded listing, presigned browser upload, selective delete, bucket delete, request ledger
+# When: Building a CI deploy step for a static site or an upload endpoint for a web app
+# Emulator: awssim (S3) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/s3_site_publish.lms
+# Arguments: --endpoint URL --host PATH --run ID --out DIR
+# Cleanup: objects, the site bucket and the run-owned uploads bucket are deleted; the persistent S3 operation ledger stays under --out/ledgers
+# Note: awssim 0.2.29 answers the SDK's SHA-256 checksummed PutObject with BadDigest; the recipe records that non-ambiguous receipt instead of claiming a publish (see README)
+import "./lib/common.lms";
+
+o = sim_options("s3_site_publish", {}, "usage: s3_site_publish.lms [--endpoint URL] [--host PATH]");
+run_id = "site" + o.run;
+bucket = "lmaws-site-" + o.run;
+site_dir = o.out + "/site";
+mkdir(site_dir, true);
+write_file(site_dir + "/index.html", "<!doctype html><html><head><title>lmaws S3 site</title></head><body><h1>Published through lmaws</h1></body></html>\n");
+write_file(site_dir + "/style.css", "body{margin:2rem;font-family:sans-serif}\n");
+write_file(site_dir + "/404.html", "<!doctype html><html><body><h1>Not found</h1></body></html>\n");
+raw = o.out + "/publish.json";
+
+program = _lmcode_ cli="lmaws";
+let cloud = aws.region("us-east-1");
+let created = cloud.s3_bucket_create_exact(${bucket}, ${run_id});
+let attached = cloud.s3_bucket_attach(${bucket}, ${run_id});
+let put_index = cloud.s3_put_file(${bucket}, "index.html", ${site_dir + "/index.html"}, "{\"content_type\":\"text/html; charset=utf-8\",\"cache_control\":\"public, max-age=60\",\"checksum_algorithm\":\"SHA256\",\"metadata\":{\"site_run\":\"" + ${o.run} + "\"}}");
+let put_css = cloud.s3_put_file(${bucket}, "assets/style.css", ${site_dir + "/style.css"}, "{\"content_type\":\"text/css\",\"cache_control\":\"public, max-age=31536000, immutable\"}");
+let put_404 = cloud.s3_put_file(${bucket}, "404.html", ${site_dir + "/404.html"}, "{\"content_type\":\"text/html; charset=utf-8\",\"if_none_match\":\"*\"}");
+let head_css = cloud.s3_head_object(${bucket}, "assets/style.css");
+let listed = cloud.s3_list_objects(${bucket}, "", 100);
+let assets = cloud.s3_list_objects(${bucket}, "assets/", 100);
+let run = cloud.run(${o.run}, ${o.out + "/ledgers"});
+let uploads = run.bucket("uploads");
+let upload = cloud.s3_presigned_put(uploads.get("name"), "uploads/avatar.png", 262144, "image/png", 600, ${o.run});
+run.cleanup();
+let deleted = cloud.s3_delete_objects(${bucket}, "[\"index.html\",\"assets/style.css\",\"404.html\"]");
+let after = cloud.s3_list_objects(${bucket}, "", 100);
+let removed = cloud.s3_bucket_delete(${bucket}, ${run_id});
+let ledger = aws.s3_ledger_summary(${run_id});
+file_write(${raw}, "{\"created\":" + created + ",\"attached\":" + attached + ",\"put_index\":" + put_index + ",\"put_css\":" + put_css + ",\"put_404\":" + put_404 + ",\"head_css\":" + head_css + ",\"listed\":" + listed.json() + ",\"assets\":" + assets.json() + ",\"upload\":" + upload.json() + ",\"deleted\":" + deleted.json() + ",\"after\":" + after.json() + ",\"removed\":" + removed + ",\"ledger\":" + ledger + "}");
+end _lmcode_
+
+sim_run(program, aws_native_command(o, "lmaws"));
+p = sim_read_json(raw);
+receipts = [p.put_index, p.put_css, p.put_404];
+confirmed = 0;
+for (rc in receipts) {
+  assert(getbool(rc, "ambiguous") == false, "PUT receipts on a loopback emulator must never be ambiguous: " + json_stringify(rc));
+  if (getbool(rc, "ok")) { confirmed = confirmed + 1; } else { println("PUT " + getstr(rc, "key") + " unconfirmed: " + getstr(rc, "error_code") + " (HTTP " + str(getnum(rc, "http_status")) + "), local sha256 " + getstr(rc, "sha256")); }
+}
+if (confirmed == 3) {
+  assert(getstr(p, "head_css.content_type") == "text/css" && getstr(p, "head_css.exists") == "true", "HEAD must report the stored content type");
+  assert(len(p.listed) == 3 && len(p.assets) == 1, "listing must see three objects, one under assets/");
+} else {
+  assert(getstr(p, "head_css.exists") == "false" && len(p.listed) == 0, "an unconfirmed PUT must leave no object behind");
+  println("awssim rejected the SDK v2 checksummed PutObject (BadDigest); nothing was published and the receipts say so");
+}
+assert(starts_with(getstr(p, "upload.url"), o.endpoint + "/lmaws-" + o.run + "-uploads/uploads/avatar.png?"), "the presigned PUT must point at the run-owned uploads bucket on the emulator");
+assert(len(p.deleted) == 3 && len(p.after) == 0, "selective delete must report each key and leave the bucket empty");
+println(str(confirmed) + "/3 checksummed PUTs confirmed on " + bucket + "; bucket emptied and deleted; create/attach receipts: " + getstr(p, "created.status", "ok") + "/" + getstr(p, "attached.status", "ok"));
+println("presigned upload URL expires in " + getstr(p, "upload.expires_in") + "s for a " + getstr(p, "upload.content_type") + " of at most " + getstr(p, "upload.content_length") + " bytes");
+println("S3 request ledger: " + str(getnum(p, "ledger.attempts")) + " attempts, estimated $" + str(get(p, "ledger.estimated_cost_usd", 0)));
+sim_report(o, {endpoint: o.endpoint, host: "lmaws", bucket: bucket, publish: p});
+sim_pass(o);

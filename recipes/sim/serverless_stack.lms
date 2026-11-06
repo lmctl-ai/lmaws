@@ -1,0 +1,41 @@
+# Access: Write with the lmaws profile (native lmaws host against awssim)
+# What: The lmweblab serverless scenario end to end: DynamoDB table with TTL, report bucket, Lambda from a source file with a function URL, scheduled rule, status/leftovers, full teardown
+# When: Rehearsing the serverless web scenario before a live run; the durable state file makes it resumable
+# Emulator: awssim (DynamoDB, S3, Lambda control plane, EventBridge, CloudWatch Logs) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/serverless_stack.lms
+# Arguments: --endpoint URL --host PATH --run ID --out DIR
+# Cleanup: Serverless.down() removes every resource; the recipe asserts zero leftovers (the SQS worker step needs real SQS URLs and is skipped on emulators)
+import "./lib/common.lms";
+
+o = sim_options("serverless_stack", {}, "usage: serverless_stack.lms [--endpoint URL] [--host PATH]");
+assert(regex_test(o.run, "^[0-9a-f]{4,24}$"), "--run must be 4..24 hex digits for the serverless scenario");
+state_dir = o.out + "/.lmweblab-local";
+mkdir(state_dir, true);
+state_file = state_dir + "/serverless-" + o.run + ".json";
+source_file = o.out + "/handler.py";
+write_file(source_file, "import json, os\n\ndef handler(event, context):\n    return {\"statusCode\": 200, \"body\": json.dumps({\"table\": os.environ.get(\"TABLE_NAME\"), \"bucket\": os.environ.get(\"BUCKET_NAME\")})}\n");
+raw = o.out + "/serverless.json";
+
+program = _lmcode_ cli="lmaws";
+let cloud = aws.region("us-east-1");
+let stack = cloud.serverless_stack(${o.run}, "example.com", ${state_file});
+let table = stack.step("table", "{\"ttl_attribute\":\"expires_at\"}");
+let bucket = stack.step("bucket", "{}");
+let lambda = stack.step("lambda", ${json_stringify({source_file: source_file, runtime: "python3.12", handler: "handler.handler", memory_mb: 128, timeout_s: 10, ttl_seconds: 3600, slug: "site"})});
+let event = stack.step("event", "{\"schedule\":\"rate(5 minutes)\"}");
+let status = stack.status();
+let before = stack.leftovers();
+let down = stack.down();
+let after = stack.leftovers();
+file_write(${raw}, "{\"table\":" + table.json() + ",\"bucket\":" + bucket.json() + ",\"lambda\":" + lambda.json() + ",\"event\":" + event.json() + ",\"status\":" + status.json() + ",\"leftovers_before_down\":" + before.json() + ",\"down\":" + down.json() + ",\"leftovers_after_down\":" + after.json() + "}");
+end _lmcode_
+
+sim_run(program, aws_native_command(o, "lmaws"));
+s = sim_read_json(raw);
+assert(getstr(s, "status.status") == "up" && getstr(s, "status.lambda_arn") != "" && getstr(s, "status.rule") != "", "table, bucket, Lambda and rule must be up");
+assert(len(s.leftovers_before_down) == 5 && len(s.leftovers_after_down) == 0, "five owned resources before teardown, none after");
+assert(getstr(s, "down.status") == "down", "teardown must report down");
+println("run " + o.run + ": table " + getstr(s, "status.table") + ", bucket " + getstr(s, "status.bucket") + ", function " + getstr(s, "status.lambda_name") + ", URL " + getstr(s, "status.lambda_url"));
+println("estimated cost: $" + getstr(s, "down.estimated_cost_usd") + " (emulator price table)");
+sim_report(o, {endpoint: o.endpoint, host: "lmaws", serverless: s});
+sim_pass(o);

@@ -1,0 +1,115 @@
+# Access: Write to an awssim started with --auth enforce (shared lmcloud schema, Go lmaws build)
+# What: Permissions on the emulator: author the awssim credential/policy file with a _json_ template, then prove allowed operations succeed, denied resources fail with PERMISSION_DENIED and a wrong secret fails with UNAUTHENTICATED
+# When: Testing a web site's IAM policy locally before granting it in a real account
+# Emulator: awssim serve --auth enforce --auth-config <out>/awssim-auth.json (default endpoint http://127.0.0.1:4568)
+# Run: lmscript recipes/sim/auth_enforced_denial.lms --prepare; awssim serve --port 4568 --auth enforce --auth-config data/sim/auth_enforced_denial/awssim-auth.json; lmscript recipes/sim/auth_enforced_denial.lms --endpoint http://127.0.0.1:4568
+# Arguments: --endpoint URL --cloud-host PATH --run ID --out DIR --access-key ID --secret-key SECRET [--prepare]
+# Cleanup: the allowed bucket and queue are deleted; denied names are never created
+import "./lib/common.lms";
+
+o = sim_options("auth_enforced_denial", {
+  endpoint: {type: "string", default: getenv("AWSSIM_ENFORCE_ENDPOINT", "http://127.0.0.1:4568"), description: "enforce-mode awssim origin"},
+  access_key: {flag: "access-key", type: "string", default: "site-deployer", description: "access key id configured in the policy file"},
+  secret_key: {flag: "secret-key", type: "string", default: "site-deployer-secret", description: "secret configured in the policy file"},
+  prepare: {type: "boolean", description: "only write the auth config and exit"}
+}, "usage: auth_enforced_denial.lms [--prepare] [--endpoint URL] [--cloud-host PATH]");
+prefix = "lmaws-sim-";
+allowed_bucket = prefix + "allowed-" + o.run;
+denied_bucket = prefix + "denied-" + o.run;
+allowed_queue = prefix + "jobs-" + o.run;
+denied_queue = prefix + "denied-jobs-" + o.run;
+
+# The deployer may manage lmaws-sim-* buckets, objects and queues, but nothing whose name contains "denied".
+auth = _json_;
+{
+  "credentials": [
+    {"accessKeyId": ${o.access_key}, "secretAccessKey": ${o.secret_key}, "policy": {
+      "Statement": [
+        {"Sid": "SiteStorage", "Effect": "Allow", "Action": ["s3:*"], "Resource": ["arn:aws:s3:::${prefix}*", "arn:aws:s3:::${prefix}*/*"]},
+        {"Sid": "SiteQueues", "Effect": "Allow", "Action": ["sqs:*"], "Resource": "arn:aws:sqs:us-east-1:000000000000:${prefix}*"},
+        {"Sid": "ListAll", "Effect": "Allow", "Action": ["s3:ListAllMyBuckets", "sqs:ListQueues"], "Resource": "*"},
+        {"Sid": "NoDenied", "Effect": "Deny", "Action": "*", "Resource": "*denied*"}
+      ]
+    }}
+  ]
+}
+end _json_
+auth_path = o.out + "/awssim-auth.json";
+write_json(auth_path, auth.value());
+println("auth config: " + auth_path);
+if (o.prepare) { println("start the emulator with: awssim serve --port 4568 --auth enforce --auth-config " + auth_path); exit(0); }
+
+program = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  cloud.set_abort_on_error(false);
+  let ab = ${allowed_bucket};
+  let db = ${denied_bucket};
+  let aq = ${allowed_queue};
+  let dq = ${denied_queue};
+
+  let created = cloud.bucket_create(ab);
+  let create_code = cloud.last_error().code();
+  cloud.object_put(ab, "index.html", "<h1>allowed</h1>", "text/html", str_map());
+  let put_code = cloud.last_error().code();
+  let qcreated = cloud.queue_create(aq);
+  let qcreate_code = cloud.last_error().code();
+
+  cloud.bucket_create(db);
+  let denied_bucket_code = cloud.last_error().code();
+  let denied_bucket_status = cloud.last_error().http_status();
+  cloud.object_put(ab, "denied-report.html", "<h1>nope</h1>", "text/html", str_map());
+  let denied_object_code = cloud.last_error().code();
+  cloud.queue_create(dq);
+  let denied_queue_code = cloud.last_error().code();
+
+  cloud.object_delete(ab, "index.html");
+  let deleted = cloud.bucket_delete(ab);
+  let qdeleted = cloud.queue_delete(aq);
+
+  lmcode_return_put("open_mode", create_code == ErrorCode.OK && denied_bucket_code == ErrorCode.OK);
+  lmcode_return_put("created", created);
+  lmcode_return_put("create_code", str(create_code));
+  lmcode_return_put("put_code", str(put_code));
+  lmcode_return_put("qcreate_code", str(qcreate_code));
+  lmcode_return_put("denied_bucket_code", str(denied_bucket_code));
+  lmcode_return_put("denied_bucket_status", denied_bucket_status);
+  lmcode_return_put("denied_object_code", str(denied_object_code));
+  lmcode_return_put("denied_queue_code", str(denied_queue_code));
+  lmcode_return_put("deleted", deleted);
+  lmcode_return_put("qdeleted", qdeleted);
+  if (denied_bucket_code == ErrorCode.OK) { cloud.bucket_delete(db); }
+  if (denied_queue_code == ErrorCode.OK) { cloud.queue_delete(dq); }
+  if (denied_object_code == ErrorCode.OK) { cloud.object_delete(ab, "denied-report.html"); cloud.bucket_delete(ab); }
+end _lmcode_
+
+unauth = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  cloud.set_abort_on_error(false);
+  cloud.bucket_create(${allowed_bucket + "-x"});
+  let code = cloud.last_error().code();
+  if (code == ErrorCode.OK) { cloud.bucket_delete(${allowed_bucket + "-x"}); }
+  lmcode_return_put("code", str(code));
+  lmcode_return_put("status", cloud.last_error().http_status());
+end _lmcode_
+
+set_env("LMAWS_SIM_ACCESS_KEY_ID", o.access_key);
+set_env("LMAWS_SIM_SECRET_ACCESS_KEY", o.secret_key);
+r = sim_run(program, aws_cloud_command(o)).result;
+if (r.open_mode) {
+  println("SKIP: " + o.endpoint + " accepted a denied name, so it is running in open mode; restart it with --auth enforce --auth-config " + auth_path);
+  exit(0);
+}
+set_env("LMAWS_SIM_SECRET_ACCESS_KEY", "definitely-not-the-secret");
+u = sim_run(unauth, aws_cloud_command(o)).result;
+set_env("LMAWS_SIM_SECRET_ACCESS_KEY", o.secret_key);
+
+assert(r.created && r.create_code == "OK" && r.put_code == "OK" && r.qcreate_code == "OK", "allowed bucket, object and queue operations must succeed");
+assert(r.denied_bucket_code == "PERMISSION_DENIED" && r.denied_bucket_status == 403, "a denied bucket name must fail with PERMISSION_DENIED/403, got " + r.denied_bucket_code);
+assert(r.denied_object_code == "PERMISSION_DENIED" && r.denied_queue_code == "PERMISSION_DENIED", "denied object and queue names must fail with PERMISSION_DENIED");
+assert(r.deleted && r.qdeleted, "the allowed resources must be cleaned up");
+assert(u.code == "UNAUTHENTICATED" && u.status == 403, "a wrong secret must fail with UNAUTHENTICATED, got " + u.code);
+println("allowed: create/put/delete " + allowed_bucket + ", create/delete " + allowed_queue);
+println("denied:  " + denied_bucket + " (PERMISSION_DENIED 403), object denied-report.html, queue " + denied_queue);
+println("wrong secret: UNAUTHENTICATED " + str(u.status));
+sim_report(o, {endpoint: o.endpoint, host: "lmaws cloud", auth_config: auth_path, principal: o.access_key, allowed: r, unauthenticated: u});
+sim_pass(o);

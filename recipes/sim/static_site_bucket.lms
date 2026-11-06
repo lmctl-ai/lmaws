@@ -1,0 +1,75 @@
+# Access: Write to awssim through the shared lmcloud schema (Go lmaws build)
+# What: Publish a small static web site into an S3 bucket: content types, cache headers, listing, overwrite and teardown
+# When: Validating a static-site publishing path before pointing it at a real bucket
+# Emulator: awssim (S3) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/static_site_bucket.lms --cloud-host bin/lmaws
+# Arguments: --endpoint URL --cloud-host PATH --run ID --out DIR
+# Cleanup: every object and the bucket are deleted before the recipe ends
+import "./lib/common.lms";
+
+o = sim_options("static_site_bucket", {}, "usage: static_site_bucket.lms [--endpoint URL] [--cloud-host PATH]");
+bucket = "lmaws-sim-site-" + o.run;
+keys = ["index.html", "about.html", "assets/site.css", "assets/app.js", "404.html"];
+types = ["text/html; charset=utf-8", "text/html; charset=utf-8", "text/css", "application/javascript", "text/html; charset=utf-8"];
+caches = ["public, max-age=60", "public, max-age=60", "public, max-age=31536000, immutable", "public, max-age=31536000, immutable", "no-store"];
+bodies = [
+  "<!doctype html><html><head><title>lmaws sim site</title><link rel=stylesheet href=assets/site.css></head><body><h1>Hello from awssim</h1><p>Published by lmscript.</p><script src=assets/app.js></script></body></html>",
+  "<!doctype html><html><body><h1>About</h1><p>Static site recipe (unicode ok: 雪 ☃).</p></body></html>",
+  "body{font-family:system-ui,sans-serif;margin:2rem;color:#1b2a41}",
+  "console.log('lmaws static site');",
+  "<!doctype html><html><body><h1>Not found</h1></body></html>"
+];
+
+program = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  let b = ${bucket};
+  let keys = ${keys};
+  let types = str_split(${join(types, "|~|")}, "|~|");
+  let caches = str_split(${join(caches, "|~|")}, "|~|");
+  let bodies = str_split(${join(bodies, "|~|")}, "|~|");
+
+  let created = cloud.bucket_create(b);
+  let total_bytes = 0;
+  for (i in range(0, keys.len())) {
+    let meta = str_map().set("cache_control", caches.at(i)).set("site_run", ${o.run});
+    let put = cloud.object_put(b, keys.at(i), bodies.at(i), types.at(i), meta);
+    total_bytes = total_bytes + put.size();
+  }
+  let head = cloud.object_head(b, "assets/site.css");
+  let html = cloud.object_get(b, "index.html");
+  let assets = cloud.object_list(b, "assets/");
+  let all_keys = cloud.object_list_all(b, "");
+
+  # Republish the home page and prove the ETag changed.
+  let etag_before = cloud.object_head(b, "index.html").etag();
+  cloud.object_put(b, "index.html", bodies.at(0) + "<!-- v2 -->", types.at(0), str_map().set("cache_control", caches.at(0)));
+  let etag_after = cloud.object_head(b, "index.html").etag();
+
+  for (k in all_keys) { cloud.object_delete(b, k); }
+  let deleted = cloud.bucket_delete(b);
+
+  lmcode_return_put("bucket", b);
+  lmcode_return_put("created", created);
+  lmcode_return_put("objects", keys.len());
+  lmcode_return_put("total_bytes", total_bytes);
+  lmcode_return_put("css_content_type", head.content_type());
+  lmcode_return_put("css_cache_control", head.metadata().get("cache_control"));
+  lmcode_return_put("index_html_ok", str_contains(html, "Hello from awssim"));
+  lmcode_return_put("asset_count", assets.len());
+  lmcode_return_put("all_count", all_keys.len());
+  lmcode_return_put("etag_changed", etag_before != etag_after);
+  lmcode_return_put("bucket_deleted", deleted);
+  lmcode_return_put("bucket_gone", !cloud.bucket_exists(b));
+end _lmcode_
+
+r = sim_run(program, aws_cloud_command(o));
+site = r.result;
+assert(site.created, "bucket_create must return true for a new bucket");
+assert(site.css_content_type == "text/css", "content type must round-trip: " + site.css_content_type);
+assert(site.css_cache_control == "public, max-age=31536000, immutable", "metadata must round-trip");
+assert(site.index_html_ok && site.asset_count == 2 && site.all_count == 5, "listing and reads must see every published object");
+assert(site.etag_changed, "republishing index.html must change its ETag");
+assert(site.bucket_deleted && site.bucket_gone, "teardown must remove the bucket");
+println("published " + str(site.objects) + " objects (" + str(site.total_bytes) + " bytes) to " + site.bucket + " and tore the site down");
+sim_report(o, {endpoint: o.endpoint, host: "lmaws cloud", site: site});
+sim_pass(o);

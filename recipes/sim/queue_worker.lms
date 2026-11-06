@@ -1,0 +1,71 @@
+# Access: Write to awssim through the shared lmcloud schema (Go lmaws build)
+# What: Background-job queue for a web site: enqueue jobs, drain them with a worker, retry one with nack, drain to empty
+# When: Designing form submissions, email sending or image processing that must not block the request path
+# Emulator: awssim (SQS) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/queue_worker.lms --cloud-host bin/lmaws
+# Arguments: --endpoint URL --cloud-host PATH --run ID --out DIR --jobs N
+# Cleanup: the queue is deleted before the recipe ends
+import "./lib/common.lms";
+
+o = sim_options("queue_worker", {jobs: {type: "number", default: 5, description: "jobs to enqueue (1..20)"}}, "usage: queue_worker.lms [--endpoint URL] [--cloud-host PATH] [--jobs N]");
+assert(o.jobs >= 1 && o.jobs <= 20, "--jobs must be 1..20");
+queue = "lmaws-sim-jobs-" + o.run;
+jobs = [];
+for (i in range(1, o.jobs + 1)) {
+  push(jobs, json_stringify({job: i, kind: if_else(i % 2 == 0, "send-email", "resize-image"), site: "lmaws-sim-site-" + o.run}));
+}
+
+program = _lmcode_ schema="../../schema/lmcloud.dsl.json";
+  cloud.set_endpoint("all", ${o.endpoint});
+  let q = ${queue};
+  let jobs = str_split(${join(jobs, "|~|")}, "|~|");
+  let created = cloud.queue_create(q);
+  let sent = 0;
+  for (body in jobs) {
+    let id = cloud.queue_send(q, body);
+    if (str_len(id) > 0) { sent = sent + 1; }
+  }
+
+  # Worker loop: receive up to 10, ack each; the first message of the first batch is nacked once
+  # (visibility 0) so it is redelivered and processed on a later pass.
+  let processed = 0;
+  let retried = 0;
+  let polls = 0;
+  let nacked = false;
+  while (processed < sent && polls < 30) {
+    polls = polls + 1;
+    let batch = cloud.queue_receive(q, 10, 1, 30);
+    for (i in range(0, batch.len())) {
+      let m = batch.at(i);
+      if (!nacked) {
+        cloud.queue_nack(q, m.receipt(), 0);
+        nacked = true;
+        retried = retried + 1;
+      } else {
+        cloud.queue_ack(q, m.receipt());
+        processed = processed + 1;
+      }
+    }
+  }
+  let drained = cloud.queue_receive(q, 10, 1, 30);
+  let deleted = cloud.queue_delete(q);
+
+  lmcode_return_put("queue", q);
+  lmcode_return_put("created", created);
+  lmcode_return_put("sent", sent);
+  lmcode_return_put("processed", processed);
+  lmcode_return_put("retried", retried);
+  lmcode_return_put("polls", polls);
+  lmcode_return_put("left_after_drain", drained.len());
+  lmcode_return_put("queue_deleted", deleted);
+end _lmcode_
+
+r = sim_run(program, aws_cloud_command(o));
+w = r.result;
+assert(w.created && w.sent == o.jobs, "every job must be enqueued");
+assert(w.processed == o.jobs, "the worker must ack every job exactly once (processed=" + str(w.processed) + ")");
+assert(w.retried == 1 && w.left_after_drain == 0, "one nack must be redelivered and the queue must end empty");
+assert(w.queue_deleted, "teardown must delete the queue");
+println("enqueued " + str(w.sent) + " jobs on " + w.queue + ", processed " + str(w.processed) + " with 1 retry in " + str(w.polls) + " polls");
+sim_report(o, {endpoint: o.endpoint, host: "lmaws cloud", worker: w});
+sim_pass(o);

@@ -13,6 +13,7 @@
 `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_sandbox_queue.lms`
 
 Reusable LMScript recipes for audits, inventory, spend review and safely owned sandboxes.
+Recipes that run the hosts against the local awssim emulator (static sites, queues, DynamoDB, IAM, Lambda, EC2, permissions) live in [sim/README.md](sim/README.md).
 The access column describes AWS permissions; local reports are written only when a recipe is called.
 Each generated entry is self-contained and runnable directly. Import the paired library from its raw URL when composing recipes; entry scripts perform the execution step.
 Use `lmaws`, never the `aws` CLI. Read-only recipes use `default`; writes require

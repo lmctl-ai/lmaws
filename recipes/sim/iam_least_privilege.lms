@@ -1,0 +1,66 @@
+# Access: Write with the admin profile (IAM grant path of the native lmaws host against awssim IAM)
+# What: Build a least-privilege site deployer policy (S3 site buckets, session table, job queue, Lambda by name, region lock) with the typed builder, lint and size it, create it in IAM, read it back, then delete it; then grant a boundary-capped Lambda execution role and remove it
+# When: Designing the permissions a CI deployer or a site's Lambda needs before touching a real account
+# Emulator: awssim (IAM, STS) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/iam_least_privilege.lms
+# Arguments: --endpoint URL --host PATH --run ID --out DIR
+# Cleanup: the deployer policy and the role are deleted; the shared lmaws_boundary policy is left in place (other roles may depend on it)
+import "./lib/common.lms";
+
+o = sim_options("iam_least_privilege", {}, "usage: iam_least_privilege.lms [--endpoint URL] [--host PATH]");
+policy_name = "lmaws_site_deploy_" + o.run;
+role_name = "lmaws_lambda_exec_" + o.run;
+raw = o.out + "/iam.json";
+role_spec = json_stringify({
+  trust_policy: {Version: "2012-10-17", Statement: [{Effect: "Allow", Principal: {Service: "lambda.amazonaws.com"}, Action: "sts:AssumeRole"}]},
+  permissions_boundary: "arn:aws:iam::${aws:PrincipalAccount}:policy/lmaws_boundary",
+  managed_policies: [],
+  inline_policies: {lmaws_site_data: {Version: "2012-10-17", Statement: [
+    {Sid: "SiteBucketObjects", Effect: "Allow", Action: ["s3:GetObject", "s3:PutObject"], Resource: "arn:aws:s3:::lmaws-*/*"},
+    {Sid: "SessionTable", Effect: "Allow", Action: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"], Resource: "arn:aws:dynamodb:us-east-1:*:table/lmaws_*"},
+    {Sid: "JobQueue", Effect: "Allow", Action: ["sqs:SendMessage"], Resource: "arn:aws:sqs:us-east-1:*:lmaws_*"}
+  ]}}
+});
+
+program = _lmcode_ cli="lmaws";
+let cloud = aws.region("us-east-1");
+let p = cloud.policy(${policy_name})
+  .s3_bucket_sandbox("lmaws")
+  .table_sandbox("lmaws")
+  .queue_sandbox("lmaws")
+  .lambda_deployer_by_name("lmaws")
+  .region_lock("OnlyRegion", "us-east-1", "sts:*");
+let document = p.json();
+let lint = p.lint();
+let summary = p.summary();
+let size = cloud.policy_size_report(document);
+let explain = cloud.policy_explain(document);
+let put_res = cloud.iam_policy_put(${policy_name}, document, true);
+let got = cloud.iam_policy_get(${policy_name});
+let versions = cloud.iam_policy_versions(${policy_name});
+let boundary = cloud.policy("lmaws_boundary")
+  .s3_bucket_sandbox("lmaws")
+  .table_sandbox("lmaws")
+  .queue_sandbox("lmaws")
+  .topic_sandbox("lmaws")
+  .log_group_sandbox("lmaws")
+  .region_lock("OnlyRegion", "us-east-1", "sts:*");
+let boundary_put = cloud.iam_policy_put("lmaws_boundary", boundary.json(), true);
+let role_put = cloud.iam_role_put(${role_name}, ${role_spec}, true);
+let role_got = cloud.iam_role_get(${role_name});
+let role_del = cloud.iam_role_delete(${role_name}, true);
+let del = cloud.iam_policy_delete(${policy_name}, true);
+file_write(${raw}, "{\"document\":" + document + ",\"lint\":" + lint.json() + ",\"summary\":" + summary.json() + ",\"size\":" + size.json() + ",\"explain\":" + explain.json() + ",\"put\":" + put_res.json() + ",\"get\":" + got.json() + ",\"versions\":" + versions.json() + ",\"boundary_put\":" + boundary_put.json() + ",\"role_put\":" + role_put.json() + ",\"role_get\":" + role_got.json() + ",\"role_delete\":" + role_del.json() + ",\"delete\":" + del.json() + "}");
+end _lmcode_
+
+sim_run(program, aws_native_command(o, "admin"));
+iam = sim_read_json(raw);
+assert(getstr(iam, "lint.valid") == "true" && getstr(iam, "lint.finding_count") == "0", "the generated policy must lint clean: " + json_stringify(iam.lint));
+assert(getstr(iam, "put.applied") == "true" && getstr(iam, "get.exists") == "true" && len(iam.versions) == 1, "the policy must exist in IAM with one version");
+assert(getstr(iam, "role_put.applied") == "true" || getstr(iam, "role_put.action") != "", "the role grant must apply: " + json_stringify(iam.role_put));
+assert(getstr(iam, "delete.action") == "deleted" && getstr(iam, "role_delete.action") != "", "policy and role must be removed");
+println(policy_name + ": " + getstr(iam, "lint.statement_count") + " statements, " + getstr(iam, "lint.compact_length") + " compact chars (inline limit " + getstr(iam, "lint.inline_limit") + ")");
+for (row in iam.explain) { println("  " + getstr(row, "sid", "?") + " [" + getstr(row, "effect", "") + "] " + getstr(row, "summary", getstr(row, "scope", ""))); }
+println(role_name + ": " + getstr(iam, "role_put.action") + " -> " + getstr(iam, "role_delete.action"));
+sim_report(o, {endpoint: o.endpoint, host: "lmaws", policy: policy_name, role: role_name, iam: iam});
+sim_pass(o);

@@ -12,7 +12,7 @@ lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_quic
 <img src="docs/images/recipe_quickstart.png" width="640" alt="Synthetic account snapshot: resources per service">
 
 Then the same recipe against your account, read-only: `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/quickstart.lms --live` (profile `default`).
-[Which profile do I need?](docs/PROFILES.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [All recipes](recipes/README.md)
+[Which profile do I need?](docs/PROFILES.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [All recipes](recipes/README.md) · [Emulator recipes](recipes/sim/README.md)
 
 
 ## Detailed spend report — read-only
@@ -113,6 +113,7 @@ no public picture is generated from live account data; live figures stay in the 
 `lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_sandbox_queue.lms`
 
 Reusable LMScript recipes for audits, inventory, spend review and safely owned sandboxes.
+Recipes that run the hosts against the local awssim emulator (static sites, queues, DynamoDB, IAM, Lambda, EC2, permissions) live in [sim/README.md](recipes/sim/README.md).
 The access column describes AWS permissions; local reports are written only when a recipe is called.
 Each generated entry is self-contained and runnable directly. Import the paired library from its raw URL when composing recipes; entry scripts perform the execution step.
 Use `lmaws`, never the `aws` CLI. Read-only recipes use `default`; writes require

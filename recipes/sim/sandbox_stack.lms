@@ -1,0 +1,40 @@
+# Access: Write with the lmaws profile (native lmaws host against awssim)
+# What: Create the owned building blocks of a small web backend (bucket, queue, topic, table, parameter, log group), list them, tear them down
+# When: Proving the run-ledger lifecycle against the emulator before a live sandbox run
+# Emulator: awssim (S3, SQS, SNS, DynamoDB, SSM, CloudWatch Logs) on http://127.0.0.1:4566
+# Run: lmscript recipes/sim/sandbox_stack.lms
+# Arguments: --endpoint URL --host PATH --run ID --out DIR
+# Cleanup: run.cleanup() deletes all six resources; the recipe asserts remaining()==0
+import "./lib/common.lms";
+
+o = sim_options("sandbox_stack", {}, "usage: sandbox_stack.lms [--endpoint URL] [--host PATH]");
+raw = o.out + "/stack.json";
+
+program = _lmcode_ cli="lmaws";
+let cloud = aws.region("us-east-1");
+check(!cloud.is_demo());
+let run = cloud.run(${o.run}, ${o.out + "/ledgers"});
+let bucket = run.bucket("site");
+run.put(bucket, "index.html", "<h1>hello</h1>");
+let queue = run.queue("jobs");
+let topic = run.topic("events");
+let table = run.table("sessions");
+run.put(table, "session-1", "{\"user\":\"ann\"}");
+let parameter = run.parameter("config", "{\"theme\":\"dark\"}");
+let logs = run.log_group("app");
+let created = run.remaining();
+let listing = "{\"buckets\":" + cloud.buckets().json() + ",\"queues\":" + cloud.queues().json() + ",\"topics\":" + cloud.topics().json() + ",\"tables\":" + cloud.tables().json() + ",\"parameters\":" + cloud.parameters().json() + ",\"log_groups\":" + cloud.log_groups().json() + "}";
+run.cleanup();
+let remaining = run.remaining();
+file_write(${raw}, "{\"created\":" + str(created) + ",\"remaining\":" + str(remaining) + ",\"resources\":[" + bucket.json() + "," + queue.json() + "," + topic.json() + "," + table.json() + "," + parameter.json() + "," + logs.json() + "],\"inventory_before_cleanup\":" + listing + ",\"estimated_cost\":" + str(run.estimated_cost()) + "}");
+check(remaining == 0);
+end _lmcode_
+
+sim_run(program, aws_native_command(o, "lmaws"));
+stack = sim_read_json(raw);
+assert(stack.created == 6 && stack.remaining == 0, "six owned resources must be created and removed");
+for (res in stack.resources) { println(res.kind + ": " + res.name); }
+assert(len(stack.inventory_before_cleanup.queues) >= 1 && len(stack.inventory_before_cleanup.tables) >= 1, "inventories must list the owned resources before cleanup");
+println("created " + str(stack.created) + " owned resources on awssim and cleaned up (" + str(stack.remaining) + " left)");
+sim_report(o, {endpoint: o.endpoint, host: "lmaws", stack: stack});
+sim_pass(o);
