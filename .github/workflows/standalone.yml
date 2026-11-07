@@ -1,0 +1,71 @@
+name: standalone
+
+# Proves the published executables need no Java or .NET runtime. Runs against the
+# latest GitHub release (the binaries users actually download), not a rebuild.
+
+on:
+  push:
+    branches: [main, claude/stoic-edison-n3bt6c]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: standalone-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  standalone:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-22.04, name: linux-x64}
+          - {os: ubuntu-22.04-arm, name: linux-arm64}
+          - {os: macos-15-intel, name: macos-x64}
+          - {os: macos-15, name: macos-arm64}
+          - {os: windows-2022, name: windows-x64}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Download the latest published executable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          suffix=''
+          if [[ "$RUNNER_OS" == Windows ]]; then suffix=.exe; fi
+          mkdir -p "$RUNNER_TEMP/standalone"
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern "lmaws-${{ matrix.name }}$suffix" --dir "$RUNNER_TEMP/standalone"
+          chmod +x "$RUNNER_TEMP/standalone/lmaws-${{ matrix.name }}$suffix"
+          echo "BIN=$RUNNER_TEMP/standalone/lmaws-${{ matrix.name }}$suffix" >> "$GITHUB_ENV"
+
+      - name: Confirm the download is a native executable
+        run: python3 scripts/verify-native-executable.py "$BIN"
+
+      - name: Run with no Java or .NET runtime reachable
+        run: python3 scripts/test-standalone.py "$BIN" lmaws
+
+      - name: Linux container with no JDK or .NET installed, no network
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm --network none \
+            -v "$RUNNER_TEMP/standalone:/t:ro" \
+            ubuntu:22.04 sh -c '
+              set -e
+              test -z "$(command -v java || true)"
+              test -z "$(command -v dotnet || true)"
+              test ! -e /usr/lib/jvm
+              test ! -e /usr/share/dotnet
+              echo "container has no java or dotnet"
+              /t/lmaws-${{ matrix.name }} --version
+              /t/lmaws-${{ matrix.name }} --help > /dev/null
+            '
