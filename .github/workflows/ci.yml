@@ -73,7 +73,7 @@ jobs:
         with:
           node-version: 24
       - name: Pinned script compiler
-        run: npm install -g @lmctl-ai/lmctl@0.2.458
+        run: npm install -g @lmctl-ai/lmctl@0.2.482
       - name: Set the version this run builds and releases
         run: bash scripts/set-version.sh "${{ needs.version.outputs.next }}"
       - name: JVM, fake endpoints and examples
@@ -117,7 +117,7 @@ jobs:
         with:
           node-version: 24
       - name: Pinned script compiler
-        run: npm install -g @lmctl-ai/lmctl@0.2.458
+        run: npm install -g @lmctl-ai/lmctl@0.2.482
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: lmaws-linux-x64

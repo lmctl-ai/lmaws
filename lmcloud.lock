@@ -1,7 +1,7 @@
 {
   "repo": "lmctl-ai/lmcloud",
-  "branch": "design-object-storage",
-  "commit": "9532d194fe48ad237c77fc0b39ce9736ef3fc4ef",
+  "branch": "main",
+  "commit": "1205bc1e889325849004a150a35c52e27a6cb3f3",
   "file": "schema/lmcloud.dsl.json",
-  "sha256": "f1cd7471c042f13f4263054ff925638e20ac564626bc56ab3be1d2d1a7f5ca42"
+  "sha256": "b2b6307fc5cc5813518d3c40f32ec657cbcb0fa8757da736a6db07df39883147"
 }

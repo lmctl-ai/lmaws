@@ -60,3 +60,8 @@
 - **Remaining provider-specific notes:**
   - Live AWS credential chain (`aws-sdk-go-v2/config` default chain, SSO, WebIdentity, IMDS) is intentionally disabled in Phase A–C (`LiveCredentialsNotImplemented`).
   - Cached released `awssim` binary fetched via `lmcloud/scripts` (`sims.lock` pin `v0.2.0`) predates `awssim` commit `dc7b063`, so `LMAWS_COMPAT_STRIP_S3_XID` must remain enabled by default until `awssim` cuts a new release and `lmcloud/scripts/sims.lock` updates its pin.
+
+## 5. `lmcode_std_v3` REST & CLI Interfaces Upgrade (2026-11-16)
+
+- Upgraded `github.com/lmctl-ai/lmcode-go` to `2027887521b3d34a44e67849070bf7e39df11b1d` (`sdk.lock` + `go.mod`), `github.com/lmctl-ai/lmcloud` to `1205bc1e889325849004a150a35c52e27a6cb3f3` (`lmcloud.lock` + `schema/lmcloud.dsl.json`), and `lmctl-ai/lmcode-java` to `a61bd716a1ccd245211ae244d6b78f505d245210` (`java-sdk.lock`).
+- Verified all 226 `lmcode_std_v3` standard signatures and 10 standard REST/CLI interfaces (`RestGet`..`RestOptions`, `RestHandler`, `CliCommand`, `CliOption`, `rest_config`, `rest_route`, `rest_serve`, `rest_stop`, `rest_cli`) in `cmd/lmaws/main_test.go` (`TestStdRestAndCliInterfaces`) and `test-go.sh`.

@@ -1137,15 +1137,15 @@ func TestLiveStage2_S3FullLifecycleAndOwnershipTags(t *testing.T) {
 	bucket := "lmcloud-conf-abcdef012345-lifecycle"
 
 	var (
-		mu         sync.Mutex
-		bktExists  bool
-		bktTags    = map[string]string{}
-		objExists  bool
-		objBody    []byte
-		objCT      string
-		objMeta    = map[string]string{}
-		objTags    = map[string]string{}
-		objETag    = "etag-stage2-obj1"
+		mu        sync.Mutex
+		bktExists bool
+		bktTags   = map[string]string{}
+		objExists bool
+		objBody   []byte
+		objCT     string
+		objMeta   = map[string]string{}
+		objTags   = map[string]string{}
+		objETag   = "etag-stage2-obj1"
 	)
 
 	h, _, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
@@ -1822,7 +1822,7 @@ func TestSolStage2_ForeignObjectOverwriteRefused(t *testing.T) {
 	bucket := "lmcloud-conf-abcdef012345-lifecycle"
 
 	var (
-		mu      sync.Mutex
+		mu        sync.Mutex
 		bktExists bool
 		bktTags   = map[string]string{}
 		objExists bool
@@ -1942,11 +1942,11 @@ func TestSolStage2_BucketCreateRaceRetainedNotAdopted(t *testing.T) {
 	bucket := "lmcloud-conf-abcdef012345-lifecycle"
 
 	var (
-		mu             sync.Mutex
-		bktExists      bool
-		bktTags        = map[string]string{}
-		putTagCalled   bool
-		deleteCalled   bool
+		mu           sync.Mutex
+		bktExists    bool
+		bktTags      = map[string]string{}
+		putTagCalled bool
+		deleteCalled bool
 	)
 
 	h, a, _, _ := newLiveTestHost(t, nil, func(w http.ResponseWriter, r *http.Request) {
@@ -2241,12 +2241,12 @@ func TestLiveStage2_JournalLessSweepAndStrictRunSelection(t *testing.T) {
 		deletedList []string
 	)
 	tagsB := map[string]string{
-		liveOwnerTagKey:             liveOwnerTagValue,
-		liveRunTagKey:               runB,
-		safety.TagKeyRunID:          runB,
-		safety.TagKeyOwnerNonce:     "nonce-b-123456",
-		safety.TagKeyCreateToken:    "tok-b-123456",
-		createTokenTagKey:           "tok-b-123456",
+		liveOwnerTagKey:          liveOwnerTagValue,
+		liveRunTagKey:            runB,
+		safety.TagKeyRunID:       runB,
+		safety.TagKeyOwnerNonce:  "nonce-b-123456",
+		safety.TagKeyCreateToken: "tok-b-123456",
+		createTokenTagKey:        "tok-b-123456",
 		safety.TagKeyCreatedAt:   "1700000010",
 	}
 
@@ -2644,16 +2644,16 @@ func TestSolR2_OwnedReadRaceRefused(t *testing.T) {
 	bucket := "lmcloud-conf-abcdef012345-readrace"
 
 	var (
-		mu            sync.Mutex
-		bktExists     bool
-		bktTags       = map[string]string{}
-		objExists     bool
-		swapOnTag     bool
-		swapSameETag  bool
-		objBody       []byte
-		objCT         string
-		objTags       = map[string]string{}
-		objETag       = "etag-owned-v1"
+		mu             sync.Mutex
+		bktExists      bool
+		bktTags        = map[string]string{}
+		objExists      bool
+		swapOnTag      bool
+		swapSameETag   bool
+		objBody        []byte
+		objCT          string
+		objTags        = map[string]string{}
+		objETag        = "etag-owned-v1"
 		seenGetIfMatch string
 	)
 
@@ -3192,4 +3192,3 @@ exit 0
 		t.Fatalf("scenario 03 must not execute after global spend ceiling is reached:\n%s", string(rawLog2))
 	}
 }
-

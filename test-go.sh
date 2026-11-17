@@ -40,8 +40,8 @@ trap cleanup EXIT
 echo "=== 1. Pin & schema lock verification ==="
 test -f "$ROOT/sdk.lock"
 test -f "$ROOT/lmcloud.lock"
-grep -q "06cd9ae991d90fea9ad38f3b071da646c76832f4" "$ROOT/sdk.lock"
-grep -q "06cd9ae991d9" "$ROOT/go.mod"
+grep -q "2027887521b3d34a44e67849070bf7e39df11b1d" "$ROOT/sdk.lock"
+grep -q "2027887521b3" "$ROOT/go.mod"
 "$ROOT/scripts/sync-lmcloud-schema.sh" --verify
 
 echo "=== 2. Go vet & unit tests (-race -count=3) ==="
