@@ -2457,6 +2457,7 @@ func (r *liveRawBackend) doLiveAWSWithMode(
 	idempotent, ownAttempt bool,
 	op func(ctx context.Context) error,
 ) error {
+	ctx = hostkit.WithRetryHooks(ctx, hostkit.RetryHooks{})
 	var lastCallErr error
 	r.retry.Do(ctx, idempotent, func(ctx context.Context, attempt int) hostkit.Attempt {
 		var (

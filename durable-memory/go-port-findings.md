@@ -63,5 +63,5 @@
 
 ## 5. `lmcode_std_v3` REST & CLI Interfaces Upgrade (2026-11-16)
 
-- Upgraded `github.com/lmctl-ai/lmcode-go` to `2027887521b3d34a44e67849070bf7e39df11b1d` (`sdk.lock` + `go.mod`), `github.com/lmctl-ai/lmcloud` to `1205bc1e889325849004a150a35c52e27a6cb3f3` (`lmcloud.lock` + `schema/lmcloud.dsl.json`), and `lmctl-ai/lmcode-java` to `a61bd716a1ccd245211ae244d6b78f505d245210` (`java-sdk.lock`).
+- Upgraded `github.com/lmctl-ai/lmcode-go` to `2027887521b3d34a44e67849070bf7e39df11b1d` (`sdk.lock` + `go.mod`), `github.com/lmctl-ai/lmcloud` to `9e045f6d6950e0ad62d9c66feed5f07186e8684d` (`lmcloud.lock` + `schema/lmcloud.dsl.json`), and `lmctl-ai/lmcode-java` to `a61bd716a1ccd245211ae244d6b78f505d245210` (`java-sdk.lock`).
 - Verified all 226 `lmcode_std_v3` standard signatures and 10 standard REST/CLI interfaces (`RestGet`..`RestOptions`, `RestHandler`, `CliCommand`, `CliOption`, `rest_config`, `rest_route`, `rest_serve`, `rest_stop`, `rest_cli`) in `cmd/lmaws/main_test.go` (`TestStdRestAndCliInterfaces`) and `test-go.sh`.

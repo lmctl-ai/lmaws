@@ -1,7 +1,7 @@
 {
   "repo": "lmctl-ai/lmcloud",
   "branch": "main",
-  "commit": "1205bc1e889325849004a150a35c52e27a6cb3f3",
+  "commit": "9e045f6d6950e0ad62d9c66feed5f07186e8684d",
   "file": "schema/lmcloud.dsl.json",
   "sha256": "b2b6307fc5cc5813518d3c40f32ec657cbcb0fa8757da736a6db07df39883147"
 }
