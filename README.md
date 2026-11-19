@@ -1,4 +1,6 @@
 # lmaws
+
+Documentation: [Quick reference](https://www.lmctl.com/tools/lmaws/) · [LLM skill](https://www.lmctl.com/tools/lmaws/skill.html) · [Guide](https://www.lmctl.com/tools/lmaws/guide.html) · [Reference](https://www.lmctl.com/tools/lmaws/reference.html)
 AWS read-only inventory and safely owned test resources for lmscript, powered by the AWS SDK for Java v2.
 
 ## Quickstart
