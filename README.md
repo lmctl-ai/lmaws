@@ -1118,7 +1118,19 @@ Offline fixtures are selected explicitly with `aws.demo()`. Invocation-manifest 
 
 For `run.put`, `key` is the S3 object key or DynamoDB `pk`; queue/topic/parameter writes use `value` as the message or parameter value, and log groups accept `key="retention_days"`.
 
-Writes are limited to those six resource kinds, one run-owned spot nano sandbox (instance, its root volume and network interface, one security group) under `AWS_PROFILE=lmaws-ec2`, and customer-managed `lmaws_` IAM session policies under `AWS_PROFILE=admin` with `LMAWS_ADMIN_GRANT=1` and `--apply`. General ECS and Secrets Manager operations remain metadata-only. The guarded Web API below additionally owns temporary CloudFront/Route 53/ACM resources. Serverless APIs are verified with loopback transports and live lmweblab scenarios under the lmaws profile.
+Writes are limited to those six resource kinds, one run-owned spot nano sandbox (instance, its root volume and network interface, one security group) under `AWS_PROFILE=lmaws-ec2`, and customer-managed `lmaws_` IAM session policies under `AWS_PROFILE=admin` with `LMAWS_ADMIN_GRANT=1` and `--apply`. General ECS and Secrets Manager operations remain metadata-only except through the guarded generic `sdk_call` below (ECR, CloudWatch Logs, ECS, ELBv2, EC2 security groups, ecs-tasks IAM roles, CloudFront, ACM and Route 53 records). The guarded Web API below additionally owns temporary CloudFront/Route 53/ACM resources. Serverless APIs are verified with loopback transports and live lmweblab scenarios under the lmaws profile.
+
+## Generic guarded SDK call (`sdk_call`, `sdk_read`, `sdk_operations`)
+
+Any operation of 16 SDK clients (`ecr ecs elbv2 cloudfront acm route53 iam logs secretsmanager ec2 ssm sts lambda sqs sns dynamodb`) can be called from a recipe with its SDK request shape as JSON (field names as in the AWS API, case-insensitive; `{{env:NAME}}` placeholders are resolved from the environment and never printed):
+
+```text
+c.sdk_read("ecs", "DescribeServices", '{"cluster":"poc-x","services":["poc-x"]}')      # raw JSON string, secret fields redacted
+c.sdk_call("ecr", "CreateRepository", input_json, "x", ".lmaws-local/poc-x.state.json", apply)   # Row; apply=false prints the call
+c.sdk_operations("ecs")                                                                  # Rows: operation, mode (read|create|update|delete|denied)
+```
+
+Reads are operations named `Describe/List/Get/Head*` and run under `default`, `lmaws` or `admin` (secret-returning reads such as `GetSecretValue` are denied). Every other operation is a mutation: it must be on the built-in allowlist (see `SdkCall.RULES`; everything else, such as `RunTask`, `CreateUser` or `CreateDistribution` without tags, is refused) and needs `AWS_PROFILE=admin`, `LMAWS_ADMIN_GRANT=1`, `apply=true` with `--apply` (`LMAWS_APPLY=1`) and `LMAWS_LIVE=1`; it is a dry run by default and prints the call it would make. Creates must carry the tag `poc=<name>` in the request and are recorded (ARN, name) in a state file the run owns (mode 0600). Updates and deletes accept only ids recorded in that file whose live tags still include `poc=<name>`; IAM roles are limited to `poc-<name>-` names with an `ecs-tasks.amazonaws.com` trust and the ECS task-execution policy; Route 53 records (untaggable) are created only where no record exists and changed or deleted only when their content hash equals the one recorded. `Row` fields are account-masked: take ARNs for chaining from `sdk_read` or the state file. See `scripts/test-sdk-call.py` (loopback, no AWS).
 
 ## Cost per example
 

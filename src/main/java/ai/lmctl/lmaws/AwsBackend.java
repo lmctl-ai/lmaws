@@ -1088,6 +1088,25 @@ public final class AwsBackend implements AutoCloseable {
     private EventBridgeClient events() { return events == null ? events = register(base(EventBridgeClient.builder()).build()) : events; }
     private Route53Client route53() { return route53 == null ? route53 = register(base(Route53Client.builder()).build()) : route53; }
     private SecretsManagerClient secrets() { return secrets == null ? secrets = register(base(SecretsManagerClient.builder()).build()) : secrets; }
+    private software.amazon.awssdk.services.ecr.EcrClient ecr;
+    private software.amazon.awssdk.services.elasticloadbalancingv2.ElasticLoadBalancingV2Client elbv2;
+    private software.amazon.awssdk.services.acm.AcmClient acm;
+    boolean endpointActive() { return endpoint != null; }
+    String regionName() { return regionName; }
+    /** The SDK client behind one generic sdk_call service name. */
+    Object sdkClient(String service) {
+        return switch (service) {
+            case "ecr" -> ecr == null ? ecr = register(base(software.amazon.awssdk.services.ecr.EcrClient.builder()).build()) : ecr;
+            case "elbv2" -> elbv2 == null ? elbv2 = register(base(software.amazon.awssdk.services.elasticloadbalancingv2.ElasticLoadBalancingV2Client.builder()).build()) : elbv2;
+            case "acm" -> acm == null ? acm = register(base(software.amazon.awssdk.services.acm.AcmClient.builder()).build()) : acm;
+            case "ecs" -> ecs(); case "cloudfront" -> cloudfront(); case "route53" -> route53(); case "iam" -> iam(); case "logs" -> logs();
+            case "secretsmanager" -> secrets(); case "ec2" -> ec2(); case "ssm" -> ssm(); case "sts" -> sts(); case "lambda" -> lambda();
+            case "sqs" -> sqs(); case "sns" -> sns(); case "dynamodb" -> ddb();
+            default -> throw new IllegalArgumentException("unknown service " + service);
+        };
+    }
+    Map<String,String> sdkCall(String service,String op,String input,String poc,String state,boolean apply){return SdkCall.call(this,service,op,input,poc,state,apply);}
+    String sdkRead(String service,String op,String input){return SdkCall.read(this,service,op,input);}
     private EcsClient ecs() { return ecs == null ? ecs = register(base(EcsClient.builder()).build()) : ecs; }
     private IamClient iam() {
         if (iam == null) {
