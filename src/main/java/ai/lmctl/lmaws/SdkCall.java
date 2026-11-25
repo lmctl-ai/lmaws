@@ -87,7 +87,7 @@ public final class SdkCall {
         create("elbv2:CreateRule", "Rules.0.RuleArn", "Rules.0.RuleArn");
         own("update", "LoadBalancerArn", "elbv2:CreateLoadBalancer", "elbv2:ModifyLoadBalancerAttributes");
         own("update", "TargetGroupArn", "elbv2:CreateTargetGroup", "elbv2:ModifyTargetGroup", "elbv2:ModifyTargetGroupAttributes");
-        own("update", "ListenerArn", "elbv2:CreateListener", "elbv2:ModifyListener");
+        own("update", "ListenerArn", "elbv2:CreateListener", "elbv2:ModifyListener", "elbv2:AddListenerCertificates");
         own("update", "RuleArn", "elbv2:CreateRule", "elbv2:ModifyRule");
         own("delete", "LoadBalancerArn", "elbv2:CreateLoadBalancer", "elbv2:DeleteLoadBalancer");
         own("delete", "TargetGroupArn", "elbv2:CreateTargetGroup", "elbv2:DeleteTargetGroup");
@@ -211,21 +211,21 @@ public final class SdkCall {
         return false;
     }
 
-    static Object resolveEnv(Object o, Set<String> secrets) {
+    static Object resolveEnv(Object o, Set<String> secrets, boolean lenient) {
         if (o instanceof String s) {
             var m = ENV.matcher(s);
             StringBuilder b = new StringBuilder();
             while (m.find()) {
                 String val = System.getenv(m.group(1));
-                if (val == null || val.isEmpty()) throw new IllegalArgumentException("environment variable " + m.group(1) + " is not set");
+                if (val == null || val.isEmpty()) { if (lenient) { m.appendReplacement(b, java.util.regex.Matcher.quoteReplacement(m.group())); continue; } throw new IllegalArgumentException("environment variable " + m.group(1) + " is not set"); }
                 secrets.add(val);
                 m.appendReplacement(b, java.util.regex.Matcher.quoteReplacement(val));
             }
             m.appendTail(b);
             return b.toString();
         }
-        if (o instanceof Map<?, ?> mm) { Map<String, Object> out = new LinkedHashMap<>(); mm.forEach((k, v) -> out.put(String.valueOf(k), resolveEnv(v, secrets))); return out; }
-        if (o instanceof List<?> l) { List<Object> out = new ArrayList<>(); for (Object x : l) out.add(resolveEnv(x, secrets)); return out; }
+        if (o instanceof Map<?, ?> mm) { Map<String, Object> out = new LinkedHashMap<>(); mm.forEach((k, v) -> out.put(String.valueOf(k), resolveEnv(v, secrets, lenient))); return out; }
+        if (o instanceof List<?> l) { List<Object> out = new ArrayList<>(); for (Object x : l) out.add(resolveEnv(x, secrets, lenient)); return out; }
         return o;
     }
 
@@ -441,7 +441,7 @@ public final class SdkCall {
         Object parsed = inputJson == null || inputJson.isBlank() ? new LinkedHashMap<String, Object>() : Json.parse(inputJson);
         if (!(parsed instanceof Map)) throw new IllegalArgumentException("input must be a JSON object");
         Set<String> secrets = new LinkedHashSet<>();
-        Object in = resolveEnv(parsed, secrets);
+        Object in = resolveEnv(parsed, secrets, b.isDemo() || !apply);
         boolean demo = b.isDemo();
         String profile = AwsBackend.activeProfile();
         boolean read = READ.matcher(op).matches();

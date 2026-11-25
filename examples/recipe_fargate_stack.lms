@@ -1,0 +1,523 @@
+# Synthetic-only: Plan or apply a shared Fargate stack from an apps registry: ECR, ecs-tasks roles, ACM, ALB with a Host rule per app, one ECS task and service, CloudFront and DNS per host.
+# This picture-first example always disables live AWS and apply, even if inherited.
+# Run: lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_fargate_stack.lms
+# Generated standalone example from recipes/lib/fargate.lms
+let recipe_budget={reserved_units:0};
+fn recipe_env(key,fallback) { let value=getenv(key,""); if(value=="") {return fallback;} return value; }
+fn recipe_normalize(options) {
+  let defaults = {period:num(recipe_env("LMAWS_RECIPE_PERIOD","30")),top:num(recipe_env("LMAWS_RECIPE_TOP","10")),prefix:recipe_env("LMAWS_RECIPE_PREFIX","lmaws"),policy:recipe_env("LMAWS_RECIPE_POLICY","lmaws_session"),file:recipe_env("LMAWS_RECIPE_FILE",""),region:recipe_env("AWS_REGION",recipe_env("AWS_DEFAULT_REGION","us-east-1")),profile:recipe_env("AWS_PROFILE",recipe_env("AWS_DEFAULT_PROFILE","default")),admin_allowed:false,live:false,apply:false,human_confirmed:false,rollback_file:recipe_env("LMAWS_RECIPE_ROLLBACK_FILE",""),preview:false,output:"data/recipe",task:"queues",role_name:recipe_env("LMAWS_RECIPE_ROLE","lmaws_lambda_exec"),role_spec:recipe_env("LMAWS_RECIPE_ROLE_SPEC",""),cap:num(recipe_env("LMAWS_MAX_COST_USD","0.05")),older_hours:0,filter_prefix:false,output_explicit:false,cap_explicit:recipe_env("LMAWS_MAX_COST_USD","")!="",ledger_dir:recipe_env("LMAWS_LEDGER_DIR",".lmaws-local/recipes/ledgers"),tag_key:"Project",tag_value:"",instance:"",hours:24,types:"t4g.nano,t3.nano",domain:recipe_env("LMAWS_RECIPE_DOMAIN","example.com"),max_gib:num(recipe_env("LMAWS_RECIPE_MAX_GIB","8")),cidr:recipe_env("LMAWS_RECIPE_CIDR","203.0.113.10/32"),from_iso:recipe_env("LMAWS_RECIPE_FROM","2026-01-01T00:00:00Z"),to_iso:recipe_env("LMAWS_RECIPE_TO","2026-01-01T04:00:00Z"),error_text:recipe_env("LMAWS_RECIPE_ERROR",""),ledger_path:recipe_env("LMAWS_RECIPE_LEDGER_PATH",""),probes:recipe_env("LMAWS_RECIPE_PROBES",""),apps:"",stack:"",poc:"",state:"",down:false,timeout_ms:300000};
+  let o=merge(defaults,options);
+  if(has_key(options,"output") && !has_key(options,"output_explicit")) {o.output_explicit=true;}
+  if(has_key(options,"cap") && !has_key(options,"cap_explicit")) {o.cap_explicit=true;}
+  assert(is_number(o.period) && o.period>=1 && o.period<=365 && floor(o.period)==o.period, "--period must be a whole number of days 1..365; got "+str(o.period));
+  assert(is_number(o.top) && o.top>=1 && o.top<=1000 && floor(o.top)==o.top, "--top must be a whole number 1..1000; got "+str(o.top));
+  assert(is_number(o.cap) && o.cap>=0 && o.cap<=0.25, "--cap must be a dollar amount 0..0.25; got "+str(o.cap));
+  assert(is_number(o.older_hours) && o.older_hours>=0 && floor(o.older_hours)==o.older_hours, "--older-hours must be a whole number >= 0; got "+str(o.older_hours));
+  o.output=replace_all(str(o.output),"\\","/");
+  o.ledger_dir=replace_all(str(o.ledger_dir),"\\","/");
+  assert(regex_test(o.ledger_dir,"^[A-Za-z0-9_./: ~-]+$"), "--ledger-dir may use letters, digits and _ . / : ~ - only");
+  assert(o.profile=="default" || o.profile=="lmaws" || o.profile=="lmaws-ec2" || o.profile=="admin", "--profile must be default (read-only), lmaws (service sandboxes) or lmaws-ec2 (EC2 compute); got "+str(o.profile)+". See docs/PROFILES.md");
+  assert(o.profile!="admin" || o.admin_allowed, "the admin profile is only accepted by the IAM grant recipes; use default for read-only recipes");
+  assert(regex_test(str(o.policy),"^lmaws_[a-z0-9_-]{1,64}$"), "--policy must match lmaws_[a-z0-9_-]{1,64}; got "+str(o.policy));
+  assert(is_number(o.hours) && o.hours>=1 && o.hours<=720 && floor(o.hours)==o.hours, "--hours must be a whole number 1..720; got "+str(o.hours));
+  assert(is_number(o.max_gib) && o.max_gib>=1 && o.max_gib<=16384 && floor(o.max_gib)==o.max_gib, "--max-gib must be a whole number 1..16384; got "+str(o.max_gib));
+  assert(is_number(o.timeout_ms) && o.timeout_ms>=1000 && o.timeout_ms<=900000, "timeout_ms must be 1000..900000");
+  assert(regex_test(str(o.tag_key),"^[A-Za-z0-9_.:/=+@ -]{0,128}$") && regex_test(str(o.tag_value),"^[A-Za-z0-9_.:/=+@ -]{0,256}$"), "--tag-key/--tag-value may use letters, digits, spaces and _ . : / = + @ - only");
+  assert(regex_test(str(o.types),"^[a-z0-9]+[.][a-z0-9]+(,[a-z0-9]+[.][a-z0-9]+)*$"), "--types must be comma-separated instance types such as t4g.nano,t3.nano; got "+str(o.types));
+  assert(regex_test(str(o.domain),"^[A-Za-z0-9-]+([.][A-Za-z0-9-]+)+$"), "--domain must be a DNS name such as example.com; got "+str(o.domain));
+  assert(regex_test(o.region,"^[a-z]{2}(-[a-z]+)+-[0-9]+$"), "--region must look like us-east-1; got "+str(o.region));
+  assert(regex_test(o.output,"^[A-Za-z0-9_./: ~-]+$"), "--output may use letters, digits and _ . / : ~ - only");
+  assert(is_string(o.prefix) && len(o.prefix)<=128, "--prefix must be a string of at most 128 characters");
+  return o;
+}
+fn recipe_options(argv) {return recipe_options_impl(argv,false);}
+fn recipe_grant_options(argv) {return recipe_options_impl(argv,true);}
+fn recipe_options_impl(argv,allow_admin) {
+  let o={}; let i=0;
+  while(i<len(argv)) {
+    let key=argv[i];
+    if(key=="--live") {o.live=true;}
+    else if(key=="--apply" || key=="--delete") {o.apply=true;}
+    else if(key=="--i-am-the-admin-human") {o.human_confirmed=true;}
+    else if(key=="--preview" || key=="--dry-run") {o.preview=true;}
+    else if(key=="--down") {o.down=true;}
+    else {
+      assert(i+1<len(argv), key+" needs a value");i=i+1;let value=argv[i];
+      if(key=="--period" || key=="--days") {o.period=num(value);}
+      else if(key=="--top" || key=="--top-n") {o.top=num(value);}
+      else if(key=="--cap") {o.cap=num(value);o.cap_explicit=true;}
+      else if(key=="--older-hours") {o.older_hours=num(value);}
+      else if(key=="--prefix") {o.prefix=value;o.filter_prefix=true;}
+      else if(key=="--policy" || key=="--policy-name") {o.policy=value;}
+      else if(key=="--file" || key=="--policy-file") {o.file=value;}
+      else if(key=="--rollback") {o.rollback_file=value;}
+      else if(key=="--region") {o.region=value;}
+      else if(key=="--profile") {o.profile=value;}
+      else if(key=="--output") {o.output=value;o.output_explicit=true;}
+      else if(key=="--ledger-dir") {o.ledger_dir=value;}
+      else if(key=="--task") {o.task=value;}
+      else if(key=="--tag-key") {o.tag_key=value;}
+      else if(key=="--tag-value") {o.tag_value=value;}
+      else if(key=="--instance") {o.instance=value;}
+      else if(key=="--hours") {o.hours=num(value);}
+      else if(key=="--types") {o.types=value;}
+      else if(key=="--domain") {o.domain=value;}
+      else if(key=="--max-gib") {o.max_gib=num(value);}
+      else if(key=="--cidr") {o.cidr=value;}
+      else if(key=="--from") {o.from_iso=value;}
+      else if(key=="--to") {o.to_iso=value;}
+      else if(key=="--error") {o.error_text=value;}
+      else if(key=="--ledger") {o.ledger_path=value;}
+      else if(key=="--probes") {o.probes=value;}
+      else if(key=="--apps") {o.apps=value;}
+      else if(key=="--stack") {o.stack=value;}
+      else if(key=="--poc") {o.poc=value;}
+      else if(key=="--state") {o.state=value;}
+      else {assert(false, "unknown recipe argument "+key+"; the Arguments line at the top of the recipe lists the accepted flags");}
+    }
+    i=i+1;
+  }
+  o.admin_allowed=allow_admin;
+  return recipe_normalize(o);
+}
+fn host_run(program,args,timeout_ms) {
+  let log=temp_file();
+  set_env("LMAWS_LOG_FILE",log);set_env("LMAWS_DEADLINE_MS",timeout_ms>0 ? str(timeout_ms) : "");
+  let e=run_lmcode(program,{args:args});
+  set_env("LMAWS_LOG_FILE","");set_env("LMAWS_DEADLINE_MS","");
+  let logged=read_file(log);remove_file(log);
+  if(e.ok) {return {code:0,stdout:logged,stderr:""};}
+  return {code:e.phase=="cli" ? 2 : e.phase=="app" ? 4 : 3,stdout:logged,stderr:str(e.code)+": "+str(e.message)};
+}
+fn recipe_run(program, options) {
+  let o=recipe_normalize(options);
+  assert(!o.preview);
+  if(o.live) {
+    let units=ceil(o.cap*100000000);
+    if(recipe_budget.reserved_units+units>25000000) {println("Recipe whole-run cap exceeded; reduce per-recipe caps before another live call.");assert(false);}
+    recipe_budget.reserved_units=recipe_budget.reserved_units+units;
+  }
+  mkdir(dirname(o.output),true);
+  let settings={AWS_PROFILE:o.profile,AWS_DEFAULT_PROFILE:o.profile,AWS_REGION:o.region,AWS_DEFAULT_REGION:o.region,LMAWS_LIVE:o.live ? "1":"0",LMAWS_APPLY:o.apply ? "1":"0",LMAWS_SPEND_LIVE:o.live ? "1":"0",LMAWS_MAX_COST_USD:str(o.cap),LMAWS_LEDGER_DIR:o.ledger_dir,LMAWS_EVIDENCE_DIR:".lmaws-local/recipes/evidence"};
+  settings.LMAWS_OFFLINE=o.live ? getenv("LMAWS_OFFLINE","") : "1";
+  let fleet_config=str(get(o,"fleet_roles_spec",""));
+  if(fleet_config!="") {settings.LMAWS_FLEET_ROLES_SPEC=fleet_config;}
+  let previous={};
+  for(key in keys(settings)) {previous[key]=getenv(key,"");set_env(key,str(settings[key]));}
+  let r=host_run(program,o.apply ? ["--apply"] : [],o.timeout_ms);
+  for(key in keys(previous)) {set_env(key,previous[key]);}
+  if(r.code!=0) {println("Recipe host failed; see the host's sanitized diagnostic.");println(r.stderr);}
+  let found=false;
+  for(line in lines(r.stdout)) {
+    if(starts_with(line,"Cost Explorer requests:") || starts_with(line,"CloudWatch metric requests:") || starts_with(line,"CloudWatch metric units:") || starts_with(line,"IAM policy lint:") || starts_with(line,"IAM policy diff") || starts_with(line,"  + ") || starts_with(line,"  ~ ") || starts_with(line,"  - ") || starts_with(line,"  = ")) {println(line);}
+    if(starts_with(line,"estimated cost: $")) {println(line);found=true;}
+  }
+  if(!found && r.code!=0) {println("estimated cost: $"+str(o.cap)+" (reserved upper bound; host receipt unavailable)");}
+  assert(r.code==0, "the lmaws host failed (exit "+str(r.code)+"); its message is printed above. See docs/TROUBLESHOOTING.md");
+  assert(found, "the lmaws host printed no cost receipt; check that the installed lmaws release matches this recipe");
+  return r;
+}
+fn recipe_preview(options,task) {
+  let o=recipe_normalize(options);
+  println(json_stringify({task:task,region:o.region,profile:o.profile,prefix:o.prefix,period:o.period,top:o.top,live:o.live,apply:o.apply,preview:true},2));
+  println("estimated cost: $0.00");
+  return {rows:[],preview:true};
+}
+fn recipe_select(rows,options) {
+  let o=recipe_normalize(options);let selected=[];
+  for(row in rows) {
+    if(len(selected)<o.top) {push(selected,row);}
+  }
+  return selected;
+}
+fn recipe_cost_line(report) {
+  let answer="estimated cost: $0.00";
+  let result=get(report,"result",{});
+  for(line in lines(str(get(result,"stdout","")))) {
+    if(starts_with(line,"estimated cost: $")) {answer=line;}
+  }
+  return answer;
+}
+fn recipe_picture(rows,title,name) {
+  assert(regex_test(name,"^[a-z][a-z0-9_]*$"));
+  mkdir("images");mkdir("data");
+  let counts={};let max_count=1;
+  for(row in rows) {
+    let label=str(get(row,"kind",get(row,"task","matching resources")));
+    label=replace_all(label,"_"," ");
+    label=regex_replace(label,"[^A-Za-z0-9 .-]","","g");
+    counts[label]=get(counts,label,0)+1;
+    if(counts[label]>max_count) {max_count=counts[label];}
+  }
+  let data="label,count\n";
+  for(label in keys(counts)) {data=data+label+","+str(counts[label])+"\n";}
+  if(len(rows)==0) {data=data+"no matches,0\n";}
+  let chart_title="Synthetic: "+regex_replace(str(title),"[^A-Za-z0-9 ,.:()/+-]","","g");
+  if(len(chart_title)>80) {chart_title=substr(chart_title,0,77)+"...";}
+  write_file("data/"+name+".csv",data);
+  let chart=_lmcode_ cli="lmplot" install="github:lmctl-ai/lmplot@latest";
+plot.png(${"images/"+name+".png"},900,560);
+plot.cmd(${"set datafile separator ','; set title '"+chart_title+"'; unset key; set style data histograms; set style fill solid 0.8; set boxwidth 0.6; set yrange [0:"+str(max_count+1)+"]; set ytics 1; set ylabel 'count of resources'; set grid ytics; set xtics rotate by -30"});
+plot.cmd(${"plot 'data/"+name+".csv' every ::1 using 2:xtic(1) lc rgb '#5db7d1'"});
+plot.close();
+end _lmcode_
+  let r=host_run(chart,[],120000);assert(r.code==0);
+  println("images/"+name+".png");
+}
+
+
+fn fg_run(o, p, apply) {
+  let settings={AWS_PROFILE:o.profile,AWS_DEFAULT_PROFILE:o.profile,AWS_REGION:o.region,AWS_DEFAULT_REGION:o.region,LMAWS_LIVE:o.live ? "1":"0",LMAWS_APPLY:apply ? "1":"0",LMAWS_MAX_COST_USD:str(o.cap),LMAWS_LEDGER_DIR:o.ledger_dir,LMAWS_EVIDENCE_DIR:".lmaws-local/recipes/evidence"};
+  settings.LMAWS_OFFLINE=o.live ? getenv("LMAWS_OFFLINE","") : "1";
+  let previous={};
+  for(key in keys(settings)) {previous[key]=getenv(key,"");set_env(key,str(settings[key]));}
+  let r=host_run(p,apply ? ["--apply"] : [],o.timeout_ms);
+  for(key in keys(previous)) {set_env(key,previous[key]);}
+  return r;
+}
+
+fn fg_call(o, ctx, service, op, input, apply) {
+  let raw=o.output+".call.json";
+  if(file_exists(raw)) {remove_file(raw);}
+  let body=json_stringify(input);
+  let p=_lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud=aws.example("recipe_fargate_stack");
+let row=cloud.sdk_call(${service},${op},${body},${ctx.poc},${ctx.state},${apply});
+file_write(${raw},row.json());
+end _lmcode_
+  let r=fg_run(o,p,apply);
+  for(line in lines(r.stdout)) {if(starts_with(line,"sdk call ")) {println("  "+line);}}
+  if(r.code!=0 || !file_exists(raw)) {return {ok:false,row:{},err:str(r.stderr)};}
+  return {ok:true,row:json_parse(read_file(raw)),err:""};
+}
+
+fn fg_read(o, ctx, service, op, input) {
+  let raw=o.output+".read.json";
+  if(file_exists(raw)) {remove_file(raw);}
+  let body=json_stringify(input);
+  let p=_lmcode_ cli="lmaws" install="github:lmctl-ai/lmaws@latest";
+let cloud=aws.example("recipe_fargate_stack");
+file_write(${raw},cloud.sdk_read(${service},${op},${body}));
+end _lmcode_
+  let r=fg_run(o,p,false);
+  if(r.code!=0 || !file_exists(raw)) {return {ok:false,data:{},err:str(r.stderr)};}
+  return {ok:true,data:json_parse(read_file(raw)),err:""};
+}
+
+fn fg_load(path, fallback) {
+  if(!file_exists(path)) {return fallback;}
+  return json_parse(read_file(path));
+}
+
+fn fg_ensure(o, ctx, label, kind, service, op, input) {
+  let sha=sha256(json_stringify(input));
+  let known=get(ctx.steps,label,null);
+  if(known!=null && known.sha==sha) {
+    push(ctx.rows,{name:label,kind:kind,action:"unchanged",detail:"already applied",count:1});
+    return known.arn;
+  }
+  if(known!=null) {
+    println("DRIFT "+label+": the registry no longer matches what was applied; change it with a dedicated update step (not done automatically)");
+    push(ctx.rows,{name:label,kind:kind,action:"drift",detail:"input changed since apply",count:1});
+    return known.arn;
+  }
+  println("== "+(ctx.apply ? "apply " : "plan ")+label);
+  let c=fg_call(o,ctx,service,op,input,ctx.apply);
+  assert(c.ok,"step "+label+" failed: "+c.err);
+  let arn="pending:"+label;
+  if(ctx.apply) {
+    let st=fg_load(ctx.state,{resources:[]});
+    for(e in st.resources) {if(e.service==service && e.op==op) {arn=str(e.arn)!="" ? str(e.arn) : str(e.name);}}
+    ctx.steps[label]={sha:sha,arn:arn};
+    mkdir(dirname(ctx.steps_file),true);write_file(ctx.steps_file,json_stringify(ctx.steps,2));
+  }
+  push(ctx.rows,{name:label,kind:kind,action:ctx.apply ? "created" : "would create",detail:service+":"+op,count:1});
+  return arn;
+}
+
+fn fg_update(o, ctx, label, kind, service, op, input) {
+  println("== "+(ctx.apply ? "apply " : "plan ")+label);
+  let c=fg_call(o,ctx,service,op,input,ctx.apply);
+  assert(c.ok,"step "+label+" failed: "+c.err);
+  push(ctx.rows,{name:label,kind:kind,action:ctx.apply ? "updated" : "would update",detail:service+":"+op,count:1});
+}
+
+fn fg_tags(ctx) { return [{Key:"poc",Value:ctx.poc}]; }
+fn fg_tags_lower(ctx) { return [{key:"poc",value:ctx.poc}]; }
+fn fg_last(text, sep) { let parts=split(text,sep); return parts[len(parts)-1]; }
+fn fg_pending(arn) { return starts_with(str(arn),"pending:"); }
+
+fn fg_repo_of_image(image) {
+  let rest=substr(image,index_of(image,"/")+1,len(image));
+  let at=index_of(rest,":");
+  return at>=0 ? substr(rest,0,at) : rest;
+}
+
+fn fg_task_definition(ctx, apps, stack) {
+  let t=apps.task;
+  let containers=[];
+  for(s in apps.sidecars) {push(containers,s);}
+  for(a in apps.apps) {
+    let c=merge(a.container,{name:a.name,image:apps.account+".dkr.ecr."+apps.region+".amazonaws.com/"+a.ecr+":"+a.tag});
+    push(containers,c);
+  }
+  return {family:t.family,cpu:t.cpu,memory:t.memory,networkMode:"awsvpc",requiresCompatibilities:["FARGATE"],
+    runtimePlatform:{cpuArchitecture:t.arch,operatingSystemFamily:"LINUX"},executionRoleArn:t.execution_role,taskRoleArn:t.task_role,
+    containerDefinitions:containers,tags:fg_tags_lower(ctx)};
+}
+
+fn fg_distribution(o, ctx, stack, host, origin_host, cert_arn, enabled) {
+  let text=read_file(stack.template);
+  text=replace_all(text,"{{env:POC_ORIGIN_SECRET}}","{{env:"+stack.origin_secret_env+"}}");
+  text=replace_all(text,"{{HOST}}",host);
+  text=replace_all(text,"{{ORIGIN_HOST}}",origin_host);
+  text=replace_all(text,"{{ORIGIN_ID}}",ctx.base+"-alb");
+  text=replace_all(text,"{{ACM_ARN}}",cert_arn);
+  text=replace_all(text,"{{POC}}",ctx.poc);
+  text=replace_all(text,"{{CALLER_REF}}",ctx.poc+"-"+sha256(host));
+  text=replace_all(text,"{{ENABLED}}",enabled ? "true" : "false");
+  return json_parse(text);
+}
+
+fn fg_alias_change(ctx, stack, zone, name, type, target, target_zone) {
+  return {HostedZoneId:zone,ChangeBatch:{Changes:[{Action:"UPSERT",ResourceRecordSet:{Name:name,Type:type,
+    AliasTarget:{HostedZoneId:target_zone,DNSName:target,EvaluateTargetHealth:false}}}]}};
+}
+
+fn fg_check(check, d) {
+  if(check=="cert_issued") {return get(get(d,"Certificate",{}),"Status","")=="ISSUED";}
+  if(check=="dist_deployed") {return get(get(d,"Distribution",{}),"Status","")=="Deployed";}
+  return true;
+}
+fn fg_wait(o, ctx, what, tries, pause_ms, service, op, input, check) {
+  if(!ctx.apply) {return true;}
+  let i=0;
+  while(i<tries) {
+    let r=fg_read(o,ctx,service,op,input);
+    if(r.ok && fg_check(check,r.data)) {return true;}
+    sleep_ms(pause_ms);
+    i=i+1;
+  }
+  println("timed out waiting for "+what);
+  return false;
+}
+
+fn fg_plan_stack(o, ctx, apps, stack) {
+  let base=apps.cluster;
+  ctx.base=base;
+  let region=apps.region;
+  let repos=[];
+  for(a in apps.apps) {push(repos,a.ecr);}
+  for(s in apps.sidecars) {push(repos,fg_repo_of_image(s.image));}
+  for(repo in repos) {
+    fg_ensure(o,ctx,"ecr:"+repo,"ecr_repository","ecr","CreateRepository",{repositoryName:repo,imageScanningConfiguration:{scanOnPush:true},tags:fg_tags_lower(ctx)});
+  }
+  let lg=apps.task.log_group;
+  fg_ensure(o,ctx,"logs:"+lg,"log_group","logs","CreateLogGroup",{logGroupName:lg,tags:{poc:ctx.poc}});
+  fg_ensure(o,ctx,"logs-retention:"+lg,"log_retention","logs","PutRetentionPolicy",{logGroupName:lg,retentionInDays:stack.retention_days});
+  let trust=json_stringify({Version:"2012-10-17",Statement:[{Effect:"Allow",Principal:{Service:"ecs-tasks.amazonaws.com"},Action:"sts:AssumeRole"}]});
+  let exec_role=fg_last(apps.task.execution_role,"/");
+  let task_role=fg_last(apps.task.task_role,"/");
+  fg_ensure(o,ctx,"role:"+exec_role,"iam_role","iam","CreateRole",{RoleName:exec_role,AssumeRolePolicyDocument:trust,Tags:fg_tags(ctx)});
+  fg_ensure(o,ctx,"role:"+task_role,"iam_role","iam","CreateRole",{RoleName:task_role,AssumeRolePolicyDocument:trust,Tags:fg_tags(ctx)});
+  fg_ensure(o,ctx,"role-policy:"+exec_role,"iam_attachment","iam","AttachRolePolicy",{RoleName:exec_role,PolicyArn:"arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"});
+  let prefix_id="pl-pending";
+  let pl=fg_read(o,ctx,"ec2","DescribeManagedPrefixLists",{Filters:[{Name:"prefix-list-name",Values:[stack.cloudfront_prefix_list]}]});
+  if(pl.ok && len(get(pl.data,"PrefixLists",[]))>0) {prefix_id=pl.data.PrefixLists[0].PrefixListId;}
+  let alb_sg=fg_ensure(o,ctx,"sg:"+base+"-alb","security_group","ec2","CreateSecurityGroup",{GroupName:base+"-alb",Description:"poc="+ctx.poc+" ALB: 443 from CloudFront only",VpcId:stack.vpc_id,TagSpecifications:[{ResourceType:"security-group",Tags:fg_tags(ctx)}]});
+  let task_sg=fg_ensure(o,ctx,"sg:"+base+"-task","security_group","ec2","CreateSecurityGroup",{GroupName:base+"-task",Description:"poc="+ctx.poc+" task: app ports from the ALB only",VpcId:stack.vpc_id,TagSpecifications:[{ResourceType:"security-group",Tags:fg_tags(ctx)}]});
+  let alb_sg_id=fg_pending(alb_sg) ? "sg-pending-alb" : alb_sg;
+  let task_sg_id=fg_pending(task_sg) ? "sg-pending-task" : task_sg;
+  fg_ensure(o,ctx,"sg-ingress:alb","security_group_rule","ec2","AuthorizeSecurityGroupIngress",{GroupId:alb_sg_id,IpPermissions:[{IpProtocol:"tcp",FromPort:443,ToPort:443,PrefixListIds:[{PrefixListId:prefix_id,Description:"CloudFront origin-facing"}]}]});
+  let perms=[];
+  for(a in apps.apps) {push(perms,{IpProtocol:"tcp",FromPort:a.port,ToPort:a.port,UserIdGroupPairs:[{GroupId:alb_sg_id,Description:"ALB to "+a.name}]});}
+  fg_ensure(o,ctx,"sg-ingress:task","security_group_rule","ec2","AuthorizeSecurityGroupIngress",{GroupId:task_sg_id,IpPermissions:perms});
+  let certs={};
+  for(a in apps.apps) {
+    for(host in a.hosts) {
+      let origin_host="origin-"+host;
+      let cert=fg_ensure(o,ctx,"acm:"+host,"acm_certificate","acm","RequestCertificate",{DomainName:host,SubjectAlternativeNames:[origin_host],ValidationMethod:"DNS",Tags:fg_tags(ctx)});
+      certs[host]=cert;
+      if(ctx.apply) {
+        let described=fg_read(o,ctx,"acm","DescribeCertificate",{CertificateArn:cert});
+        let tries=0;
+        while(tries<30 && (!described.ok || len(get(get(described.data,"Certificate",{}),"DomainValidationOptions",[]))<2 || get(get(get(described.data,"Certificate",{}).DomainValidationOptions[1],"ResourceRecord",{}),"Name","")=="")) {
+          sleep_ms(3000);described=fg_read(o,ctx,"acm","DescribeCertificate",{CertificateArn:cert});tries=tries+1;
+        }
+        assert(described.ok,"cannot describe certificate "+host);
+        for(opt in described.data.Certificate.DomainValidationOptions) {
+          let rr=opt.ResourceRecord;
+          fg_ensure(o,ctx,"dns-validation:"+rr.Name,"route53_record","route53","ChangeResourceRecordSets",{HostedZoneId:stack.zone_id,ChangeBatch:{Changes:[{Action:"UPSERT",ResourceRecordSet:{Name:rr.Name,Type:"CNAME",TTL:300,ResourceRecords:[{Value:rr.Value}]}}]}});
+        }
+        let issued=fg_wait(o,ctx,"certificate "+host,60,10000,"acm","DescribeCertificate",{CertificateArn:cert},"cert_issued");
+        assert(issued,"certificate for "+host+" was not issued in time");
+      } else {
+        push(ctx.rows,{name:"dns-validation:"+host,kind:"route53_record",action:"would create",detail:"CNAME records from the certificate after it is requested",count:1});
+      }
+    }
+  }
+  let alb_name=apps.edge.alb;
+  let lb=fg_ensure(o,ctx,"alb:"+alb_name,"load_balancer","elbv2","CreateLoadBalancer",{Name:alb_name,Subnets:stack.subnets,SecurityGroups:[alb_sg_id],Scheme:"internet-facing",Type:"application",Tags:fg_tags(ctx)});
+  fg_ensure(o,ctx,"alb-attributes:"+alb_name,"load_balancer_attributes","elbv2","ModifyLoadBalancerAttributes",{LoadBalancerArn:lb,Attributes:[{Key:"idle_timeout.timeout_seconds",Value:"120"}]});
+  let tgs={};
+  for(a in apps.apps) {
+    let tg_name=substr(base+"-"+a.name,0,32);
+    let tg=fg_ensure(o,ctx,"tg:"+tg_name,"target_group","elbv2","CreateTargetGroup",{Name:tg_name,Protocol:"HTTP",Port:a.port,VpcId:stack.vpc_id,TargetType:"ip",HealthCheckPath:a.health_path,HealthCheckIntervalSeconds:10,HealthyThresholdCount:2,UnhealthyThresholdCount:2,Matcher:{HttpCode:"200"},Tags:fg_tags(ctx)});
+    tgs[a.name]=tg;
+    fg_ensure(o,ctx,"tg-attributes:"+tg_name,"target_group_attributes","elbv2","ModifyTargetGroupAttributes",{TargetGroupArn:tg,Attributes:[{Key:"deregistration_delay.timeout_seconds",Value:"30"}]});
+  }
+  let first_cert=certs[apps.apps[0].hosts[0]];
+  let listener=fg_ensure(o,ctx,"listener:443","listener","elbv2","CreateListener",{LoadBalancerArn:lb,Protocol:"HTTPS",Port:443,SslPolicy:stack.ssl_policy,Certificates:[{CertificateArn:first_cert}],
+    DefaultActions:[{Type:"fixed-response",FixedResponseConfig:{StatusCode:"403",ContentType:"text/plain",MessageBody:"forbidden"}}],Tags:fg_tags(ctx)});
+  let priority=1;
+  for(a in apps.apps) {
+    for(host in a.hosts) {
+      if(certs[host]!=first_cert) {
+        fg_ensure(o,ctx,"listener-cert:"+host,"listener_certificate","elbv2","AddListenerCertificates",{ListenerArn:listener,Certificates:[{CertificateArn:certs[host]}]});
+      }
+      fg_ensure(o,ctx,"rule:"+host,"listener_rule","elbv2","CreateRule",{ListenerArn:listener,Priority:priority,Tags:fg_tags(ctx),Actions:[{Type:"forward",TargetGroupArn:tgs[a.name]}],
+        Conditions:[{Field:"host-header",HostHeaderConfig:{Values:[host]}},{Field:"http-header",HttpHeaderConfig:{HttpHeaderName:apps.edge.origin_header,Values:["{{env:"+stack.origin_secret_env+"}}"]}}]});
+      priority=priority+1;
+    }
+  }
+  let alb_dns="alb.pending.example";let alb_zone="ZPENDING";
+  if(!fg_pending(lb)) {
+    let d=fg_read(o,ctx,"elbv2","DescribeLoadBalancers",{LoadBalancerArns:[lb]});
+    if(d.ok) {alb_dns=d.data.LoadBalancers[0].DNSName;alb_zone=d.data.LoadBalancers[0].CanonicalHostedZoneId;}
+  }
+  for(a in apps.apps) {
+    for(host in a.hosts) {
+      fg_ensure(o,ctx,"dns-origin:"+host,"route53_record","route53","ChangeResourceRecordSets",fg_alias_change(ctx,stack,stack.zone_id,"origin-"+host+".","A",alb_dns,alb_zone));
+    }
+  }
+  let cluster=fg_ensure(o,ctx,"cluster:"+base,"ecs_cluster","ecs","CreateCluster",{clusterName:base,tags:fg_tags_lower(ctx)});
+  let td=fg_task_definition(ctx,apps,stack);
+  let td_arn=fg_ensure(o,ctx,"task-definition:"+td.family,"task_definition","ecs","RegisterTaskDefinition",td);
+  let lbs=[];
+  for(a in apps.apps) {push(lbs,{targetGroupArn:tgs[a.name],containerName:a.name,containerPort:a.port});}
+  let svc_known=get(ctx.steps,"service:"+base,null);
+  if(svc_known==null) {
+    fg_ensure(o,ctx,"service:"+base,"ecs_service","ecs","CreateService",{cluster:base,serviceName:base,taskDefinition:fg_pending(td_arn) ? td.family : td_arn,desiredCount:stack.desired_count,launchType:"FARGATE",
+      networkConfiguration:{awsvpcConfiguration:{subnets:stack.subnets,securityGroups:[task_sg_id],assignPublicIp:"ENABLED"}},loadBalancers:lbs,healthCheckGracePeriodSeconds:30,
+      deploymentConfiguration:{minimumHealthyPercent:100,maximumPercent:200,deploymentCircuitBreaker:{enable:true,rollback:true}},enableECSManagedTags:true,propagateTags:"SERVICE",tags:fg_tags_lower(ctx)});
+  } else if(ctx.last_td!=td_arn && !fg_pending(td_arn)) {
+    fg_update(o,ctx,"service-deploy:"+base,"ecs_service","ecs","UpdateService",{cluster:base,service:base,taskDefinition:td_arn,desiredCount:stack.desired_count,forceNewDeployment:true});
+  } else {
+    push(ctx.rows,{name:"service:"+base,kind:"ecs_service",action:"unchanged",detail:"task definition unchanged",count:1});
+  }
+  for(a in apps.apps) {
+    for(host in a.hosts) {
+      let cfg=fg_distribution(o,ctx,stack,host,"origin-"+host,certs[host],true);
+      let dist=fg_ensure(o,ctx,"cloudfront:"+host,"cloudfront_distribution","cloudfront","CreateDistributionWithTags",{DistributionConfigWithTags:{DistributionConfig:cfg,Tags:{Items:fg_tags(ctx)}}});
+      let cf_domain="d-pending.cloudfront.net";
+      if(!fg_pending(dist)) {
+        let g=fg_read(o,ctx,"cloudfront","GetDistribution",{Id:fg_last(dist,"/")});
+        if(g.ok) {cf_domain=g.data.Distribution.DomainName;}
+      }
+      for(type in ["A","AAAA"]) {
+        fg_ensure(o,ctx,"dns-host:"+host+":"+type,"route53_record","route53","ChangeResourceRecordSets",fg_alias_change(ctx,stack,stack.zone_id,host+".",type,cf_domain+".",stack.cloudfront_zone_id));
+      }
+    }
+  }
+}
+
+fn fg_teardown(o, ctx, apps, stack) {
+  let st=fg_load(ctx.state,{resources:[],records:{}});
+  assert(len(st.resources)+len(keys(get(st,"records",{})))>0,"nothing is recorded in "+ctx.state+": nothing to delete");
+  let base=apps.cluster;
+  for(key in keys(get(st,"records",{}))) {
+    let parts=split(key,"|");
+    let live=fg_read(o,ctx,"route53","ListResourceRecordSets",{HostedZoneId:parts[0],StartRecordName:parts[1],StartRecordType:parts[2],MaxItems:"1"});
+    if(live.ok && len(get(live.data,"ResourceRecordSets",[]))>0) {
+      fg_update(o,ctx,"delete dns "+parts[1]+" "+parts[2],"route53_record","route53","ChangeResourceRecordSets",{HostedZoneId:parts[0],ChangeBatch:{Changes:[{Action:"DELETE",ResourceRecordSet:live.data.ResourceRecordSets[0]}]}});
+    }
+  }
+  let i=len(st.resources)-1;
+  while(i>=0) {
+    let e=st.resources[i];
+    let name=str(e.name);let arn=str(e.arn);
+    if(e.op=="CreateService") {
+      fg_update(o,ctx,"scale down "+name,"ecs_service","ecs","UpdateService",{cluster:base,service:name,desiredCount:0});
+      fg_update(o,ctx,"delete service "+name,"ecs_service","ecs","DeleteService",{cluster:base,service:name,force:true});
+    } else if(e.op=="RegisterTaskDefinition") {
+      fg_update(o,ctx,"deregister "+arn,"task_definition","ecs","DeregisterTaskDefinition",{taskDefinition:arn});
+    } else if(e.op=="CreateCluster") {
+      fg_update(o,ctx,"delete cluster "+name,"ecs_cluster","ecs","DeleteCluster",{cluster:name});
+    } else if(e.op=="CreateDistributionWithTags") {
+      let id=name;
+      let got=fg_read(o,ctx,"cloudfront","GetDistributionConfig",{Id:id});
+      if(got.ok) {
+        let host=got.data.DistributionConfig.Aliases.Items[0];
+        let cfg=fg_distribution(o,ctx,stack,host,"origin-"+host,got.data.DistributionConfig.ViewerCertificate.ACMCertificateArn,false);
+        cfg.CallerReference=got.data.DistributionConfig.CallerReference;
+        fg_update(o,ctx,"disable distribution "+id,"cloudfront_distribution","cloudfront","UpdateDistribution",{Id:id,IfMatch:got.data.ETag,DistributionConfig:cfg});
+        fg_wait(o,ctx,"distribution "+id+" deployed",120,15000,"cloudfront","GetDistribution",{Id:id},"dist_deployed");
+        let again=fg_read(o,ctx,"cloudfront","GetDistributionConfig",{Id:id});
+        fg_update(o,ctx,"delete distribution "+id,"cloudfront_distribution","cloudfront","DeleteDistribution",{Id:id,IfMatch:again.data.ETag});
+      }
+    } else if(e.op=="CreateRule") {
+      fg_update(o,ctx,"delete rule","listener_rule","elbv2","DeleteRule",{RuleArn:arn});
+    } else if(e.op=="CreateListener") {
+      fg_update(o,ctx,"delete listener","listener","elbv2","DeleteListener",{ListenerArn:arn});
+    } else if(e.op=="CreateLoadBalancer") {
+      fg_update(o,ctx,"delete load balancer "+name,"load_balancer","elbv2","DeleteLoadBalancer",{LoadBalancerArn:arn});
+      fg_wait(o,ctx,"load balancer deletion",30,10000,"elbv2","DescribeLoadBalancers",{PageSize:1},"any");
+    } else if(e.op=="CreateTargetGroup") {
+      fg_update(o,ctx,"delete target group "+name,"target_group","elbv2","DeleteTargetGroup",{TargetGroupArn:arn});
+    } else if(e.op=="RequestCertificate") {
+      fg_update(o,ctx,"delete certificate "+name,"acm_certificate","acm","DeleteCertificate",{CertificateArn:arn});
+    } else if(e.op=="CreateSecurityGroup") {
+      fg_update(o,ctx,"delete security group "+name,"security_group","ec2","DeleteSecurityGroup",{GroupId:name});
+    } else if(e.op=="CreateRole") {
+      fg_update(o,ctx,"detach policy "+name,"iam_attachment","iam","DetachRolePolicy",{RoleName:name,PolicyArn:"arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"});
+      fg_update(o,ctx,"delete role "+name,"iam_role","iam","DeleteRole",{RoleName:name});
+    } else if(e.op=="CreateLogGroup") {
+      fg_update(o,ctx,"delete log group "+name,"log_group","logs","DeleteLogGroup",{logGroupName:name});
+    } else if(e.op=="CreateRepository") {
+      fg_update(o,ctx,"delete repository "+name,"ecr_repository","ecr","DeleteRepository",{repositoryName:name,force:true});
+    }
+    i=i-1;
+  }
+}
+
+fn recipe_fargate(options) {
+  let o=recipe_normalize(merge(options,{admin_allowed:true}));
+  assert(o.apps!="","--apps PATH to the apps registry JSON is required (see fargate/apps.json)");
+  assert(o.stack!="","--stack PATH to the stack settings JSON is required (see recipes/fargate_stack.config.json)");
+  let apps=json_parse(read_file(o.apps));
+  let stack=json_parse(read_file(o.stack));
+  let poc=o.poc!="" ? o.poc : (starts_with(apps.cluster,"poc-") ? substr(apps.cluster,4,len(apps.cluster)) : apps.cluster);
+  assert(regex_test(poc,"^[a-z0-9][a-z0-9-]{1,40}$"),"--poc must match [a-z0-9][a-z0-9-]{1,40}");
+  let state=o.state!="" ? o.state : ".lmaws-local/fargate/"+poc+".state.json";
+  let apply=o.apply && o.live && !o.preview;
+  if(o.live) {
+    assert(o.profile=="admin","the Fargate stack needs --profile admin");assert(getenv("LMAWS_ADMIN_GRANT","")=="1","the Fargate stack needs LMAWS_ADMIN_GRANT=1");
+    assert(!contains(state,"..") && regex_test(state,"^[A-Za-z0-9_./~-]+$"),"--state may use letters, digits and _ . / ~ - only");
+  }
+  stack.template=get(stack,"template","fargate_distribution.template.json");
+  let beside=dirname(o.stack)+"/"+fg_last(stack.template,"/");
+  if(file_exists(beside)) {stack.template=beside;}
+  let steps_file=state+".steps.json";
+  let ctx={poc:poc,state:state,apply:apply,rows:[],steps:fg_load(steps_file,{}),steps_file:steps_file,base:apps.cluster,last_td:""};
+  let known_td=get(ctx.steps,"task-definition:"+apps.task.family,null);
+  if(known_td!=null) {ctx.last_td=known_td.arn;}
+  if(o.preview) {
+    println(json_stringify({recipe:"fargate_stack",poc:poc,apps:len(apps.apps),state:state,live:o.live,apply:o.apply,down:o.down,preview:true},2));
+    println("estimated cost: $0.00");
+    return {rows:[],preview:true};
+  }
+  println((o.down ? "TEARDOWN " : "STACK ")+poc+": "+(apply ? "APPLY" : "PLAN (dry run; pass --live --apply with the admin profile to change AWS)")+", "+str(len(apps.apps))+" app(s)");
+  mkdir(dirname(o.output),true);
+  if(o.down) {fg_teardown(o,ctx,apps,stack);} else {fg_plan_stack(o,ctx,apps,stack);}
+  let report={kind:"fargate_stack",poc:poc,state:state,applied:apply,down:o.down,synthetic:!o.live,rows:ctx.rows,output_file:o.output+".json",result:{stdout:"estimated cost: $0.00"}};
+  mkdir(dirname(o.output),true);write_file(o.output+".json",json_stringify(report,2));write_csv(o.output+".csv",ctx.rows);
+  return report;
+}
+
+let options=recipe_options(ARGV);
+options.live=false;options.apply=false;options.preview=false;options.profile="default";
+options.task="fargate_stack";options.apps="recipes/fargate_apps.example.json";options.stack="recipes/fargate_stack.config.json";options.output="data/recipe_fargate_stack";
+let report=recipe_fargate(options);
+assert(is_array(report.rows));
+recipe_picture(report.rows,"Plan or apply a shared Fargate stack from an apps registry: ECR, ecs-tasks roles, ACM, ALB with a Host rule per app, one ECS task and service, CloudFront and DNS per host","recipe_fargate_stack");
+println(recipe_cost_line(report));

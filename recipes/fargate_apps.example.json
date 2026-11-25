@@ -1,0 +1,153 @@
+{
+  "cluster": "poc-go-fargate",
+  "region": "us-east-1",
+  "account": "123456789012",
+  "task": {
+    "family": "poc-go-fargate",
+    "cpu": "256",
+    "memory": "512",
+    "arch": "ARM64",
+    "execution_role": "arn:aws:iam::123456789012:role/poc-go-fargate-exec",
+    "task_role": "arn:aws:iam::123456789012:role/poc-go-fargate-task",
+    "log_group": "/poc/go-fargate"
+  },
+  "edge": {
+    "alb": "poc-go-fargate",
+    "origin_header": "X-Origin-Env",
+    "note": "each host has its own CloudFront distribution (alias + ACM cert in us-east-1) whose origin is the ALB with the secret header; the ALB listener routes by Host header to the app target group"
+  },
+  "sidecars": [
+    {
+      "name": "valkey",
+      "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/poc-go-fargate/valkey:8-alpine",
+      "cpu": 0,
+      "memory": 160,
+      "memoryReservation": 96,
+      "portMappings": [],
+      "essential": true,
+      "command": [
+        "valkey-server",
+        "--maxmemory",
+        "64mb",
+        "--maxmemory-policy",
+        "noeviction",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--bind",
+        "127.0.0.1"
+      ],
+      "environment": [],
+      "mountPoints": [],
+      "volumesFrom": [],
+      "stopTimeout": 10,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/poc/go-fargate",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "valkey"
+        }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "valkey-cli -h 127.0.0.1 ping | grep -q PONG"
+        ],
+        "interval": 10,
+        "timeout": 3,
+        "retries": 3,
+        "startPeriod": 5
+      },
+      "systemControls": []
+    }
+  ],
+  "apps": [
+    {
+      "name": "mediator",
+      "hosts": [
+        "go.lmctl.ai"
+      ],
+      "source": {
+        "repo": "lmctl-ai",
+        "branch": "go-mediator",
+        "dockerfile": "deploy/fargate/Dockerfile.go"
+      },
+      "ecr": "poc-go-fargate/mediator",
+      "tag": "latest",
+      "port": 8080,
+      "health_path": "/healthz",
+      "container": {
+        "cpu": 0,
+        "memory": 96,
+        "memoryReservation": 32,
+        "portMappings": [
+          {
+            "containerPort": 8080,
+            "hostPort": 8080,
+            "protocol": "tcp"
+          }
+        ],
+        "essential": true,
+        "environment": [
+          {
+            "name": "DEPLOY_ENV",
+            "value": "cert"
+          },
+          {
+            "name": "PORT",
+            "value": "8080"
+          },
+          {
+            "name": "LOG_LEVEL",
+            "value": "info"
+          },
+          {
+            "name": "COGNITO_USER_POOL_ID",
+            "value": "us-east-1_EXAMPLE"
+          },
+          {
+            "name": "COGNITO_CLIENT_ID",
+            "value": "exampleclientid"
+          },
+          {
+            "name": "VALKEY_URLS",
+            "value": "redis://127.0.0.1:6379"
+          }
+        ],
+        "mountPoints": [],
+        "volumesFrom": [],
+        "dependsOn": [
+          {
+            "containerName": "valkey",
+            "condition": "HEALTHY"
+          }
+        ],
+        "stopTimeout": 30,
+        "user": "65532:65532",
+        "readonlyRootFilesystem": true,
+        "logConfiguration": {
+          "logDriver": "awslogs",
+          "options": {
+            "awslogs-group": "/poc/go-fargate",
+            "awslogs-region": "us-east-1",
+            "awslogs-stream-prefix": "mediator"
+          }
+        },
+        "healthCheck": {
+          "command": [
+            "CMD",
+            "/mediator",
+            "-healthcheck"
+          ],
+          "interval": 10,
+          "timeout": 3,
+          "retries": 3,
+          "startPeriod": 5
+        },
+        "systemControls": []
+      }
+    }
+  ]
+}

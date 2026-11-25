@@ -176,6 +176,7 @@ println("matched rows:",len(report.rows));
 | [`cpu_credits.lms`](cpu_credits.lms) | CPU credit balance, usage, surplus and headroom of burstable instances, without SSH | Read-only | --tag-key Project --tag-value VALUE --instance ID --hours 24 --region us-east-1 --profile default --output data/cpu_credits [--live] | $0.00 synthetic; live CloudWatch statistics about $0.00005 per instance; cap $0.05 |
 | [`ebs_roots.lms`](ebs_roots.lms) | EBS volumes, attachments, root DeleteOnTermination and the AZ lock, as a report | Read-only | --region us-east-1 --profile default --output data/ebs_roots [--live] | $0.00 synthetic; live Describe calls are free; cap $0.05 |
 | [`eip_map.lms`](eip_map.lms) | Map Elastic IPs to instances, flag idle ones, report pinned addresses (never releases) | Read-only | --tag-key Project --region us-east-1 --profile default --output data/eip_map [--live] | $0.00 synthetic; live Describe calls are free; cap $0.05 |
+| [`fargate_stack.lms`](fargate_stack.lms) | Plan or apply a shared Fargate stack from an apps registry: ECR, ecs-tasks roles, ACM, ALB with a Host rule per app, one ECS task and service, CloudFront and DNS per host | Write with the admin profile | --apps fargate/apps.json --stack recipes/fargate_stack.config.json [--poc NAME] [--state PATH] --profile admin [--live] [--apply] [--down] | $0.00 synthetic; live apply uses the guarded sdk_call and the AWS resources it creates (about $38 a month for one small task) |
 | [`fleet_status.lms`](fleet_status.lms) | Discover tagged instances: state, type, addresses and root-storage policy | Read-only | --tag-key Project --tag-value VALUE --region us-east-1 --profile default --output data/fleet_status [--live] | $0.00 synthetic; live EC2 Describe calls are free; cap $0.05 |
 | [`provision.lms`](provision.lms) | Provision and resume one tagged on-demand t4g.nano with an lmfiles lifecycle record | Write with the default profile | --operation create|status|stop|start|terminate|errors --lmprov-id ID --config recipes/provision.config.json [--live --apply] | Synthetic $0.00; live cap $0.25 plus instance and gp3 hourly estimate |
 | [`spot_nano_lifecycle.lms`](spot_nano_lifecycle.lms) | Launch one tagged no-public-IP spot nano, check it, terminate it and prove zero leftovers | Write with the lmaws-ec2 profile | --region us-east-1 --profile lmaws-ec2 --output .lmaws-local/compute/spot_nano_lifecycle [--live --apply] | Synthetic $0.00; live about $0.0005 (spot nano minutes + 8 GiB gp3); cap $0.05 |
@@ -922,6 +923,15 @@ Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/l
 
 Example: [`examples/recipe_eip_map.lms`](../examples/recipe_eip_map.lms).
 Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/compute.lms`; function `recipe_eip_map`.
+
+### fargate_stack
+
+![Plan or apply a shared Fargate stack from an apps registry: ECR, ecs-tasks roles, ACM, ALB with a Host rule per app, one ECS task and service, CloudFront and DNS per host](../docs/images/recipe_fargate_stack.png)
+
+`lmctl https://raw.githubusercontent.com/lmctl-ai/lmaws/main/examples/recipe_fargate_stack.lms`
+
+Example: [`examples/recipe_fargate_stack.lms`](../examples/recipe_fargate_stack.lms).
+Import library: `https://raw.githubusercontent.com/lmctl-ai/lmaws/main/recipes/lib/fargate.lms`; function `recipe_fargate`.
 
 ### fleet_status
 

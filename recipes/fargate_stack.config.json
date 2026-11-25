@@ -1,0 +1,12 @@
+{
+  "vpc_id": "vpc-0example0000000000",
+  "subnets": ["subnet-0example0000000a", "subnet-0example0000000b"],
+  "zone_id": "Z0EXAMPLEZONE",
+  "cloudfront_zone_id": "Z2FDTNDATAQYW2",
+  "cloudfront_prefix_list": "com.amazonaws.global.cloudfront.origin-facing",
+  "origin_secret_env": "POC_ORIGIN_SECRET",
+  "ssl_policy": "ELBSecurityPolicy-TLS13-1-2-2021-06",
+  "retention_days": 14,
+  "desired_count": 1,
+  "template": "fargate_distribution.template.json"
+}
