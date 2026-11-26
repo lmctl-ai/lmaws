@@ -62,5 +62,13 @@ def main():
  run(service='cloudfront',op='CreateDistributionWithTags',request=cf)
  run(service='cloudfront',op='CreateDistributionWithTags',request=cf,apply=True,reads=1);assert SECRET in str(Fake.wires)
  bad=copy.deepcopy(cf);bad['DistributionConfigWithTags']['DistributionConfig']['Aliases']['Items']=['www.egtry.com'];run(service='cloudfront',op='CreateDistributionWithTags',request=bad,ok=False)
+ keep=copy.deepcopy(req);keep['Priority']=158
+ keep['Conditions'] += [{'Field':'host-header','HostHeaderConfig':{'Values':['origin-go.lmctl.ai']}},{'Field':'path-pattern','PathPatternConfig':{'Values':['/healthz']}}]
+ keep['Actions'][0]['TargetGroupArn']='arn:aws:elasticloadbalancing:us-east-1:254332045686:targetgroup/poc-go-fargate-egtry/bb1b103b4594c18d'
+ run(request=keep);run(request=keep,apply=True,reads=1)
+ for field,value in [('Priority',159),('Conditions',keep['Conditions'][:2]),('Actions',req['Actions'])]:
+  bad=copy.deepcopy(keep);bad[field]=value;run(request=bad,ok=False)
+ for index,key,value in [(1,'HostHeaderConfig','www.egtry.com'),(2,'PathPatternConfig','/*')]:
+  bad=copy.deepcopy(keep);bad['Conditions'][index][key]['Values']=[value];run(request=bad,ok=False)
  print(f'{n} bounded secret checks passed; loopback only');server.shutdown()
 if __name__=='__main__':main()

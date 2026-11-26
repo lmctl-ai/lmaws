@@ -53,7 +53,19 @@ final class EgtrySecret {
         Object stripped=Json.parse(Jsons.encodeRaw(in));
         int expected;
         if(service.equals("elbv2")&&op.equals("CreateRule")) {
-            require(LISTENER.equals(first(in,"ListenerArn"))&&new java.math.BigDecimal(first(in,"Priority")).compareTo(new java.math.BigDecimal("157"))==0,"only approved listener priority");
+            require(LISTENER.equals(first(in,"ListenerArn")),"only approved listener");
+            String priority=new java.math.BigDecimal(first(in,"Priority")).stripTrailingZeros().toPlainString();
+            require(priority.equals("157")||priority.equals("158"),"only approved listener priority");
+            if(priority.equals("158")) {
+                require(at(in,"Conditions").size()==3,"keepalive requires exactly three conditions");
+                int hosts=0,paths=0;
+                for(Object c:at(in,"Conditions")) {
+                    if(first(c,"Field").equals("host-header")&&at(c,"HostHeaderConfig.Values").equals(List.of("origin-go.lmctl.ai")))hosts++;
+                    if(first(c,"Field").equals("path-pattern")&&at(c,"PathPatternConfig.Values").equals(List.of("/healthz")))paths++;
+                }
+                require(hosts==1&&paths==1,"exact keepalive host and path required");
+                require(at(in,"Actions").size()==1&&first(in,"Actions.0.Type").equals("forward")&&first(in,"Actions.0.TargetGroupArn").equals("arn:aws:elasticloadbalancing:us-east-1:254332045686:targetgroup/poc-go-fargate-egtry/bb1b103b4594c18d"),"exact keepalive target required");
+            }
             expected=1;
             int headers=0;
             for(Object c:at(stripped,"Conditions")) if(first(c,"HttpHeaderConfig.HttpHeaderName").equals("X-Origin-Env")) {
