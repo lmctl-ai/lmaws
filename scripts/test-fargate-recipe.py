@@ -40,7 +40,7 @@ rep = json.loads((work / "data/one.json").read_text())
 assert rep["applied"] is False and all(x["action"].startswith("would") for x in rep["rows"]), rep["rows"][:3]
 print("  ok one-app plan: poc-up resource order, 25 dry-run calls, nothing applied, no state file"); checks += 1
 # 2. Printed requests mask both ALB header arrays and CloudFront HeaderValue.
-calls=[json.loads(line.split(" input=",1)[1]) for line in r.stdout.splitlines() if line.startswith("sdk call ")]
+calls=[json.loads(line.split(" input=",1)[1]) for line in r.stdout.splitlines() if "sdk call " in line and " input=" in line]
 rule=next(c for c in calls if "Conditions" in c)
 headers=[c['HttpHeaderConfig'] for c in rule['Conditions'] if 'HttpHeaderConfig' in c]
 assert headers and all(h['Values']==['***'] for h in headers), "ALB header not masked"
