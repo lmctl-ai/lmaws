@@ -215,11 +215,14 @@ public final class SdkCall {
     }
 
     static Object resolveEnv(Object o, Set<String> secrets, boolean lenient) {
+        return resolveEnv(o,secrets,lenient,Map.of());
+    }
+    static Object resolveEnv(Object o, Set<String> secrets, boolean lenient, Map<String,String> environment) {
         if (o instanceof String s) {
             var m = ENV.matcher(s);
             StringBuilder b = new StringBuilder();
             while (m.find()) {
-                String val = System.getenv(m.group(1));
+                String val = environment.containsKey(m.group(1)) ? environment.get(m.group(1)) : System.getenv(m.group(1));
                 if (val == null || val.isEmpty()) { if (lenient) { m.appendReplacement(b, java.util.regex.Matcher.quoteReplacement(m.group())); continue; } throw new IllegalArgumentException("environment variable " + m.group(1) + " is not set"); }
                 secrets.add(val);
                 m.appendReplacement(b, java.util.regex.Matcher.quoteReplacement(val));
@@ -227,8 +230,8 @@ public final class SdkCall {
             m.appendTail(b);
             return b.toString();
         }
-        if (o instanceof Map<?, ?> mm) { Map<String, Object> out = new LinkedHashMap<>(); mm.forEach((k, v) -> out.put(String.valueOf(k), resolveEnv(v, secrets, lenient))); return out; }
-        if (o instanceof List<?> l) { List<Object> out = new ArrayList<>(); for (Object x : l) out.add(resolveEnv(x, secrets, lenient)); return out; }
+        if (o instanceof Map<?, ?> mm) { Map<String, Object> out = new LinkedHashMap<>(); mm.forEach((k, v) -> out.put(String.valueOf(k), resolveEnv(v, secrets, lenient, environment))); return out; }
+        if (o instanceof List<?> l) { List<Object> out = new ArrayList<>(); for (Object x : l) out.add(resolveEnv(x, secrets, lenient, environment)); return out; }
         return o;
     }
 
@@ -473,6 +476,9 @@ public final class SdkCall {
     }
 
     static Map<String, String> call(AwsBackend b, String service, String op, String inputJson, String poc, String stateFile, boolean apply) {
+        return call(b,service,op,inputJson,poc,stateFile,apply,Map.of());
+    }
+    static Map<String, String> call(AwsBackend b, String service, String op, String inputJson, String poc, String stateFile, boolean apply, Map<String,String> environment) {
         Class<?> iface = CLIENTS.get(service);
         if (iface == null) throw new IllegalArgumentException("unknown service " + service + "; known: " + String.join(",", CLIENTS.keySet()));
         if (!OP.matcher(op).matches()) throw new IllegalArgumentException("invalid operation name");
@@ -480,7 +486,7 @@ public final class SdkCall {
         Object parsed = inputJson == null || inputJson.isBlank() ? new LinkedHashMap<String, Object>() : Json.parse(inputJson);
         if (!(parsed instanceof Map)) throw new IllegalArgumentException("input must be a JSON object");
         Set<String> secrets = new LinkedHashSet<>();
-        Object in = resolveEnv(parsed, secrets, b.isDemo() || !apply);
+        Object in = resolveEnv(parsed, secrets, b.isDemo() || !apply, environment);
         boolean demo = b.isDemo();
         String profile = AwsBackend.activeProfile();
         boolean read = READ.matcher(op).matches();

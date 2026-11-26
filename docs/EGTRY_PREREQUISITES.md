@@ -38,3 +38,23 @@ rather than deleting policies. A separate validated restore would be needed.
 Tests: scripts/test-egtry-prerequisites.py uses loopback AWS protocol fakes and
 checks success, dry-run, secret redaction, existing-name refusal, least privilege,
 adopted deletion refusal, canonical preservation, provenance and concurrent drift.
+
+## R57 process-scoped secret consumer
+
+`sdk_egtry_secret_apply(secretArn, service, operation, inputJson, stateFile, apply)`
+returns a redacted mutation receipt, never a secret value. It accepts only
+`arn:aws:secretsmanager:us-east-1:254332045686:secret:poc-go-fargate-egtry-origin-bn8DfF`,
+a matching CreateSecret ledger entry, the exact name and tags app=egtry /
+poc=go-fargate, and admin with an explicit grant. Preview verifies metadata but
+never calls GetSecretValue. Apply reads AWSCURRENT and supplies only the in-memory
+`EGTRY_ORIGIN_SECRET` placeholder environment of that single SDK call. It neither
+changes the OS environment nor exposes a value to lmcode/lmscript. The map is
+cleared on return; JVM strings cannot promise physical memory erasure.
+
+Consumers are limited to CreateRule at the approved listener/priority157 and
+CreateDistributionWithTags for egtry-test.egtry.com with two origin-go.lmctl.ai
+headers. Placeholders anywhere else are refused. The generic GetSecretValue and
+BatchGetSecretValue denylist is unchanged. Secret-bearing errors lose their
+cause/message; receipts, plans and ledger contain no value. Each foreground apply
+must reconstruct its request from durable bindings, then exit. No persistent
+executor shell or process-only state is required. No release was published.

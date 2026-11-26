@@ -170,6 +170,7 @@ public final class CloudHost implements AutoCloseable {
         r.method("Cloud","iam_policy_delete",List.of("string","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.iamPolicyDelete(text(a[0]),a[1].asBool())));
         r.method("Cloud","sdk_adopt_existing",List.of("string","string","string","string","bool"),"Row",(c,s,a)->rowValue(c,SdkCall.adoptExisting(session(s).backend,text(a[0]),text(a[1]),text(a[2]),text(a[3]),a[4].asBool())));
         r.method("Cloud","sdk_call",List.of("string","string","string","string","string","bool"),"Row",(c,s,a)->rowValue(c,session(s).backend.sdkCall(text(a[0]),text(a[1]),text(a[2]),text(a[3]),text(a[4]),a[5].asBool())));
+        r.method("Cloud","sdk_egtry_secret_apply",List.of("string","string","string","string","string","bool"),"Row",(c,s,a)->rowValue(c,EgtrySecret.apply(session(s).backend,text(a[0]),text(a[1]),text(a[2]),text(a[3]),text(a[4]),a[5].asBool())));
         r.method("Cloud","sdk_read",List.of("string","string","string"),"string",(c,s,a)->{String out=session(s).backend.sdkRead(text(a[0]),text(a[1]),text(a[2]));c.charge(128L+2L*out.length());return Value.ofString(out);});
         r.method("Cloud","sdk_operations",List.of("string"),"Rows",(c,s,a)->Value.object("Rows",new Rows(SdkCall.operations(text(a[0])),c)));
         r.method("Cloud","session_doctor",List.of(),"Rows",(c,s,a)->Value.object("Rows",new Rows(session(s).backend.sessionDoctor(),c)));
