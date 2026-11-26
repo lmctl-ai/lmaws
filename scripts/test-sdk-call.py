@@ -222,6 +222,31 @@ def main(host):
 
     tags_list = [{"Key": "poc", "Value": POC}]
     try:
+        # Existing shared resources: verify tags and register update-only state locally.
+        adopted = work / "adopted.json"
+        service_arn = f"arn:aws:ecs:{R}:{ACC}:service/poc-t1/poc-t1"
+        def adopt(svc, identity, record=False, env=None):
+            src = 'let c=aws.region("us-east-1"); let r=c.sdk_adopt_existing(' + ','.join(json.dumps(v) for v in [svc,identity,POC,str(adopted)]) + ',' + str(record).lower() + '); file_write("adopt-result.json",r.json());'
+            Fake.calls.clear()
+            result = run_dsl(host, work, src, env or base)[0]
+            assert not any(MUTATING.match(c[1]) for c in Fake.calls), Fake.calls
+            return result
+        assert adopt("ecs",service_arn).get("ok") and not adopted.exists()
+        assert adopt("ecs",service_arn,True).get("ok") and adopted.exists()
+        assert adopt("ec2","sg-0123456789abcdef0",True).get("ok")
+        assert all(e["adopted"] and "created" not in e for e in json.loads(adopted.read_text())["resources"])
+        assert not adopt("ecs",service_arn.replace(ACC,"999999999999")).get("ok")
+        assert not adopt("cloudfront","EEXISTING").get("ok")
+        assert not adopt("ecs",service_arn,env=dict(base,AWS_PROFILE="default",AWS_DEFAULT_PROFILE="default")).get("ok")
+        Fake.tag="other"
+        assert not adopt("ecs",service_arn).get("ok")
+        Fake.tag=POC
+        _, adopted_row, _, _ = call("ecs","UpdateService",{"cluster":"poc-t1","service":service_arn,"desiredCount":1},apply=False,st=adopted)
+        assert adopted_row["action"]=="dry_run"
+        refused("deletion of adopted ECS service","ecs","DeleteService",{"cluster":"poc-t1","service":service_arn},st=adopted)
+        refused("deletion of adopted SG","ec2","DeleteSecurityGroup",{"GroupId":"sg-0123456789abcdef0"},st=adopted)
+        T.ok("existing-resource adoption is read-only, admin/tag/account checked, explicit local recording, update-only, never delete")
+
         # ---- discovery and reads
         Fake.calls.clear()
         env_, res = run_dsl(host, work, 'let c=aws.region("us-east-1"); let r=c.sdk_operations("ecs"); file_write("ops.json", r.json());', base)

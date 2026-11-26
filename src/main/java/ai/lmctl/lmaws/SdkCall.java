@@ -233,9 +233,14 @@ public final class SdkCall {
         if (o instanceof String s) { for (String x : secrets) if (!x.isEmpty()) s = s.replace(x, "***"); return s; }
         if (o instanceof Map<?, ?> mm) {
             Map<String, Object> out = new LinkedHashMap<>();
-            String nameVal = String.valueOf(mm.get("name"));
-            boolean envPair = mm.containsKey("name") && mm.containsKey("value") && SECRET_KEY.matcher(nameVal).matches();
-            mm.forEach((k, v) -> { String key = String.valueOf(k); out.put(key, v instanceof String && (SECRET_KEY.matcher(key).matches() || (envPair && key.equals("value"))) ? "***" : redact(v, secrets)); });
+            String nameVal = first(o,"name");
+            boolean envPair = mm.keySet().stream().anyMatch(k -> String.valueOf(k).equalsIgnoreCase("value")) && SECRET_KEY.matcher(nameVal).matches();
+            boolean httpHeader = mm.keySet().stream().anyMatch(k -> String.valueOf(k).equalsIgnoreCase("HttpHeaderName"));
+            mm.forEach((k, v) -> {
+                String key=String.valueOf(k);
+                if (httpHeader && key.equalsIgnoreCase("Values")) out.put(key,List.of("***"));
+                else out.put(key,v instanceof String && (SECRET_KEY.matcher(key).matches() || (envPair && key.equalsIgnoreCase("value"))) ? "***" : redact(v,secrets));
+            });
             return out;
         }
         if (o instanceof List<?> l) { List<Object> out = new ArrayList<>(); for (Object x : l) out.add(redact(x, secrets)); return out; }
@@ -433,6 +438,32 @@ public final class SdkCall {
         return call(b, service, op, inputJson, "", "", false).get("output");
     }
 
+    /** Explicit local registration of a pre-existing tagged service/group. Never an AWS write.
+     * Adopted entries grant only the narrow update operation, never deletion. */
+    static Map<String, String> adoptExisting(AwsBackend b, String service, String id, String poc, String stateFile, boolean record) {
+        if (b.isDemo()) throw new SecurityException("existing-resource adoption requires live read-only verification");
+        if (!"admin".equals(AwsBackend.activeProfile()) || !"1".equals(System.getenv("LMAWS_ADMIN_GRANT")))
+            throw new SecurityException("adoption requires admin and LMAWS_ADMIN_GRANT=1");
+        if (!POC.matcher(poc).matches() || stateFile.isBlank()) throw new IllegalArgumentException("valid poc and state path required");
+        String name, op;
+        if (service.equals("ecs") && id.matches("arn:aws:ecs:us-east-1:[0-9]{12}:service/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+")) {
+            name=id.substring(id.lastIndexOf('/')+1); op="CreateService";
+            if (!id.split(":")[4].equals(b.accountIdForResize())) throw new SecurityException("cross-account adoption refused");
+        } else if (service.equals("ec2") && id.matches("sg-[0-9a-f]{8,17}")) {
+            name=id; op="CreateSecurityGroup";
+        } else throw new SecurityException("adoption supports only exact ECS service ARNs and EC2 security group IDs");
+        Map<String,Object> entry=new LinkedHashMap<>();
+        entry.put("service",service); entry.put("op",op); entry.put("arn",service.equals("ecs")?id:"");
+        entry.put("name",name); entry.put("ids",List.of(id));
+        entry.put("adopted",true); entry.put("adoptedAt",Instant.now().toString());
+        entry.put("allowedOperation",service.equals("ecs")?"UpdateService":"AuthorizeSecurityGroupIngress");
+        if (!hasTag(probeTags(b,service,entry),poc)) throw new SecurityException("existing resource lacks expected poc tag");
+        State state=State.load(stateFile,poc,false);
+        Map<String,Object> prior=state.find(service,id,service+":"+op);
+        if (record && prior==null) { state.resources.add(entry); state.save(); }
+        return row("kind","sdk_adopt_existing","service",service,"id",id,"action",record?"recorded":"dry_run","awsWrites","0");
+    }
+
     static Map<String, String> call(AwsBackend b, String service, String op, String inputJson, String poc, String stateFile, boolean apply) {
         Class<?> iface = CLIENTS.get(service);
         if (iface == null) throw new IllegalArgumentException("unknown service " + service + "; known: " + String.join(",", CLIENTS.keySet()));
@@ -474,6 +505,8 @@ public final class SdkCall {
                 for (Object v : values) {
                     entry = st.find(service, String.valueOf(v), rule.of());
                     if (entry == null) throw new SecurityException(key + " target " + v + " is not recorded in the state file: refusing (never touch what this run did not create)");
+                    if (Boolean.TRUE.equals(entry.get("adopted")) && (!rule.kind().equals("update") || !op.equals(entry.get("allowedOperation"))))
+                        throw new SecurityException("adopted resource only permits its explicit update operation; deletion refused");
                     if (!demo && !hasTag(probeTags(b, service, entry), poc)) throw new SecurityException(key + " target " + v + " no longer carries the tag poc=" + poc + ": refusing");
                 }
             }
