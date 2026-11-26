@@ -40,6 +40,7 @@ public final class SdkCall {
             "sts:GetFederationToken", "iam:GetCredentialReport", "lambda:GetFunction");
     static final Map<String, Class<?>> CLIENTS = new LinkedHashMap<>();
     static {
+        CLIENTS.put("s3", software.amazon.awssdk.services.s3.S3Client.class);
         CLIENTS.put("ecr", software.amazon.awssdk.services.ecr.EcrClient.class);
         CLIENTS.put("ecs", software.amazon.awssdk.services.ecs.EcsClient.class);
         CLIENTS.put("elbv2", software.amazon.awssdk.services.elasticloadbalancingv2.ElasticLoadBalancingV2Client.class);
@@ -64,6 +65,8 @@ public final class SdkCall {
     private static void create(String op, String arn, String name) { RULES.put(op, new Rule("create", null, arn, name, null)); }
     private static void own(String kind, String id, String of, String... ops) { for (String op : ops) RULES.put(op, new Rule(kind, id, null, null, of)); }
     static {
+        create("secretsmanager:CreateSecret", "ARN", "Name");
+        RULES.put("s3:PutBucketPolicy", new Rule("bounded-policy", null, null, null, null));
         create("ecr:CreateRepository", "repository.repositoryArn", "repository.repositoryName");
         own("update", "repositoryName", "ecr:CreateRepository", "ecr:PutImageScanningConfiguration", "ecr:PutImageTagMutability", "ecr:PutLifecyclePolicy");
         own("delete", "repositoryName", "ecr:CreateRepository", "ecr:DeleteRepository");
@@ -277,6 +280,7 @@ public final class SdkCall {
         for (String n : names) {
             String key = service + ":" + n;
             String mode = READ.matcher(n).matches() ? (READ_DENY.contains(key) ? "denied" : "read") : RULES.containsKey(key) ? RULES.get(key).kind() : "denied";
+            if (service.equals("s3") && !Set.of("GetBucketPolicy","PutBucketPolicy").contains(n)) mode="denied";
             Map<String, String> r = new LinkedHashMap<>(); r.put("service", service); r.put("operation", n); r.put("mode", mode); out.add(r);
         }
         return out;
@@ -451,15 +455,19 @@ public final class SdkCall {
             if (!id.split(":")[4].equals(b.accountIdForResize())) throw new SecurityException("cross-account adoption refused");
         } else if (service.equals("ec2") && id.matches("sg-[0-9a-f]{8,17}")) {
             name=id; op="CreateSecurityGroup";
-        } else throw new SecurityException("adoption supports only exact ECS service ARNs and EC2 security group IDs");
+        } else if (service.equals("iam") && SdkPrerequisites.ROLES.contains(id) && poc.equals("go-fargate")) {
+            name=id; op="CreateRole";
+            SdkPrerequisites.verifyRole(b,id,poc);
+        } else throw new SecurityException("adoption supports exact ECS/SG identities and the two approved IAM roles only");
         Map<String,Object> entry=new LinkedHashMap<>();
         entry.put("service",service); entry.put("op",op); entry.put("arn",service.equals("ecs")?id:"");
         entry.put("name",name); entry.put("ids",List.of(id));
         entry.put("adopted",true); entry.put("adoptedAt",Instant.now().toString());
-        entry.put("allowedOperation",service.equals("ecs")?"UpdateService":"AuthorizeSecurityGroupIngress");
+        entry.put("allowedOperation",service.equals("ecs")?"UpdateService":service.equals("iam")?"PutRolePolicy":"AuthorizeSecurityGroupIngress");
         if (!hasTag(probeTags(b,service,entry),poc)) throw new SecurityException("existing resource lacks expected poc tag");
         State state=State.load(stateFile,poc,false);
         Map<String,Object> prior=state.find(service,id,service+":"+op);
+        if (service.equals("iam")) entry.put("previousInlinePolicies", SdkPrerequisites.inlinePolicies(b,name));
         if (record && prior==null) { state.resources.add(entry); state.save(); }
         return row("kind","sdk_adopt_existing","service",service,"id",id,"action",record?"recorded":"dry_run","awsWrites","0");
     }
@@ -477,6 +485,8 @@ public final class SdkCall {
         String profile = AwsBackend.activeProfile();
         boolean read = READ.matcher(op).matches();
         if (read) {
+            if (service.equals("s3") && !op.equals("GetBucketPolicy")) throw new SecurityException("generic S3 supports GetBucketPolicy only");
+            if (service.equals("s3")) SdkPrerequisites.bucketInput(b,in);
             if (READ_DENY.contains(key)) throw new SecurityException(key + " returns secret material and is denied");
             if (!demo && !List.of("default", "lmaws", "admin").contains(profile)) throw new SecurityException("reads need AWS_PROFILE default, lmaws or admin (active: " + profile + ")");
             Object out = demo ? new LinkedHashMap<String, Object>() : invoke(b.sdkClient(service), iface, op, in);
@@ -493,17 +503,23 @@ public final class SdkCall {
         String ci = System.getenv().getOrDefault("CI", "");
         if (!demo && !b.endpointActive() && (ci.equalsIgnoreCase("true") || ci.equals("1"))) throw new SecurityException("live mutations are forbidden in CI");
         serviceChecks(key, in, poc);
-        State st = State.load(stateFile, poc, !demo && (rule.kind().equals("update") || rule.kind().equals("delete")));
+        State st = State.load(stateFile, poc, !demo && (rule.kind().equals("update") || rule.kind().equals("delete")) && !(key.equals("iam:PutRolePolicy") && !apply && SdkPrerequisites.ROLES.contains(first(in,"RoleName"))));
         Map<String, Object> entry = null;
         List<String[]> dns = List.of();
         switch (rule.kind()) {
             case "create" -> { if (!hasTag(in, poc)) throw new SecurityException(key + " must carry the tag poc=" + poc + " in its request"); }
             case "dns" -> dns = dnsChecks(b, in, st, demo);
+            case "bounded-policy" -> { }
             default -> {
                 var values = demo ? List.of() : at(in, rule.id());
                 if (!demo && values.isEmpty()) throw new IllegalArgumentException(key + " needs " + rule.id() + " in its input");
                 for (Object v : values) {
                     entry = st.find(service, String.valueOf(v), rule.of());
+                    if (entry == null && key.equals("iam:PutRolePolicy") && !apply && SdkPrerequisites.ROLES.contains(String.valueOf(v))) {
+                        SdkPrerequisites.verifyRole(b,String.valueOf(v),poc);
+                        entry=new LinkedHashMap<>();entry.put("adopted",true);entry.put("allowedOperation","PutRolePolicy");entry.put("name",v);entry.put("arn","");
+                        entry.put("previousInlinePolicies",SdkPrerequisites.inlinePolicies(b,String.valueOf(v)));
+                    }
                     if (entry == null) throw new SecurityException(key + " target " + v + " is not recorded in the state file: refusing (never touch what this run did not create)");
                     if (Boolean.TRUE.equals(entry.get("adopted")) && (!rule.kind().equals("update") || !op.equals(entry.get("allowedOperation"))))
                         throw new SecurityException("adopted resource only permits its explicit update operation; deletion refused");
@@ -511,6 +527,7 @@ public final class SdkCall {
                 }
             }
         }
+        Object rollback = SdkPrerequisites.check(b,key,parsed,in,poc,st,entry,demo);
         System.out.println("sdk call " + key + (apply ? " APPLY " : " DRY-RUN ") + "poc=" + poc + " input=" + Jsons.encodeRaw(redact(parsed, Set.of())));
         Map<String, String> r = row("kind", "sdk_call", "service", service, "operation", op, "mode", "mutate:" + rule.kind(), "poc", poc, "demo", String.valueOf(demo),
                 "input", Jsons.encodeRaw(redact(parsed, Set.of())));
@@ -519,7 +536,11 @@ public final class SdkCall {
             return r;
         }
         if (!AwsBackend.isApplyEnabled()) throw new SecurityException("applying requires --apply (LMAWS_APPLY=1)");
-        Object out = invoke(b.sdkClient(service), iface, op, in);
+        if (rollback != null) { st.records.put("rollback:"+key+":"+first(in,service.equals("iam")?"RoleName":"Bucket"),rollback); st.save(); }
+        SdkPrerequisites.recheck(b,key,in,rollback);
+        Object out;
+        try { out = invoke(b.sdkClient(service), iface, op, SdkPrerequisites.request(key,in)); }
+        catch (RuntimeException ex) { if (key.equals("secretsmanager:CreateSecret")) throw new SecurityException("CreateSecret failed; secret-bearing service diagnostics suppressed"); throw ex; }
         switch (rule.kind()) {
             case "create" -> {
                 String arn = rule.arn().equals("synth:logs") ? "arn:aws:logs:" + b.regionName() + ":" + b.accountIdForResize() + ":log-group:" + first(in, "logGroupName") : first(out, rule.arn());

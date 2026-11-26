@@ -1096,6 +1096,7 @@ public final class AwsBackend implements AutoCloseable {
     /** The SDK client behind one generic sdk_call service name. */
     Object sdkClient(String service) {
         return switch (service) {
+            case "s3" -> s3();
             case "ecr" -> ecr == null ? ecr = register(base(software.amazon.awssdk.services.ecr.EcrClient.builder()).build()) : ecr;
             case "elbv2" -> elbv2 == null ? elbv2 = register(base(software.amazon.awssdk.services.elasticloadbalancingv2.ElasticLoadBalancingV2Client.builder()).build()) : elbv2;
             case "acm" -> acm == null ? acm = register(base(software.amazon.awssdk.services.acm.AcmClient.builder()).build()) : acm;

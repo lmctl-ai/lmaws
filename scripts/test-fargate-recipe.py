@@ -39,9 +39,16 @@ assert "APPLY" not in r.stdout.split("PLAN")[0] and not (work / ".lmaws-local/on
 rep = json.loads((work / "data/one.json").read_text())
 assert rep["applied"] is False and all(x["action"].startswith("would") for x in rep["rows"]), rep["rows"][:3]
 print("  ok one-app plan: poc-up resource order, 25 dry-run calls, nothing applied, no state file"); checks += 1
-# 2. secrets never printed, placeholders kept
-assert "{{env:POC_ORIGIN_SECRET}}" in r.stdout and "HeaderValue" not in r.stdout.replace('"HeaderValue":"***"', ""), "origin secret handling"
-print("  ok origin secret stays a {{env:...}} placeholder in the plan"); checks += 1
+# 2. Printed requests mask both ALB header arrays and CloudFront HeaderValue.
+calls=[json.loads(line.split(" input=",1)[1]) for line in r.stdout.splitlines() if line.startswith("sdk call ")]
+rule=next(c for c in calls if "Conditions" in c)
+headers=[c['HttpHeaderConfig'] for c in rule['Conditions'] if 'HttpHeaderConfig' in c]
+assert headers and all(h['Values']==['***'] for h in headers), "ALB header not masked"
+cf=next(c['DistributionConfigWithTags']['DistributionConfig'] for c in calls if 'DistributionConfigWithTags' in c)
+cfheaders=[h for o in cf['Origins']['Items'] for h in o.get('CustomHeaders',{}).get('Items',[])]
+assert cfheaders and all(h['HeaderValue']=='***' for h in cfheaders), "CloudFront header not masked"
+assert "{{env:POC_ORIGIN_SECRET}}" not in r.stdout
+print("  ok origin header values masked in both ALB and CloudFront printed plans"); checks += 1
 # 3. every call is tagged poc=go-fargate
 for line in r.stdout.splitlines():
     if "sdk call" in line and "Create" in line and "CreateSecurityGroup" not in line:
