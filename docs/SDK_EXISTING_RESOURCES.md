@@ -7,7 +7,7 @@ created by this run and never changes AWS tags or resources. It requires the
 admin profile and LMAWS_ADMIN_GRANT=1. The caller must explicitly authorize the
 particular existing resource outside this library.
 
-Supported existing resources are exact same-account us-east-1 ECS service ARNs
+General supported existing resources are exact same-account us-east-1 ECS service ARNs
 and exact EC2 security-group IDs. They must already carry `poc=<poc>` verified
 live. Adoption enables only `ecs:UpdateService` or
 `ec2:AuthorizeSecurityGroupIngress` respectively, with the normal sdk_call
@@ -29,3 +29,9 @@ Validation: scripts/test-sdk-call.py runs 47 checks against a loopback AWS fake,
 including preview/record, wrong account/profile/tag, permitted update preview and
 refused deletion for adopted resources. SdkCallRedactionChecks checks headers and
 case-insensitive environment redaction without any network access.
+
+A separately bounded extension also accepts the two named egtry task/execution
+roles for one least-privilege inline policy, with account/tag checks and rollback
+snapshots. It does not enable general IAM adoption. See
+[the exact prerequisite constraints](EGTRY_PREREQUISITES.md) and
+`scripts/test-egtry-prerequisites.py` for secret and OAC policy guards.
